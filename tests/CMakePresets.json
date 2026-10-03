@@ -55,6 +55,17 @@
       }
     },
     {
+      "name": "linux-clang-tidy",
+      "displayName": "Linux Clang compile database for clang-tidy",
+      "inherits": ["linux"],
+      "cacheVariables": {
+        "CMAKE_CXX_COMPILER": "clang++",
+        "CMAKE_BUILD_TYPE": "Debug",
+        "CMAKE_EXPORT_COMPILE_COMMANDS": true,
+        "CMAKE_CXX_SCAN_FOR_MODULES": false
+      }
+    },
+    {
       "name": "windows-msvc",
       "displayName": "Windows MSVC",
       "inherits": ["base"],

@@ -1,0 +1,62 @@
+# Checks for the core library (src/core). CI runs them with the Clang of the runner
+# and fails on any warning.
+#
+# Disabled, and why:
+# - bugprone-easily-swappable-parameters: parameters used together are already exempt,
+#   so what is left are symmetric helpers such as multiply(a, b), where a swap is
+#   harmless.
+# - cppcoreguidelines-avoid-magic-numbers: most of what it finds are the documented
+#   defaults of the configuration structs; the rest are unit conversions and bit widths
+#   (1000, 63) that read better written out than behind names.
+# - cppcoreguidelines-avoid-do-while: the OBS code style has nothing against do-while.
+# - cppcoreguidelines-pro-bounds-constant-array-index: its fix is gsl::at, and the core
+#   does not use the GSL; .at() would throw inside noexcept code instead.
+# - modernize-use-trailing-return-type: OBS code uses leading return types.
+# - modernize-use-nodiscard: would mark nearly every accessor; OBS code does not use it.
+# - modernize-return-braced-init-list: naming the type at a return is clearer when its
+#   constructor does work, as Clip's does.
+# - performance-enum-size: the enums are a few values passed by value; a smaller
+#   underlying type saves nothing.
+Checks: >
+  -*,
+  bugprone-*,
+  concurrency-*,
+  cppcoreguidelines-*,
+  modernize-*,
+  performance-*,
+  readability-identifier-naming,
+  -bugprone-easily-swappable-parameters,
+  -cppcoreguidelines-avoid-magic-numbers,
+  -cppcoreguidelines-avoid-do-while,
+  -cppcoreguidelines-pro-bounds-constant-array-index,
+  -modernize-use-trailing-return-type,
+  -modernize-use-nodiscard,
+  -modernize-return-braced-init-list,
+  -performance-enum-size
+WarningsAsErrors: '*'
+HeaderFilterRegex: 'src/core/'
+CheckOptions:
+  # Naming as in the OBS C++ code style.
+  readability-identifier-naming.NamespaceCase: lower_case
+  readability-identifier-naming.ClassCase: CamelCase
+  readability-identifier-naming.StructCase: CamelCase
+  readability-identifier-naming.EnumCase: CamelCase
+  readability-identifier-naming.EnumConstantCase: CamelCase
+  readability-identifier-naming.TypeAliasCase: CamelCase
+  readability-identifier-naming.FunctionCase: camelBack
+  readability-identifier-naming.MethodCase: camelBack
+  readability-identifier-naming.ParameterCase: camelBack
+  readability-identifier-naming.VariableCase: camelBack
+  readability-identifier-naming.PublicMemberCase: camelBack
+  readability-identifier-naming.PrivateMemberCase: camelBack
+  readability-identifier-naming.PrivateMemberSuffix: '_'
+  readability-identifier-naming.ClassMemberCase: camelBack
+  readability-identifier-naming.ClassMemberSuffix: '_'
+  readability-identifier-naming.ConstexprVariableCase: CamelCase
+  readability-identifier-naming.ConstexprVariablePrefix: k
+  readability-identifier-naming.ClassConstantCase: CamelCase
+  readability-identifier-naming.ClassConstantPrefix: k
+  readability-identifier-naming.GlobalConstantCase: CamelCase
+  readability-identifier-naming.GlobalConstantPrefix: k
+  readability-identifier-naming.StaticConstantCase: CamelCase
+  readability-identifier-naming.StaticConstantPrefix: k

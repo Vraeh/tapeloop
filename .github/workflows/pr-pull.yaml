@@ -29,3 +29,9 @@ jobs:
     uses: ./.github/workflows/run-tests.yaml
     permissions:
       contents: read
+
+  analyze:
+    name: Static Analysis
+    uses: ./.github/workflows/analyze.yaml
+    permissions:
+      contents: read
