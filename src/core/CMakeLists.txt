@@ -20,6 +20,8 @@ target_sources(
     Gop.hpp
     MediaTime.cpp
     MediaTime.hpp
+    MomentCutter.cpp
+    MomentCutter.hpp
     MomentList.cpp
     MomentList.hpp
     Playhead.cpp
