@@ -74,6 +74,9 @@ libFuzzer writes new inputs into the first directory it is given, so keep the co
 corpus second. To reproduce a crash from the `fuzz-crashes` artifact of a CI run, pass
 the file instead of the directories.
 
+CI builds the tests with the `linux-clang-coverage` preset, reports the line coverage
+of `src/core` and fails below 90%.
+
 CI also runs clang-tidy over `src/core` with the checks in `.clang-tidy`, and any
 warning fails the job. To run it locally with Clang 18:
 
