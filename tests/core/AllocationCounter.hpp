@@ -51,7 +51,8 @@ private:
 };
 
 // While alive, lets `skip` allocations of the current thread through and makes the
-// next one throw std::bad_alloc. Only one allocation fails.
+// next one fail: the plain operator new throws std::bad_alloc, the nothrow one returns
+// null. Only one allocation fails.
 class AllocationFailure {
 public:
 	explicit AllocationFailure(size_t skip = 0);

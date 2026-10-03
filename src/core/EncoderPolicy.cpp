@@ -4,6 +4,8 @@
 #include "core/EncoderPolicy.hpp"
 
 #include <algorithm>
+#include <array>
+#include <optional>
 #include <string>
 #include <utility>
 
@@ -19,41 +21,57 @@ constexpr Nanoseconds kLongestGop = std::chrono::seconds(10);
 // Keeps the bitrate and 1.3 times it within the 16 bits the QSV plugin stores them in.
 constexpr int64_t kMaxQsvBitrateKbps = 50'000;
 
-// Position in the order of preference, lower first. Encoders outside the order get
-// nothing.
-std::optional<int> rankOf(const EncoderInfo &encoder)
+bool isHardware(Vendor vendor)
 {
-	switch (encoder.vendor) {
+	return vendor == Vendor::Nvidia || vendor == Vendor::Intel || vendor == Vendor::Amd || vendor == Vendor::Apple;
+}
+
+int vendorOrder(Vendor vendor, Vendor renderVendor)
+{
+	if (vendor == renderVendor)
+		return 0;
+	switch (vendor) {
 	case Vendor::Nvidia:
-		return encoder.passTexture ? std::optional<int>(0) : std::nullopt;
+		return 1;
 	case Vendor::Intel:
-		return encoder.passTexture ? std::optional<int>(1) : std::nullopt;
+		return 2;
 	case Vendor::Amd:
-		return encoder.passTexture ? std::optional<int>(2) : std::nullopt;
-	case Vendor::Apple:
 		return 3;
+	case Vendor::Apple:
 	case Vendor::Software:
-		return 4;
 	case Vendor::Unknown:
 		break;
 	}
-	return std::nullopt;
+	return 4;
 }
 
-std::optional<EncoderInfo> bestFor(std::span<const EncoderInfo> encoders, const std::string &codec)
+// Sort key of a candidate, compared lexicographically: tier, vendor, texture, codec.
+// Encoders that do not qualify get nothing.
+std::optional<std::array<int, 4>> placementOf(const EncoderInfo &encoder, Vendor renderVendor,
+					      const EncoderPreferences &preferences)
 {
-	const EncoderInfo *best = nullptr;
-	int bestRank = 0;
-	for (const EncoderInfo &encoder : encoders) {
-		if (encoder.deprecated || encoder.internal || encoder.codec != codec)
-			continue;
-		const std::optional<int> rank = rankOf(encoder);
-		if (rank && (!best || *rank < bestRank)) {
-			best = &encoder;
-			bestRank = *rank;
-		}
-	}
-	return best ? std::optional<EncoderInfo>(*best) : std::nullopt;
+	if (encoder.deprecated || encoder.internal)
+		return std::nullopt;
+
+	int codec = 0;
+	if (encoder.codec == "h264")
+		codec = 1;
+	else if (encoder.codec != "hevc" || !preferences.preferHevc)
+		return std::nullopt;
+
+	if (encoder.vendor == Vendor::Software)
+		return std::array<int, 4>{2, 0, 0, codec};
+	if (!isHardware(encoder.vendor))
+		return std::nullopt;
+	if (!isHardware(renderVendor) && !encoder.passTexture && encoder.vendor != Vendor::Apple)
+		return std::nullopt;
+
+	// OBS 32 registers the non-texture NVENC, QuickSync and AMF encoders as internal or
+	// deprecated. Their texture ids fall back to them when the texture path cannot
+	// start, as on another vendor's adapter, so there those ids stand for the
+	// non-texture encoders.
+	const int tier = encoder.vendor == renderVendor && encoder.passTexture ? 0 : 1;
+	return std::array<int, 4>{tier, vendorOrder(encoder.vendor, renderVendor), encoder.passTexture ? 0 : 1, codec};
 }
 
 // A frame duration that is not positive cannot come from OBS; 60 fps stands in.
@@ -81,14 +99,26 @@ SettingValue flag(bool value)
 
 } // namespace
 
-std::optional<EncoderInfo> chooseReplayEncoder(std::span<const EncoderInfo> encoders,
-					       const EncoderPreferences &preferences)
+std::vector<EncoderInfo> replayEncoderCandidates(std::span<const EncoderInfo> encoders, Vendor renderVendor,
+						 const EncoderPreferences &preferences)
 {
-	if (preferences.preferHevc) {
-		if (std::optional<EncoderInfo> hevc = bestFor(encoders, "hevc"))
-			return hevc;
+	struct Candidate {
+		std::array<int, 4> placement;
+		const EncoderInfo *encoder;
+	};
+	std::vector<Candidate> candidates;
+	for (const EncoderInfo &encoder : encoders) {
+		if (const std::optional<std::array<int, 4>> placement = placementOf(encoder, renderVendor, preferences))
+			candidates.push_back({*placement, &encoder});
 	}
-	return bestFor(encoders, "h264");
+	std::stable_sort(candidates.begin(), candidates.end(),
+			 [](const Candidate &a, const Candidate &b) { return a.placement < b.placement; });
+
+	std::vector<EncoderInfo> ordered;
+	ordered.reserve(candidates.size());
+	for (const Candidate &candidate : candidates)
+		ordered.push_back(*candidate.encoder);
+	return ordered;
 }
 
 EncoderSettings buildReplaySettings(const EncoderInfo &encoder, const ReplayEncoderParams &params)
@@ -115,6 +145,7 @@ EncoderSettings buildReplaySettings(const EncoderInfo &encoder, const ReplayEnco
 			{"multipass", text("disabled")},
 			{"lookahead", flag(false)},
 			{"adaptive_quantization", flag(false)},
+			{"repeat_headers", flag(true)},
 			{"opts", text("keyint=" + gopLength)},
 		};
 		break;
@@ -123,10 +154,8 @@ EncoderSettings buildReplaySettings(const EncoderInfo &encoder, const ReplayEnco
 		// derives a window maximum of 1.3 times it in 16 bits as well.
 		bitrate = std::min<int64_t>(bitrate, kMaxQsvBitrateKbps);
 		settings = {
-			{"rate_control", text("CBR")},
-			{"bframes", number(0)},
-			{"target_usage", text("TU7")},
-			{"latency", text("ultra-low")},
+			{"rate_control", text("CBR")},  {"bframes", number(0)},         {"target_usage", text("TU7")},
+			{"latency", text("ultra-low")}, {"repeat_headers", flag(true)},
 		};
 		break;
 	case Vendor::Amd:
@@ -134,19 +163,24 @@ EncoderSettings buildReplaySettings(const EncoderInfo &encoder, const ReplayEnco
 			{"rate_control", text("CBR")},
 			{"preset", text("speed")},
 		};
+		// The plugin's repeat_headers would space the headers by keyint_sec, not by
+		// the GOP set in the options, and HEVC has no such setting, so both codecs
+		// get the header placement through the options.
 		if (encoder.codec == "hevc") {
 			// For HEVC the plugin's keyint option sets GOPs per IDR, not the GOP
-			// length, so the AMF property is named directly. HEVC on AMF has no
-			// B-frames to turn off.
-			settings.insert({"ffmpeg_opts", text("HevcGOPSize=" + gopLength)});
+			// length, so the AMF property is named directly, with one GOP per IDR.
+			// HEVC on AMF has no B-frames to turn off.
+			settings.insert({"ffmpeg_opts", text("HevcGOPSize=" + gopLength +
+							     " gops_per_idr=1 header_insertion_mode=idr")});
 		} else {
 			settings.insert({
 				{"bf", number(0)},
-				{"ffmpeg_opts", text("keyint=" + gopLength)},
+				{"ffmpeg_opts", text("keyint=" + gopLength + " header_spacing=" + gopLength)},
 			});
 		}
 		break;
 	case Vendor::Apple:
+		// VideoToolbox writes the parameter sets into every keyframe on its own.
 		settings = {
 			{"rate_control", text("CBR")},
 			{"bframes", flag(false)},
@@ -154,11 +188,9 @@ EncoderSettings buildReplaySettings(const EncoderInfo &encoder, const ReplayEnco
 		break;
 	case Vendor::Software:
 		settings = {
-			{"rate_control", text("CBR")},
-			{"bf", number(0)},
-			{"preset", text("ultrafast")},
-			{"tune", text("zerolatency")},
-			{"x264opts", text("keyint=" + gopLength)},
+			{"rate_control", text("CBR")},  {"bf", number(0)},
+			{"preset", text("ultrafast")},  {"tune", text("zerolatency")},
+			{"repeat_headers", flag(true)}, {"x264opts", text("keyint=" + gopLength)},
 		};
 		break;
 	case Vendor::Unknown:

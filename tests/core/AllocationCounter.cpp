@@ -54,7 +54,10 @@ AllocationFailure::~AllocationFailure()
 
 #if TAPELOOP_TEST_ALLOCATION_HOOKS
 
-// The aligned forms are left to the runtime; nothing under test over-aligns.
+// The aligned forms are left to the runtime; nothing under test over-aligns. The
+// nothrow forms are replaced as well: the standard library takes temporary buffers
+// from them, and a runtime nothrow new freed by the delete below is a mismatch that
+// ASan reports.
 void *operator new(std::size_t size)
 {
 	return tapeloop::test::allocate(size);
@@ -63,6 +66,24 @@ void *operator new(std::size_t size)
 void *operator new[](std::size_t size)
 {
 	return tapeloop::test::allocate(size);
+}
+
+void *operator new(std::size_t size, const std::nothrow_t &) noexcept
+{
+	try {
+		return tapeloop::test::allocate(size);
+	} catch (const std::bad_alloc &) {
+		return nullptr;
+	}
+}
+
+void *operator new[](std::size_t size, const std::nothrow_t &) noexcept
+{
+	try {
+		return tapeloop::test::allocate(size);
+	} catch (const std::bad_alloc &) {
+		return nullptr;
+	}
 }
 
 void operator delete(void *memory) noexcept
@@ -81,6 +102,16 @@ void operator delete(void *memory, std::size_t) noexcept
 }
 
 void operator delete[](void *memory, std::size_t) noexcept
+{
+	std::free(memory);
+}
+
+void operator delete(void *memory, const std::nothrow_t &) noexcept
+{
+	std::free(memory);
+}
+
+void operator delete[](void *memory, const std::nothrow_t &) noexcept
 {
 	std::free(memory);
 }

@@ -8,12 +8,10 @@
 #include <algorithm>
 #include <chrono>
 #include <cstdint>
-#include <optional>
 #include <string>
 #include <vector>
 
 using namespace std::chrono_literals;
-using tapeloop::chooseReplayEncoder;
 using tapeloop::EncoderInfo;
 using tapeloop::EncoderPreferences;
 using tapeloop::EncoderSettings;
@@ -79,63 +77,144 @@ std::vector<EncoderInfo> combined(std::vector<std::vector<EncoderInfo>> groups)
 	return all;
 }
 
-std::string chosen(const std::vector<EncoderInfo> &encoders, bool preferHevc = false)
+EncoderInfo apple()
+{
+	return encoder("com.apple.videotoolbox.videoencoder.ave.avc", "h264", Vendor::Apple, false);
+}
+
+using Ids = std::vector<std::string>;
+
+Ids candidates(const std::vector<EncoderInfo> &encoders, Vendor renderVendor, bool preferHevc = false)
 {
 	EncoderPreferences preferences;
 	preferences.preferHevc = preferHevc;
-	const std::optional<EncoderInfo> choice = chooseReplayEncoder(encoders, preferences);
-	return choice ? choice->id : "none";
+	Ids ids;
+	for (const EncoderInfo &info : tapeloop::replayEncoderCandidates(encoders, renderVendor, preferences))
+		ids.push_back(info.id);
+	return ids;
 }
 
 } // namespace
 
-TEST_CASE("chooseReplayEncoder prefers NVIDIA, then Intel, AMD, Apple and x264")
+TEST_CASE("replay candidates on a Radeon with an Intel iGPU start with AMF")
 {
-	CHECK(chosen(combined({x264(), nvidia()})) == "obs_nvenc_h264_tex");
-	CHECK(chosen(combined({x264(), intel(), nvidia()})) == "obs_nvenc_h264_tex");
-	CHECK(chosen(combined({x264(), intel()})) == "obs_qsv11_v2");
-	CHECK(chosen(combined({x264(), amd(), intel()})) == "obs_qsv11_v2");
-	CHECK(chosen(combined({x264(), amd()})) == "h264_texture_amf");
-	CHECK(chosen(x264()) == "obs_x264");
-	CHECK(chosen({}) == "none");
-
-	const EncoderInfo apple = encoder("com.apple.videotoolbox.videoencoder.ave.avc", "h264", Vendor::Apple, false);
-	CHECK(chosen(combined({x264(), {apple}})) == apple.id);
+	const std::vector<EncoderInfo> encoders = combined({x264(), intel(), amd()});
+	CHECK(candidates(encoders, Vendor::Amd) == Ids{"h264_texture_amf", "obs_qsv11_v2", "obs_x264"});
+	CHECK(candidates(encoders, Vendor::Amd, true) ==
+	      Ids{"h265_texture_amf", "h264_texture_amf", "obs_qsv11_hevc", "obs_qsv11_v2", "obs_x264"});
 }
 
-TEST_CASE("chooseReplayEncoder does not depend on the order encoders are listed in")
+TEST_CASE("replay candidates on an NVIDIA GPU with an Intel iGPU follow the render adapter")
+{
+	const std::vector<EncoderInfo> encoders = combined({x264(), intel(), nvidia()});
+	CHECK(candidates(encoders, Vendor::Nvidia) == Ids{"obs_nvenc_h264_tex", "obs_qsv11_v2", "obs_x264"});
+	CHECK(candidates(encoders, Vendor::Intel) == Ids{"obs_qsv11_v2", "obs_nvenc_h264_tex", "obs_x264"});
+}
+
+TEST_CASE("replay candidates with a single vendor")
+{
+	CHECK(candidates(combined({intel(), x264()}), Vendor::Intel) == Ids{"obs_qsv11_v2", "obs_x264"});
+	CHECK(candidates(combined({intel(), x264()}), Vendor::Intel, true) ==
+	      Ids{"obs_qsv11_hevc", "obs_qsv11_v2", "obs_x264"});
+	CHECK(candidates(combined({{apple()}, x264()}), Vendor::Apple) == Ids{apple().id, "obs_x264"});
+	CHECK(candidates(x264(), Vendor::Unknown, true) == Ids{"obs_x264"});
+	CHECK(candidates({}, Vendor::Nvidia).empty());
+}
+
+TEST_CASE("replay candidates keep the fixed vendor order when the render vendor is unknown")
+{
+	const std::vector<EncoderInfo> encoders = combined({x264(), amd(), {apple()}, intel(), nvidia()});
+	const Ids expected = {"obs_nvenc_h264_tex", "obs_qsv11_v2", "h264_texture_amf", apple().id, "obs_x264"};
+	CHECK(candidates(encoders, Vendor::Unknown) == expected);
+	CHECK(candidates(encoders, Vendor::Software) == expected);
+}
+
+TEST_CASE("replay candidates fall back to H.264 on a vendor without HEVC")
+{
+	std::vector<EncoderInfo> h264Only = nvidia();
+	std::erase_if(h264Only, [](const EncoderInfo &info) { return info.codec != "h264"; });
+	const std::vector<EncoderInfo> encoders = combined({h264Only, intel(), x264()});
+
+	const Ids expected = {"obs_nvenc_h264_tex", "obs_qsv11_hevc", "obs_qsv11_v2", "obs_x264"};
+	CHECK(candidates(encoders, Vendor::Nvidia, true) == expected);
+	CHECK(candidates(encoders, Vendor::Unknown, true) == expected);
+}
+
+TEST_CASE("replay candidates do not depend on the order encoders are listed in")
 {
 	std::vector<EncoderInfo> all = combined({nvidia(), intel(), amd(), x264()});
+	const Ids expected = candidates(all, Vendor::Intel, true);
+	CHECK(expected == Ids{"obs_qsv11_hevc", "obs_qsv11_v2", "obs_nvenc_hevc_tex", "obs_nvenc_h264_tex",
+			      "h265_texture_amf", "h264_texture_amf", "obs_x264"});
 	std::reverse(all.begin(), all.end());
-	CHECK(chosen(all) == "obs_nvenc_h264_tex");
+	CHECK(candidates(all, Vendor::Intel, true) == expected);
 	std::rotate(all.begin(), all.begin() + 5, all.end());
-	CHECK(chosen(all) == "obs_nvenc_h264_tex");
+	CHECK(candidates(all, Vendor::Intel, true) == expected);
 }
 
-TEST_CASE("chooseReplayEncoder ignores deprecated, internal and unknown encoders")
+TEST_CASE("replay candidates leave out deprecated, internal, unknown and AV1 encoders")
 {
 	const std::vector<EncoderInfo> leftovers = {
 		encoder("jim_nvenc", "h264", Vendor::Nvidia, true, true),
 		encoder("obs_nvenc_h264_soft", "h264", Vendor::Nvidia, false, false, true),
 		encoder("obs_qsv11", "h264", Vendor::Intel, true, true),
 		encoder("ffmpeg_vaapi_tex", "h264", Vendor::Unknown, true),
+		encoder("obs_nvenc_av1_tex", "av1", Vendor::Nvidia, true),
 	};
-	CHECK(chosen(leftovers) == "none");
-	CHECK(chosen(combined({leftovers, x264()})) == "obs_x264");
+	CHECK(candidates(leftovers, Vendor::Nvidia, true).empty());
+	CHECK(candidates(combined({leftovers, x264()}), Vendor::Nvidia, true) == Ids{"obs_x264"});
 }
 
-TEST_CASE("chooseReplayEncoder uses HEVC only when asked and available")
+TEST_CASE("replay candidates put non-texture hardware encoders after texture ones")
 {
-	CHECK(chosen(combined({nvidia(), x264()}), true) == "obs_nvenc_hevc_tex");
-	CHECK(chosen(combined({intel(), x264()}), true) == "obs_qsv11_hevc");
-	CHECK(chosen(combined({nvidia(), x264()}), false) == "obs_nvenc_h264_tex");
-	CHECK(chosen(x264(), true) == "obs_x264");
+	const std::vector<EncoderInfo> encoders = combined({
+		{encoder("future_nvenc_cpu", "h264", Vendor::Nvidia, false)},
+		{encoder("future_qsv_cpu", "h264", Vendor::Intel, false)},
+		x264(),
+		intel(),
+		nvidia(),
+	});
+	CHECK(candidates(encoders, Vendor::Nvidia) ==
+	      Ids{"obs_nvenc_h264_tex", "future_nvenc_cpu", "obs_qsv11_v2", "future_qsv_cpu", "obs_x264"});
+	CHECK(candidates(encoders, Vendor::Intel) ==
+	      Ids{"obs_qsv11_v2", "future_qsv_cpu", "obs_nvenc_h264_tex", "future_nvenc_cpu", "obs_x264"});
+}
 
-	// The preference outranks the vendor order: Intel HEVC beats NVIDIA H.264.
-	std::vector<EncoderInfo> h264Only = nvidia();
-	std::erase_if(h264Only, [](const EncoderInfo &info) { return info.codec != "h264"; });
-	CHECK(chosen(combined({h264Only, intel()}), true) == "obs_qsv11_hevc");
-	CHECK(chosen(h264Only, true) == "obs_nvenc_h264_tex");
+TEST_CASE("replay candidates need texture support from NVIDIA, Intel and AMD when the render vendor is unknown")
+{
+	const std::vector<EncoderInfo> encoders = {
+		encoder("future_nvenc_cpu", "h264", Vendor::Nvidia, false),
+		encoder("future_qsv_cpu", "h264", Vendor::Intel, false),
+		encoder("future_amf_cpu", "h264", Vendor::Amd, false),
+		encoder("future_qsv_internal", "h264", Vendor::Intel, true, false, true),
+		encoder("obs_x264", "h264", Vendor::Software, false),
+	};
+	CHECK(candidates(encoders, Vendor::Unknown) == Ids{"obs_x264"});
+	CHECK(candidates(encoders, Vendor::Software) == Ids{"obs_x264"});
+	CHECK(candidates(encoders, Vendor::Amd) ==
+	      Ids{"future_amf_cpu", "future_nvenc_cpu", "future_qsv_cpu", "obs_x264"});
+}
+
+TEST_CASE("replay candidates put HEVC before H.264 within each vendor")
+{
+	const std::vector<EncoderInfo> encoders = combined({x264(), amd(), intel(), nvidia()});
+	CHECK(candidates(encoders, Vendor::Unknown, true) == Ids{"obs_nvenc_hevc_tex", "obs_nvenc_h264_tex",
+								 "obs_qsv11_hevc", "obs_qsv11_v2", "h265_texture_amf",
+								 "h264_texture_amf", "obs_x264"});
+
+	const EncoderInfo appleHevc =
+		encoder("com.apple.videotoolbox.videoencoder.ave.hevc", "hevc", Vendor::Apple, false);
+	CHECK(candidates(combined({x264(), {apple(), appleHevc}}), Vendor::Apple, true) ==
+	      Ids{appleHevc.id, apple().id, "obs_x264"});
+	CHECK(candidates(combined({x264(), {apple(), appleHevc}}), Vendor::Apple) == Ids{apple().id, "obs_x264"});
+}
+
+TEST_CASE("replay candidates keep equal encoders in the order listed")
+{
+	const EncoderInfo first = encoder("first_tex", "h264", Vendor::Nvidia, true);
+	const EncoderInfo second = encoder("second_tex", "h264", Vendor::Nvidia, true);
+	CHECK(candidates({first, second}, Vendor::Nvidia) == Ids{"first_tex", "second_tex"});
+	CHECK(candidates({second, first}, Vendor::Nvidia) == Ids{"second_tex", "first_tex"});
 }
 
 TEST_CASE("replay bitrate scales with pixel rate and is capped")
@@ -199,6 +278,7 @@ TEST_CASE("replay settings for each encoder family")
 			{"multipass", std::string("disabled")},
 			{"lookahead", false},
 			{"adaptive_quantization", false},
+			{"repeat_headers", true},
 			{"opts", std::string("keyint=30")},
 		};
 		CHECK(settingsFor("obs_nvenc_h264_tex", "h264", Vendor::Nvidia) == expected);
@@ -208,9 +288,13 @@ TEST_CASE("replay settings for each encoder family")
 	SECTION("QuickSync")
 	{
 		const EncoderSettings expected = {
-			{"rate_control", std::string("CBR")}, {"bitrate", int64_t{29'970}},
-			{"keyint_sec", int64_t{1}},           {"bframes", int64_t{0}},
-			{"target_usage", std::string("TU7")}, {"latency", std::string("ultra-low")},
+			{"rate_control", std::string("CBR")},
+			{"bitrate", int64_t{29'970}},
+			{"keyint_sec", int64_t{1}},
+			{"bframes", int64_t{0}},
+			{"target_usage", std::string("TU7")},
+			{"latency", std::string("ultra-low")},
+			{"repeat_headers", true},
 		};
 		CHECK(settingsFor("obs_qsv11_v2", "h264", Vendor::Intel) == expected);
 		CHECK(settingsFor("obs_qsv11_hevc", "hevc", Vendor::Intel) == expected);
@@ -219,9 +303,12 @@ TEST_CASE("replay settings for each encoder family")
 	SECTION("AMF")
 	{
 		const EncoderSettings h264 = {
-			{"rate_control", std::string("CBR")}, {"bitrate", int64_t{29'970}},
-			{"keyint_sec", int64_t{1}},           {"bf", int64_t{0}},
-			{"preset", std::string("speed")},     {"ffmpeg_opts", std::string("keyint=30")},
+			{"rate_control", std::string("CBR")},
+			{"bitrate", int64_t{29'970}},
+			{"keyint_sec", int64_t{1}},
+			{"bf", int64_t{0}},
+			{"preset", std::string("speed")},
+			{"ffmpeg_opts", std::string("keyint=30 header_spacing=30")},
 		};
 		CHECK(settingsFor("h264_texture_amf", "h264", Vendor::Amd) == h264);
 
@@ -230,7 +317,7 @@ TEST_CASE("replay settings for each encoder family")
 			{"bitrate", int64_t{29'970}},
 			{"keyint_sec", int64_t{1}},
 			{"preset", std::string("speed")},
-			{"ffmpeg_opts", std::string("HevcGOPSize=30")},
+			{"ffmpeg_opts", std::string("HevcGOPSize=30 gops_per_idr=1 header_insertion_mode=idr")},
 		};
 		CHECK(settingsFor("h265_texture_amf", "hevc", Vendor::Amd) == hevc);
 	}
@@ -255,6 +342,7 @@ TEST_CASE("replay settings for each encoder family")
 			{"bf", int64_t{0}},
 			{"preset", std::string("ultrafast")},
 			{"tune", std::string("zerolatency")},
+			{"repeat_headers", true},
 			{"x264opts", std::string("keyint=30")},
 		};
 		CHECK(settingsFor("obs_x264", "h264", Vendor::Software) == expected);
@@ -270,24 +358,14 @@ TEST_CASE("replay settings follow the GOP parameters")
 		tapeloop::buildReplaySettings(encoder("obs_x264", "h264", Vendor::Software, false), params);
 	CHECK(settings.at("x264opts") == tapeloop::SettingValue(std::string("keyint=15")));
 	CHECK(settings.at("keyint_sec") == tapeloop::SettingValue(int64_t{2}));
-}
 
-TEST_CASE("chooseReplayEncoder needs texture support from NVIDIA, Intel and AMD")
-{
-	const std::vector<EncoderInfo> encoders = {
-		encoder("future_nvenc_cpu", "h264", Vendor::Nvidia, false),
-		encoder("future_qsv_internal", "h264", Vendor::Intel, true, false, true),
-		encoder("obs_x264", "h264", Vendor::Software, false),
-	};
-	CHECK(chosen(encoders) == "obs_x264");
-}
-
-TEST_CASE("chooseReplayEncoder keeps the first of two equal encoders")
-{
-	const EncoderInfo first = encoder("first_tex", "h264", Vendor::Nvidia, true);
-	const EncoderInfo second = encoder("second_tex", "h264", Vendor::Nvidia, true);
-	CHECK(chosen({first, second}) == "first_tex");
-	CHECK(chosen({second, first}) == "second_tex");
+	const EncoderSettings amfH264 =
+		tapeloop::buildReplaySettings(encoder("h264_texture_amf", "h264", Vendor::Amd, true), params);
+	CHECK(amfH264.at("ffmpeg_opts") == tapeloop::SettingValue(std::string("keyint=15 header_spacing=15")));
+	const EncoderSettings amfHevc =
+		tapeloop::buildReplaySettings(encoder("h265_texture_amf", "hevc", Vendor::Amd, true), params);
+	CHECK(amfHevc.at("ffmpeg_opts") ==
+	      tapeloop::SettingValue(std::string("HevcGOPSize=15 gops_per_idr=1 header_insertion_mode=idr")));
 }
 
 TEST_CASE("replay settings keep the QSV bitrate within 16 bits")
