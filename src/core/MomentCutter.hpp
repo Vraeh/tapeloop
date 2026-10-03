@@ -1,0 +1,36 @@
+// SPDX-License-Identifier: GPL-2.0-or-later
+// Copyright (C) 2026 Vicente Aedo <ryde1337@gmail.com>
+
+#pragma once
+
+#include "core/MediaTime.hpp"
+#include "core/MomentList.hpp"
+#include "core/SourceBuffer.hpp"
+
+#include <functional>
+#include <span>
+#include <string>
+#include <vector>
+
+namespace tapeloop {
+
+// A view for one call: the buffer must outlive the call to cutMoment.
+struct MomentSource {
+	std::string sourceKey;
+	std::reference_wrapper<const SourceBuffer> buffer;
+};
+
+struct MomentCut {
+	// Not yet in any MomentList, so its id is still zero.
+	Moment moment;
+	// Sources that held nothing in the requested range.
+	std::vector<std::string> skipped;
+};
+
+// Cuts the range [anchor - preRoll, anchor] from every source, with a negative
+// pre-roll taken as zero. Each clip covers the part of the range its buffer holds and
+// records its own in and out frames; the moment's start and end are the range asked
+// for, not the part the clips cover.
+MomentCut cutMoment(std::span<const MomentSource> sources, Nanoseconds anchor, Nanoseconds preRoll);
+
+} // namespace tapeloop
