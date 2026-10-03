@@ -74,6 +74,9 @@ public:
 	// keyframe again.
 	void clear();
 
+	// Replaces the configured byte budget; eviction applies it at the next keyframe.
+	void setByteBudget(size_t maxBytes);
+
 private:
 	std::vector<std::shared_ptr<const Gop>> collectLocked(Nanoseconds from, Nanoseconds to) const;
 	void sealLocked();
@@ -82,6 +85,7 @@ private:
 	Nanoseconds newestTimeLocked() const noexcept;
 
 	const SourceBufferConfig config_;
+	size_t maxBytes_;
 
 	mutable std::mutex mutex_;
 	GopBuilder builder_;
