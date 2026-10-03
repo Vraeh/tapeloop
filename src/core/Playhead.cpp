@@ -12,21 +12,8 @@ namespace tapeloop {
 namespace {
 
 constexpr int64_t kMax = std::numeric_limits<int64_t>::max();
-constexpr int64_t kMin = std::numeric_limits<int64_t>::min();
 // Units of remainder per nanosecond.
 constexpr int64_t kScale = 2000;
-
-// b is twice a rate, so negating it cannot overflow.
-int64_t saturatingMultiply(int64_t a, int64_t b) noexcept
-{
-	if (a == 0 || b == 0)
-		return 0;
-	const bool negative = (a < 0) != (b < 0);
-	const int64_t magnitudeB = b < 0 ? -b : b;
-	if (a > kMax / magnitudeB || a < -(kMax / magnitudeB))
-		return negative ? kMin : kMax;
-	return a * b;
-}
 
 PlayheadConfig normalized(PlayheadConfig config) noexcept
 {
@@ -215,18 +202,29 @@ void Playhead::advanceScrub(int64_t elapsed) noexcept
 
 void Playhead::move(int64_t elapsed, int64_t doubledRate) noexcept
 {
-	// position_ * kScale + remainder_ grows by exactly elapsed * doubledRate, split so
-	// that no product overflows.
-	const int64_t whole = elapsed / kScale;
-	const int64_t scaledPart = (elapsed % kScale) * doubledRate + remainder_;
-	int64_t carry = scaledPart / kScale;
-	remainder_ = scaledPart % kScale;
-	if (remainder_ < 0) {
-		remainder_ += kScale;
-		--carry;
+	if (doubledRate == 0)
+		return;
+
+	// position_ * kScale + remainder_ grows by exactly elapsed * doubledRate. A long
+	// step goes in pieces small enough that whole * doubledRate + carry fits in 64 bits;
+	// each piece then covers about half the range of the clock, so once the position
+	// saturates at the end it is heading for, the loop stops after a round or two.
+	const int64_t magnitude = doubledRate < 0 ? -doubledRate : doubledRate;
+	const int64_t maxWhole = kMax / magnitude - 1;
+	const Nanoseconds saturated = doubledRate > 0 ? Nanoseconds::max() : Nanoseconds::min();
+	while (elapsed > 0 && position_ != saturated) {
+		const int64_t piece = elapsed / kScale > maxWhole ? maxWhole * kScale : elapsed;
+		elapsed -= piece;
+
+		const int64_t scaledPart = (piece % kScale) * doubledRate + remainder_;
+		int64_t carry = scaledPart / kScale;
+		remainder_ = scaledPart % kScale;
+		if (remainder_ < 0) {
+			remainder_ += kScale;
+			--carry;
+		}
+		position_ = saturatingAdd(position_, Nanoseconds{(piece / kScale) * doubledRate + carry});
 	}
-	position_ = saturatingAdd(position_, saturatingAdd(Nanoseconds{saturatingMultiply(whole, doubledRate)},
-							   Nanoseconds{carry}));
 }
 
 void Playhead::moveTo(Nanoseconds time) noexcept

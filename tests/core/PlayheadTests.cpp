@@ -597,3 +597,60 @@ TEST_CASE("Playhead position is exact against 128-bit arithmetic")
 }
 
 #endif
+
+TEST_CASE("Playhead reaches the end of a clip that spans most of the clock")
+{
+	// Found by the fuzzer: a step whose length times the rate overflows used to move by
+	// the saturated product from a negative position and stop short of the end.
+	tapeloop::PlayheadConfig config;
+	config.maxRate = 50'000;
+	Playhead playhead(config);
+	playhead.load({Nanoseconds{-500'000'000'000'000'000}, Nanoseconds{9'000'000'000'000'000'000}});
+	playhead.setRate(45'362);
+	playhead.play();
+
+	Playhead twoSteps = playhead;
+	playhead.advance(Nanoseconds{5'280'832'617'179'597'129});
+	CHECK(playhead.atEnd());
+	CHECK_FALSE(playhead.playing());
+
+	twoSteps.advance(Nanoseconds{1'000'000'000'000'000'000});
+	twoSteps.advance(Nanoseconds{4'280'832'617'179'597'129});
+	CHECK(twoSteps.position() == playhead.position());
+}
+
+TEST_CASE("Playhead moves exactly over steps whose product needs more than 64 bits")
+{
+	tapeloop::PlayheadConfig config;
+	config.maxRate = 50'000;
+	Playhead playhead(config);
+	playhead.load({Nanoseconds::min() + 1s, Nanoseconds::max() - 1s});
+	playhead.setRate(4'500);
+	playhead.play();
+
+	// 2.2e18 ns at 4.5x is 9.9e18 ns, just more than the range from the start to zero,
+	// and 2.2e18 * 9000 does not fit in 64 bits.
+	const int64_t elapsed = 2'200'000'000'000'000'000;
+	playhead.advance(Nanoseconds{elapsed});
+	CHECK(playhead.position() ==
+	      Nanoseconds::min() + 1s + Nanoseconds{elapsed / 2 * 4} + Nanoseconds{elapsed / 2 * 5});
+}
+
+TEST_CASE("Playhead moves away from the edges of the clock")
+{
+	// Found by the fuzzer: a clip starting at the earliest representable time did not
+	// play forward, nor one ending at the latest play in reverse.
+	Playhead first;
+	first.load({Nanoseconds::min(), Nanoseconds::min() + 1s});
+	first.play();
+	first.advance(500ms);
+	CHECK(first.position() == Nanoseconds::min() + 500ms);
+
+	Playhead last;
+	last.load({Nanoseconds::max() - 1s, Nanoseconds::max()});
+	last.seek(Nanoseconds::max());
+	last.reverse();
+	last.play();
+	last.advance(500ms);
+	CHECK(last.position() == Nanoseconds::max() - 500ms);
+}

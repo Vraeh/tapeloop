@@ -2,6 +2,22 @@ cmake_minimum_required(VERSION 3.28...3.30)
 
 project(tapeloop-tests LANGUAGES CXX)
 
+option(TAPELOOP_FUZZ "Build the libFuzzer harnesses (Clang only)" OFF)
+
+if(TAPELOOP_FUZZ)
+  if(NOT CMAKE_CXX_COMPILER_ID STREQUAL "Clang")
+    message(FATAL_ERROR "The fuzz harnesses need LLVM Clang, which ships libFuzzer")
+  endif()
+  # Everything is instrumented for libFuzzer's coverage feedback and runs under ASan and
+  # UBSan; only the harnesses link libFuzzer itself.
+  add_compile_options(
+    -fsanitize=fuzzer-no-link,address,undefined
+    -fno-sanitize-recover=undefined
+    -fno-omit-frame-pointer
+  )
+  add_link_options(-fsanitize=address,undefined)
+endif()
+
 set(CMAKE_CXX_STANDARD 20)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
 set(CMAKE_CXX_EXTENSIONS OFF)
@@ -44,3 +60,7 @@ enable_testing()
 list(APPEND CMAKE_MODULE_PATH "${catch2_SOURCE_DIR}/extras")
 include(Catch)
 catch_discover_tests(tapeloop-core-tests)
+
+if(TAPELOOP_FUZZ)
+  add_subdirectory(fuzz)
+endif()

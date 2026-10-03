@@ -66,6 +66,16 @@
       }
     },
     {
+      "name": "linux-clang-fuzz",
+      "displayName": "Linux Clang libFuzzer harnesses",
+      "inherits": ["linux"],
+      "cacheVariables": {
+        "CMAKE_CXX_COMPILER": "clang++",
+        "CMAKE_BUILD_TYPE": "RelWithDebInfo",
+        "TAPELOOP_FUZZ": true
+      }
+    },
+    {
       "name": "windows-msvc",
       "displayName": "Windows MSVC",
       "inherits": ["base"],
@@ -104,6 +114,11 @@
     {
       "name": "linux-clang-tsan",
       "configurePreset": "linux-clang-tsan"
+    },
+    {
+      "name": "linux-clang-fuzz",
+      "configurePreset": "linux-clang-fuzz",
+      "targets": ["source-buffer-fuzz", "playhead-fuzz"]
     },
     {
       "name": "windows-msvc",

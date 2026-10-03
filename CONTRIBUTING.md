@@ -59,6 +59,21 @@ cmake --workflow --preset linux-gcc
 The presets are `linux-gcc`, `linux-clang-asan`, `linux-clang-tsan`, `windows-msvc` and
 `macos`. CI runs all five on every pull request.
 
+CI also runs the libFuzzer harnesses in `tests/fuzz` for a minute each. They need
+LLVM Clang (Apple's Clang has no libFuzzer):
+
+```
+cd tests
+cmake --preset linux-clang-fuzz
+cmake --build --preset linux-clang-fuzz
+mkdir -p ../build_tests/corpus
+../build_tests/linux-clang-fuzz/fuzz/source-buffer-fuzz ../build_tests/corpus fuzz/corpus/source-buffer
+```
+
+libFuzzer writes new inputs into the first directory it is given, so keep the committed
+corpus second. To reproduce a crash from the `fuzz-crashes` artifact of a CI run, pass
+the file instead of the directories.
+
 CI also runs clang-tidy over `src/core` with the checks in `.clang-tidy`, and any
 warning fails the job. To run it locally with Clang 18:
 
