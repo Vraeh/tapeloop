@@ -74,7 +74,26 @@ libFuzzer writes new inputs into the first directory it is given, so keep the co
 corpus second. To reproduce a crash from the `fuzz-crashes` artifact of a CI run, pass
 the file instead of the directories.
 
-CI builds the tests with the `linux-clang-coverage` preset, reports the line coverage
+The libobs glue is tested in `tests/obs` against a real libobs running headless: the
+OBS sources pinned in `buildspec.json`, built without the frontend or the plugin set,
+plus OBS's obs-x264 plugin, rendering with Mesa's software OpenGL under Xvfb. Building
+libobs needs its Linux build dependencies, x264 and FFmpeg; the `linux-obs` job in
+`.github/workflows/run-tests.yaml` lists the Ubuntu packages. Then:
+
+```
+cmake -DPREFIX=$HOME/libobs -DWORK_DIR=$HOME/libobs-build -P tests/obs/BuildLibobs.cmake
+cd tests/obs
+export TAPELOOP_LIBOBS_PREFIX=$HOME/libobs
+LIBGL_ALWAYS_SOFTWARE=1 xvfb-run --auto-servernum cmake --workflow --preset linux-obs
+```
+
+libobs finds its data through the prefix it was built for, so build it where it will
+stay. Each test starts libobs and shuts it down, and fails if libobs still holds memory
+or had to free objects or views itself. CI builds libobs and the tests with ASan and
+UBSan instead (`-DSANITIZE=ON` and the `linux-obs-asan` preset); `tests/obs/lsan.supp`
+leaves out what Mesa allocates in the OpenGL driver and keeps until exit.
+
+CI builds the core tests with the `linux-clang-coverage` preset, reports the line coverage
 of `src/core` and fails below 90%.
 
 CI also runs clang-tidy over `src/core` with the checks in `.clang-tidy`, and any
