@@ -28,6 +28,7 @@ target_sources(
     core/AllocationCounter.cpp
     core/AllocationCounter.hpp
     core/ClipTests.cpp
+    core/EncoderPolicyTests.cpp
     core/GopTests.cpp
     core/MediaTimeTests.cpp
     core/MomentCutterTests.cpp

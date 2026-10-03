@@ -16,6 +16,8 @@ target_sources(
   PRIVATE
     Clip.cpp
     Clip.hpp
+    EncoderPolicy.cpp
+    EncoderPolicy.hpp
     Gop.cpp
     Gop.hpp
     MediaTime.cpp
