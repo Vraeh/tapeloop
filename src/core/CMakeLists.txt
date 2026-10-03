@@ -28,6 +28,8 @@ target_sources(
     MomentList.hpp
     Playhead.cpp
     Playhead.hpp
+    ReplaySize.cpp
+    ReplaySize.hpp
     SourceBuffer.cpp
     SourceBuffer.hpp
 )
