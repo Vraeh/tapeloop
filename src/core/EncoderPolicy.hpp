@@ -8,10 +8,10 @@
 #include <chrono>
 #include <cstdint>
 #include <map>
-#include <optional>
 #include <span>
 #include <string>
 #include <variant>
+#include <vector>
 
 namespace tapeloop {
 
@@ -32,15 +32,21 @@ struct EncoderInfo {
 };
 
 struct EncoderPreferences {
-	// Use HEVC when some encoder offers it, H.264 otherwise.
+	// Try each vendor's HEVC encoder before its H.264 one.
 	bool preferHevc = false;
 };
 
-// Picks the replay encoder: NVIDIA, Intel and AMD texture encoders in that order, then
-// VideoToolbox, then x264. Deprecated and internal ids never qualify; between equals
-// the first listed wins.
-std::optional<EncoderInfo> chooseReplayEncoder(std::span<const EncoderInfo> encoders,
-					       const EncoderPreferences &preferences);
+// The encoders to try for a replay buffer, best first. Texture encoders of the vendor
+// whose adapter OBS renders on come first, then the other hardware encoders (that
+// vendor's own, then NVIDIA, Intel, AMD and VideoToolbox), then x264. Within a vendor,
+// texture encoders go before the others and, when HEVC is preferred, each HEVC encoder
+// goes right before the H.264 one. When the render vendor is Unknown or Software, the
+// order is the fixed one: NVIDIA, Intel and AMD texture encoders, VideoToolbox, x264.
+// Only H.264 encoders qualify, and HEVC ones when preferred; never deprecated or
+// internal ones, nor those of an Unknown vendor. Between equals the first listed
+// comes first.
+std::vector<EncoderInfo> replayEncoderCandidates(std::span<const EncoderInfo> encoders, Vendor renderVendor,
+						 const EncoderPreferences &preferences);
 
 struct ReplayEncoderParams {
 	int64_t width = 1920;
