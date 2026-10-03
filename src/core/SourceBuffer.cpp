@@ -52,6 +52,21 @@ void SourceBuffer::push(const EncodedPacket &packet)
 	synced_ = true;
 }
 
+void SourceBuffer::setCodecConfig(std::span<const uint8_t> codecConfig)
+{
+	// The copy is made before locking, so the encoder thread never waits for it.
+	std::shared_ptr<const CodecConfig> shared;
+	if (!codecConfig.empty())
+		shared = std::make_shared<const CodecConfig>(codecConfig.begin(), codecConfig.end());
+
+	std::lock_guard lock(mutex_);
+	sealLocked();
+	builder_.setCodecConfig(std::move(shared));
+	if (synced_)
+		++discontinuities_;
+	synced_ = false;
+}
+
 Clip SourceBuffer::clip(Nanoseconds duration) const
 {
 	std::vector<std::shared_ptr<const Gop>> gops;
@@ -85,6 +100,20 @@ SourceBufferStats SourceBuffer::stats() const
 	SourceBufferStats stats;
 	stats.bytes = sealedBytes_ + builder_.byteSize();
 	stats.gopCount = gops_.size() + (builder_.empty() ? 0 : 1);
+
+	// GOPs that share a configuration are adjacent, because the buffer never goes back
+	// to an earlier one, so counting at each change of pointer counts each one once.
+	const CodecConfig *previous = nullptr;
+	const auto countConfig = [&](const CodecConfig *codecConfig) {
+		if (codecConfig && codecConfig != previous)
+			stats.configBytes += codecConfig->size();
+		previous = codecConfig;
+	};
+	for (const auto &gop : gops_)
+		countConfig(gop->codecConfig());
+	if (!builder_.empty())
+		countConfig(builder_.codecConfig());
+
 	if (!gops_.empty())
 		stats.oldestTime = gops_.front()->startTime();
 	else if (!builder_.empty())

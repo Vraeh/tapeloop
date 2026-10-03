@@ -14,6 +14,7 @@
 #include <new>
 #include <vector>
 
+using tapeloop::CodecConfig;
 using tapeloop::EncodedPacket;
 using tapeloop::GopBuilder;
 using tapeloop::Nanoseconds;
@@ -100,6 +101,46 @@ TEST_CASE("GopBuilder snapshots are not affected by later packets")
 	CHECK(sealed.get() != snapshot.get());
 }
 
+TEST_CASE("GopBuilder gives every GOP the codec configuration it holds")
+{
+	SyntheticEncoder::Config config;
+	config.gopLength = 3;
+	SyntheticEncoder encoder(config);
+	GopBuilder builder(encoder.frameDuration());
+
+	for (int i = 0; i < 3; ++i)
+		builder.append(encoder.next());
+	CHECK(builder.seal()->codecConfig() == nullptr);
+
+	auto first = std::make_shared<const CodecConfig>(CodecConfig{0, 0, 0, 1, 0x67});
+	const CodecConfig *firstAddress = first.get();
+	builder.setCodecConfig(first);
+	std::vector<std::shared_ptr<const tapeloop::Gop>> gops;
+	for (int gop = 0; gop < 2; ++gop) {
+		for (int i = 0; i < 3; ++i)
+			builder.append(encoder.next());
+		gops.push_back(builder.seal());
+	}
+	builder.append(encoder.next());
+	gops.push_back(builder.snapshot());
+	builder.append(encoder.next());
+	builder.append(encoder.next());
+	gops.push_back(builder.seal());
+	for (const auto &gop : gops)
+		CHECK(gop->codecConfig() == firstAddress);
+
+	builder.setCodecConfig(std::make_shared<const CodecConfig>(CodecConfig{0, 0, 0, 1, 0x40}));
+	builder.append(encoder.next());
+	const auto next = builder.seal();
+	REQUIRE(next->codecConfig() != nullptr);
+	CHECK(*next->codecConfig() == CodecConfig{0, 0, 0, 1, 0x40});
+
+	// The GOPs keep the earlier configuration alive.
+	first.reset();
+	CHECK(gops.front()->codecConfig() == firstAddress);
+	CHECK(*gops.front()->codecConfig() == CodecConfig{0, 0, 0, 1, 0x67});
+}
+
 TEST_CASE("GopBuilder does not allocate per packet in steady state")
 {
 	if (!tapeloop::test::kAllocationHooks)
@@ -110,6 +151,7 @@ TEST_CASE("GopBuilder does not allocate per packet in steady state")
 	config.frameSize = 5'000;
 	SyntheticEncoder encoder(config);
 	GopBuilder builder(encoder.frameDuration());
+	builder.setCodecConfig(std::make_shared<const CodecConfig>(CodecConfig(40, 0x42)));
 
 	// The first GOPs size the buffers.
 	for (int i = 0; i < 90; ++i) {
@@ -125,7 +167,8 @@ TEST_CASE("GopBuilder does not allocate per packet in steady state")
 		{
 			AllocationCounter allocations;
 			builder.seal();
-			// The Gop, its bytes and its packet table.
+			// The Gop, its bytes and its packet table; the codec configuration is
+			// shared, not copied.
 			if (tapeloop::test::kExactAllocationCounts)
 				CHECK(allocations.count() <= 3);
 		}

@@ -20,8 +20,10 @@ struct FrameLocation {
 
 // A cut of one source between two frames, in and out, both inclusive. It holds whole
 // GOPs, starting at the one that contains the in frame, because decoding has to start
-// at a keyframe. The GOPs are shared, never copied, so a clip outlives the buffer it
-// was cut from and costs little to copy.
+// at a keyframe. Each GOP carries the codec configuration of its run, so a decoder can
+// start at any of them, as long as the encoder reported one or repeats it in the
+// stream. The GOPs are shared, never copied, so a clip outlives the buffer it was cut
+// from and costs little to copy.
 class Clip {
 public:
 	Clip() = default;

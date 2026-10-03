@@ -8,10 +8,12 @@
 
 namespace tapeloop {
 
-Gop::Gop(Key, std::vector<uint8_t> bytes, std::vector<PacketRecord> packets, Nanoseconds frameDuration)
+Gop::Gop(Key, std::vector<uint8_t> bytes, std::vector<PacketRecord> packets, Nanoseconds frameDuration,
+	 std::shared_ptr<const CodecConfig> codecConfig)
 	: bytes_(std::move(bytes)),
 	  packets_(std::move(packets)),
-	  frameDuration_(frameDuration)
+	  frameDuration_(frameDuration),
+	  codecConfig_(std::move(codecConfig))
 {
 	assert(!packets_.empty() && packets_.front().keyframe);
 }
@@ -69,10 +71,16 @@ void GopBuilder::clear() noexcept
 	packets_.clear();
 }
 
+void GopBuilder::setCodecConfig(std::shared_ptr<const CodecConfig> codecConfig) noexcept
+{
+	assert(packets_.empty());
+	codecConfig_ = std::move(codecConfig);
+}
+
 std::shared_ptr<const Gop> GopBuilder::makeGop() const
 {
 	assert(!packets_.empty());
-	return std::make_shared<const Gop>(Gop::Key{}, bytes_, packets_, frameDuration_);
+	return std::make_shared<const Gop>(Gop::Key{}, bytes_, packets_, frameDuration_, codecConfig_);
 }
 
 } // namespace tapeloop

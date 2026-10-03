@@ -23,6 +23,10 @@ struct EncodedPacket {
 	bool keyframe = false;
 };
 
+// The codec configuration an encoder reports for one run, as obs_encoder_get_extra_data
+// gives it: the parameter sets a decoder needs before the first keyframe.
+using CodecConfig = std::vector<uint8_t>;
+
 struct PacketRecord {
 	int64_t pts = 0;
 	int64_t dts = 0;
@@ -33,8 +37,9 @@ struct PacketRecord {
 };
 
 // A group of pictures: one contiguous block with the data of every packet, plus a
-// table describing each packet. The first packet is always a keyframe and times are
-// strictly increasing. Immutable once built, so it can be shared between threads.
+// table describing each packet, plus the codec configuration of its run. The first
+// packet is always a keyframe and times are strictly increasing. Immutable once built,
+// so it can be shared between threads.
 class Gop {
 public:
 	// Only GopBuilder can make a Key, so only it can build a Gop, while make_shared
@@ -44,10 +49,16 @@ public:
 		Key() = default;
 	};
 
-	Gop(Key, std::vector<uint8_t> bytes, std::vector<PacketRecord> packets, Nanoseconds frameDuration);
+	Gop(Key, std::vector<uint8_t> bytes, std::vector<PacketRecord> packets, Nanoseconds frameDuration,
+	    std::shared_ptr<const CodecConfig> codecConfig);
 
 	std::span<const PacketRecord> packets() const noexcept { return packets_; }
 	std::span<const uint8_t> packetData(size_t index) const noexcept;
+
+	// The configuration of the run the GOP belongs to: every GOP of a run points at the
+	// same object, valid as long as any of them lives. Null when the encoder reported
+	// none.
+	const CodecConfig *codecConfig() const noexcept { return codecConfig_.get(); }
 
 	Nanoseconds startTime() const noexcept { return packets_.front().time; }
 	Nanoseconds lastTime() const noexcept { return packets_.back().time; }
@@ -60,6 +71,7 @@ private:
 	std::vector<uint8_t> bytes_;
 	std::vector<PacketRecord> packets_;
 	Nanoseconds frameDuration_;
+	std::shared_ptr<const CodecConfig> codecConfig_;
 };
 
 // Collects the packets of the GOP being encoded. Its buffers keep their capacity from
@@ -89,10 +101,15 @@ public:
 	// Drops the packets and starts a new GOP, keeping the buffers.
 	void clear() noexcept;
 
+	// The configuration the GOPs built from now on point at. The builder must be empty.
+	void setCodecConfig(std::shared_ptr<const CodecConfig> codecConfig) noexcept;
+	const CodecConfig *codecConfig() const noexcept { return codecConfig_.get(); }
+
 private:
 	std::shared_ptr<const Gop> makeGop() const;
 
 	Nanoseconds frameDuration_;
+	std::shared_ptr<const CodecConfig> codecConfig_;
 	std::vector<uint8_t> bytes_;
 	std::vector<PacketRecord> packets_;
 	// Size of the last GOP, to reserve room for the next one.
