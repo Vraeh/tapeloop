@@ -5,7 +5,7 @@ include("${CMAKE_CURRENT_SOURCE_DIR}/cmake/common/bootstrap.cmake" NO_POLICY_SCO
 project(${_name} VERSION ${_version})
 
 option(ENABLE_FRONTEND_API "Use obs-frontend-api for UI functionality" ON)
-option(ENABLE_QT "Use Qt functionality" OFF)
+option(ENABLE_QT "Use Qt functionality" ON)
 
 include(compilerconfig)
 include(defaults)
@@ -27,8 +27,12 @@ endif()
 find_package(obs-frontend-api REQUIRED)
 target_link_libraries(${CMAKE_PROJECT_NAME} PRIVATE OBS::obs-frontend-api)
 
+# The dock is a Qt widget.
+if(NOT ENABLE_QT)
+  message(FATAL_ERROR "Tapeloop needs ENABLE_QT")
+endif()
 if(ENABLE_QT)
-  find_package(Qt6 COMPONENTS Widgets Core)
+  find_package(Qt6 REQUIRED COMPONENTS Widgets Core)
   target_link_libraries(${CMAKE_PROJECT_NAME} PRIVATE Qt6::Core Qt6::Widgets)
   target_compile_options(
     ${CMAKE_PROJECT_NAME}
@@ -42,6 +46,19 @@ endif()
 
 # FrontendBridge needs obs-frontend-api, which the libobs tests do not have, so it is
 # not part of tapeloop-obs.
-target_sources(${CMAKE_PROJECT_NAME} PRIVATE src/plugin-main.cpp src/obs/FrontendBridge.cpp src/obs/FrontendBridge.hpp)
+target_sources(
+  ${CMAKE_PROJECT_NAME}
+  PRIVATE
+    src/obs/FrontendBridge.cpp
+    src/obs/FrontendBridge.hpp
+    src/plugin-main.cpp
+    src/ui/DockBackend.hpp
+    src/ui/DockText.cpp
+    src/ui/DockText.hpp
+    src/ui/SourceSettingsDialog.cpp
+    src/ui/SourceSettingsDialog.hpp
+    src/ui/TapeloopDock.cpp
+    src/ui/TapeloopDock.hpp
+)
 
 set_target_properties_plugin(${CMAKE_PROJECT_NAME} PROPERTIES OUTPUT_NAME ${_name})

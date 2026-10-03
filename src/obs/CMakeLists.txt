@@ -11,6 +11,8 @@ target_sources(
     CaptureManager.hpp
     CaptureOutput.cpp
     CaptureOutput.hpp
+    ManagerDockBackend.cpp
+    ManagerDockBackend.hpp
     ObsEncoders.cpp
     ObsEncoders.hpp
     SettingsData.cpp
