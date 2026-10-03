@@ -20,6 +20,7 @@
 
 using namespace std::chrono_literals;
 using tapeloop::Clip;
+using tapeloop::CodecConfig;
 using tapeloop::EncodedPacket;
 using tapeloop::Gop;
 using tapeloop::Nanoseconds;
@@ -86,6 +87,32 @@ bool consistent(const SourceBuffer &buffer)
 		bytes += gop->byteSize();
 	}
 	return bytes == buffer.stats().bytes;
+}
+
+// A codec configuration that names the first frame of its run, so a reader can tell
+// which run a GOP belongs to.
+CodecConfig runConfig(int64_t firstFrame)
+{
+	CodecConfig config(8);
+	for (size_t i = 0; i < config.size(); ++i)
+		config[i] = static_cast<uint8_t>(static_cast<uint64_t>(firstFrame) >> (8 * i));
+	return config;
+}
+
+int64_t runOf(const CodecConfig &config)
+{
+	uint64_t frame = 0;
+	for (size_t i = 0; i < config.size(); ++i)
+		frame |= uint64_t{config[i]} << (8 * i);
+	return static_cast<int64_t>(frame);
+}
+
+std::vector<const CodecConfig *> configsOf(const std::vector<std::shared_ptr<const Gop>> &gops)
+{
+	std::vector<const CodecConfig *> configs;
+	for (const auto &gop : gops)
+		configs.push_back(gop->codecConfig());
+	return configs;
 }
 
 } // namespace
@@ -421,6 +448,7 @@ TEST_CASE("SourceBuffer does not allocate per packet in steady state")
 
 	SyntheticEncoder encoder({});
 	SourceBuffer buffer(makeConfig(encoder, 2s, kUnlimited));
+	buffer.setCodecConfig(runConfig(0));
 	pushFrames(buffer, encoder, 300);
 
 	for (int frame = 0; frame < 600; ++frame) {
@@ -435,7 +463,8 @@ TEST_CASE("SourceBuffer does not allocate per packet in steady state")
 		CAPTURE(frame);
 		if (packet.keyframe) {
 			// Sealing: the Gop, its bytes, its packet table, and now and then a new
-			// block and map for the deque of GOPs.
+			// block and map for the deque of GOPs. The codec configuration is
+			// shared, not copied.
 			if (tapeloop::test::kExactAllocationCounts)
 				CHECK(allocations <= 5);
 		} else {
@@ -464,7 +493,9 @@ TEST_CASE("SourceBuffer can be read while the encoder pushes")
 		    !strictlyIncreasing(times))
 			++failures;
 		for (const auto &gop : clip.gops()) {
-			if (!tapeloop::test::hasExpectedBytes(*gop))
+			const CodecConfig *config = gop->codecConfig();
+			if (!tapeloop::test::hasExpectedBytes(*gop) || !config ||
+			    runOf(*config) != gop->packets().front().pts / 600 * 600)
 				++failures;
 		}
 		const auto last = clip.locate(clip.out());
@@ -474,8 +505,12 @@ TEST_CASE("SourceBuffer can be read while the encoder pushes")
 	};
 
 	std::thread producer([&] {
-		for (int frame = 0; frame < 20'000; ++frame)
+		// A new run every 600 frames, each starting on a keyframe.
+		for (int frame = 0; frame < 20'000; ++frame) {
+			if (frame % 600 == 0)
+				buffer.setCodecConfig(runConfig(frame));
 			buffer.push(encoder.next());
+		}
 		done = true;
 	});
 	std::thread recent([&] {
@@ -496,4 +531,215 @@ TEST_CASE("SourceBuffer can be read while the encoder pushes")
 	CHECK(failures == 0);
 	CHECK(clipsRead > 0);
 	CHECK(buffer.stats().newestTime == encoder.timeOf(19'999));
+	CHECK(buffer.stats().droppedBeforeKeyframe == 0);
+}
+
+TEST_CASE("SourceBuffer gives every GOP of a run the same codec configuration")
+{
+	SyntheticEncoder encoder({});
+	SourceBuffer buffer(makeConfig(encoder, 1h, kUnlimited));
+	pushFrames(buffer, encoder, 30);
+	buffer.setCodecConfig(runConfig(30));
+	pushFrames(buffer, encoder, 65);
+
+	const auto gops = heldGops(buffer);
+	REQUIRE(gops.size() == 4);
+	CHECK(gops[0]->codecConfig() == nullptr);
+	REQUIRE(gops[1]->codecConfig() != nullptr);
+	CHECK(*gops[1]->codecConfig() == runConfig(30));
+	CHECK(gops[2]->codecConfig() == gops[1]->codecConfig());
+	CHECK(gops[3]->codecConfig() == gops[1]->codecConfig());
+
+	const SourceBufferStats stats = buffer.stats();
+	CHECK(stats.configBytes == 8);
+	CHECK(stats.bytes == 3 * kGopBytes + 4096 + 4 * 1024);
+	CHECK(stats.droppedBeforeKeyframe == 0);
+	CHECK(consistent(buffer));
+}
+
+TEST_CASE("SourceBuffer starts a new run at a new codec configuration")
+{
+	SyntheticEncoder encoder({});
+	SourceBuffer buffer(makeConfig(encoder, 1h, kUnlimited));
+	buffer.setCodecConfig(runConfig(0));
+	pushFrames(buffer, encoder, 45);
+
+	// The open GOP is sealed with the configuration it was encoded with, and the
+	// frames that follow wait for a keyframe of the new run.
+	buffer.setCodecConfig(CodecConfig(100, 0x11));
+	CHECK(buffer.stats().gopCount == 2);
+	pushFrames(buffer, encoder, 15);
+	CHECK(buffer.stats().droppedBeforeKeyframe == 15);
+	pushFrames(buffer, encoder, 30);
+
+	const auto gops = heldGops(buffer);
+	REQUIRE(gops.size() == 3);
+	CHECK(gops[0]->packets().size() == 30);
+	CHECK(gops[1]->packets().size() == 15);
+	CHECK(gops[2]->packets().front().pts == 60);
+	CHECK(gops[1]->codecConfig() == gops[0]->codecConfig());
+	REQUIRE(gops[2]->codecConfig() != nullptr);
+	CHECK(*gops[2]->codecConfig() == CodecConfig(100, 0x11));
+
+	const SourceBufferStats stats = buffer.stats();
+	CHECK(stats.configBytes == 108);
+	CHECK(stats.discontinuities == 1);
+	CHECK(consistent(buffer));
+}
+
+TEST_CASE("SourceBuffer counts a new codec configuration as a discontinuity only mid-run")
+{
+	SyntheticEncoder encoder({});
+	SourceBuffer buffer(makeConfig(encoder, 1h, kUnlimited));
+
+	// Before the first packet, after a clear, or twice in a row, nothing is cut short.
+	buffer.setCodecConfig(runConfig(0));
+	buffer.setCodecConfig(runConfig(0));
+	CHECK(buffer.stats().discontinuities == 0);
+	pushFrames(buffer, encoder, 30);
+	buffer.clear();
+	buffer.setCodecConfig(runConfig(30));
+	CHECK(buffer.stats().discontinuities == 0);
+
+	// A restart that keeps the buffer, after the run stopped cleanly at a GOP boundary.
+	pushFrames(buffer, encoder, 30);
+	buffer.setCodecConfig(runConfig(60));
+	CHECK(buffer.stats().discontinuities == 1);
+	pushFrames(buffer, encoder, 30);
+	CHECK(buffer.stats().droppedBeforeKeyframe == 0);
+	CHECK(buffer.stats().gopCount == 2);
+}
+
+TEST_CASE("SourceBuffer counts codec configurations in its stats but not its budget")
+{
+	SyntheticEncoder plainEncoder({});
+	SyntheticEncoder configuredEncoder({});
+	SourceBuffer plain(makeConfig(plainEncoder, 1h, 2 * kGopBytes));
+	SourceBuffer configured(makeConfig(configuredEncoder, 1h, 2 * kGopBytes));
+	configured.setCodecConfig(CodecConfig(50'000, 0x22));
+	pushFrames(plain, plainEncoder, 150);
+	pushFrames(configured, configuredEncoder, 150);
+
+	const SourceBufferStats withoutConfig = plain.stats();
+	const SourceBufferStats withConfig = configured.stats();
+	CHECK(withConfig.gopCount == withoutConfig.gopCount);
+	CHECK(withConfig.bytes == withoutConfig.bytes);
+	CHECK(withConfig.oldestTime == withoutConfig.oldestTime);
+	CHECK(withoutConfig.configBytes == 0);
+	CHECK(withConfig.configBytes == 50'000);
+}
+
+TEST_CASE("SourceBuffer stops counting a configuration once its GOPs are gone")
+{
+	SyntheticEncoder encoder({});
+	SourceBuffer buffer(makeConfig(encoder, 1s, kUnlimited));
+	buffer.setCodecConfig(runConfig(0));
+	pushFrames(buffer, encoder, 90);
+	buffer.setCodecConfig(CodecConfig(3, 0x33));
+	pushFrames(buffer, encoder, 30);
+	CHECK(buffer.stats().configBytes == 11);
+
+	// A one second window lets the GOPs of the first run go once the second run holds
+	// more than a second.
+	pushFrames(buffer, encoder, 90);
+	CHECK(configsOf(heldGops(buffer)) ==
+	      std::vector<const CodecConfig *>(3, heldGops(buffer).back()->codecConfig()));
+	CHECK(buffer.stats().configBytes == 3);
+
+	buffer.clear();
+	CHECK(buffer.stats().configBytes == 0);
+}
+
+TEST_CASE("SourceBuffer keeps the codec configuration through clear and discontinuities")
+{
+	SyntheticEncoder::Config encoderConfig;
+	SyntheticEncoder encoder(encoderConfig);
+	SourceBuffer buffer(makeConfig(encoder, 1h, kUnlimited));
+	buffer.setCodecConfig(runConfig(0));
+	pushFrames(buffer, encoder, 40);
+	const CodecConfig *config = heldGops(buffer).front()->codecConfig();
+
+	// Frames 40 to 59 wait for the keyframe at 60.
+	buffer.clear();
+	pushFrames(buffer, encoder, 30);
+	REQUIRE(buffer.stats().gopCount == 1);
+	CHECK(heldGops(buffer).front()->codecConfig() == config);
+
+	// A keyframe earlier than what is held breaks the run but not the configuration.
+	encoderConfig.origin = -1s;
+	SyntheticEncoder restarted(encoderConfig);
+	pushFrames(buffer, restarted, 30);
+	CHECK(buffer.stats().discontinuities == 1);
+	CHECK(configsOf(heldGops(buffer)) == std::vector<const CodecConfig *>{config});
+	CHECK(buffer.stats().configBytes == 8);
+}
+
+TEST_CASE("SourceBuffer takes an empty codec configuration as none")
+{
+	SyntheticEncoder encoder({});
+	SourceBuffer buffer(makeConfig(encoder, 1h, kUnlimited));
+	buffer.setCodecConfig(runConfig(0));
+	buffer.setCodecConfig({});
+	pushFrames(buffer, encoder, 30);
+	CHECK(heldGops(buffer).front()->codecConfig() == nullptr);
+	CHECK(buffer.stats().configBytes == 0);
+}
+
+TEST_CASE("SourceBuffer clips keep the codec configuration after the buffer is gone")
+{
+	SyntheticEncoder encoder({});
+	Clip clip;
+	{
+		SourceBuffer buffer(makeConfig(encoder, 1h, kUnlimited));
+		buffer.setCodecConfig(runConfig(0));
+		pushFrames(buffer, encoder, 45);
+		clip = buffer.clip(1s);
+	}
+	REQUIRE(clip.gops().size() == 2);
+	for (const auto &gop : clip.gops()) {
+		REQUIRE(gop->codecConfig() != nullptr);
+		CHECK(*gop->codecConfig() == runConfig(0));
+	}
+}
+
+TEST_CASE("SourceBuffer changes nothing when setting a codec configuration fails")
+{
+	if (!tapeloop::test::kAllocationFailures)
+		SKIP("allocation failures cannot be injected in this configuration");
+
+	for (size_t skip = 0; skip < 8; ++skip) {
+		CAPTURE(skip);
+		SyntheticEncoder encoder({});
+		SourceBuffer buffer(makeConfig(encoder, 1h, kUnlimited));
+		buffer.setCodecConfig(runConfig(0));
+		pushFrames(buffer, encoder, 45);
+		const CodecConfig *previous = heldGops(buffer).front()->codecConfig();
+		const CodecConfig next = runConfig(45);
+
+		bool failed = false;
+		{
+			tapeloop::test::AllocationFailure failure(skip);
+			try {
+				buffer.setCodecConfig(next);
+			} catch (const std::bad_alloc &) {
+				failed = true;
+			}
+		}
+		pushFrames(buffer, encoder, 45);
+
+		CHECK(consistent(buffer));
+		const auto gops = heldGops(buffer);
+		REQUIRE(gops.size() == 3);
+		if (failed) {
+			CHECK(buffer.stats().droppedBeforeKeyframe == 0);
+			CHECK(buffer.stats().discontinuities == 0);
+			CHECK(configsOf(gops) == std::vector<const CodecConfig *>(3, previous));
+		} else {
+			CHECK(buffer.stats().droppedBeforeKeyframe == 15);
+			CHECK(buffer.stats().discontinuities == 1);
+			CHECK(gops[1]->codecConfig() == previous);
+			REQUIRE(gops[2]->codecConfig() != nullptr);
+			CHECK(*gops[2]->codecConfig() == runConfig(45));
+		}
+	}
 }

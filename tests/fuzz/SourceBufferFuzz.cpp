@@ -8,11 +8,15 @@
 #include <algorithm>
 #include <cstddef>
 #include <cstdint>
+#include <map>
 #include <memory>
+#include <set>
 #include <span>
+#include <utility>
 #include <vector>
 
 using tapeloop::Clip;
+using tapeloop::CodecConfig;
 using tapeloop::EncodedPacket;
 using tapeloop::Gop;
 using tapeloop::Nanoseconds;
@@ -26,13 +30,28 @@ namespace {
 using GopList = std::vector<std::shared_ptr<const Gop>>;
 
 // Which packets the buffer keeps, as its header describes it, tracked apart from the
-// buffer: a run of packets starts at a keyframe and ends at a discontinuity.
+// buffer: a run of packets starts at a keyframe and ends at a discontinuity or a new
+// codec configuration.
 struct SyncModel {
 	bool synced = false;
 	Nanoseconds lastTime{0};
 	int64_t lastDts = 0;
 	uint64_t dropped = 0;
 	uint64_t discontinuities = 0;
+	CodecConfig codecConfig;
+	// Every configuration set so far, and which of them each kept frame was encoded
+	// with, by frame time.
+	std::vector<CodecConfig> configs{CodecConfig{}};
+	std::map<Nanoseconds, size_t> configOfFrame;
+
+	void setCodecConfig(std::span<const uint8_t> bytes)
+	{
+		if (synced)
+			++discontinuities;
+		synced = false;
+		codecConfig.assign(bytes.begin(), bytes.end());
+		configs.push_back(codecConfig);
+	}
 
 	bool breaksRun(const EncodedPacket &packet) const
 	{
@@ -53,6 +72,7 @@ struct SyncModel {
 		synced = true;
 		lastTime = packet.time;
 		lastDts = packet.dts;
+		configOfFrame[packet.time] = configs.size() - 1;
 		return true;
 	}
 };
@@ -110,6 +130,39 @@ void checkRange(const Clip &clip, const std::vector<Nanoseconds> &held, Nanoseco
 	require(clip.frameTimes().size() == static_cast<size_t>(last - first));
 }
 
+// Every frame held is in a GOP with the configuration it was encoded with, a GOP never
+// mixes runs, each configuration is counted once, and once the GOPs move on from one
+// they never come back to it.
+void checkCodecConfigs(const Clip &all, const tapeloop::SourceBufferStats &stats, const SyncModel &model)
+{
+	for (const auto &gop : all.gops()) {
+		const auto first = model.configOfFrame.find(gop->packets().front().time);
+		require(first != model.configOfFrame.end());
+		for (const PacketRecord &packet : gop->packets()) {
+			const auto found = model.configOfFrame.find(packet.time);
+			require(found != model.configOfFrame.end() && found->second == first->second);
+		}
+		const CodecConfig &expected = model.configs[first->second];
+		if (expected.empty())
+			require(gop->codecConfig() == nullptr);
+		else
+			require(gop->codecConfig() && *gop->codecConfig() == expected);
+	}
+
+	std::set<const CodecConfig *> seen;
+	size_t configBytes = 0;
+	const CodecConfig *previous = nullptr;
+	for (const auto &gop : all.gops()) {
+		const CodecConfig *config = gop->codecConfig();
+		if (config && config != previous) {
+			require(seen.insert(config).second);
+			configBytes += config->size();
+		}
+		previous = config;
+	}
+	require(stats.configBytes == configBytes);
+}
+
 // Every GOP held starts with a keyframe, its packet table describes its bytes exactly,
 // times increase across the whole buffer, and the statistics agree with what is held
 // and with the model.
@@ -123,6 +176,8 @@ void checkBuffer(const SourceBuffer &buffer, const SyncModel &model)
 	require(stats.discontinuities == model.discontinuities);
 	require(all.gops().size() == stats.gopCount);
 	require(all.byteSize() == stats.bytes);
+	checkCodecConfigs(all, stats, model);
+
 	if (all.empty()) {
 		require(stats.bytes == 0 && stats.oldestTime == Nanoseconds{0} && stats.newestTime == Nanoseconds{0});
 		return;
@@ -146,8 +201,9 @@ void checkBuffer(const SourceBuffer &buffer, const SyncModel &model)
 	}
 }
 
-// A kept packet is the newest frame held, with its fields and bytes.
-void checkKept(const SourceBuffer &buffer, const EncodedPacket &packet)
+// A kept packet is the newest frame held, with its fields and bytes, in a GOP with the
+// configuration of its run.
+void checkKept(const SourceBuffer &buffer, const EncodedPacket &packet, const CodecConfig &codecConfig)
 {
 	require(buffer.stats().newestTime == packet.time);
 	const Clip newest = buffer.clip(packet.time, packet.time);
@@ -159,6 +215,10 @@ void checkKept(const SourceBuffer &buffer, const EncodedPacket &packet)
 	require(record.keyframe == packet.keyframe);
 	const std::span<const uint8_t> stored = gop.packetData(at.packet);
 	require(std::equal(stored.begin(), stored.end(), packet.data.begin(), packet.data.end()));
+	if (codecConfig.empty())
+		require(gop.codecConfig() == nullptr);
+	else
+		require(gop.codecConfig() && *gop.codecConfig() == codecConfig);
 }
 
 // After a kept keyframe eviction has run on the sealed GOPs: neither rule would drop the
@@ -234,7 +294,7 @@ extern "C" int LLVMFuzzerTestOneInput(const uint8_t *data, size_t size)
 
 			buffer.push(packet);
 			if (model.push(packet)) {
-				checkKept(buffer, packet);
+				checkKept(buffer, packet, model.codecConfig);
 				if (keyframe)
 					checkEviction(buffer, config, before, sealsOpenGop, restarted);
 			}
@@ -258,12 +318,21 @@ extern "C" int LLVMFuzzerTestOneInput(const uint8_t *data, size_t size)
 			checkRange(buffer.clip(from, to), heldTimes(buffer), from, to);
 			break;
 		}
-		case 4:
+		case 4: {
 			buffer.clear();
-			model = SyncModel{};
+			// The configuration outlives a clear.
+			model.synced = false;
+			model.dropped = 0;
+			model.discontinuities = 0;
+			model.configOfFrame.clear();
 			break;
-		default:
+		}
+		case 5: {
+			const std::span<const uint8_t> codecConfig = input.bytes(input.below(64));
+			buffer.setCodecConfig(codecConfig);
+			model.setCodecConfig(codecConfig);
 			break;
+		}
 		}
 		checkBuffer(buffer, model);
 	}
