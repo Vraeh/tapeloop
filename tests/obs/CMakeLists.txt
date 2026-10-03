@@ -48,6 +48,7 @@ target_sources(
     CaptureTests.cpp
     ClipDecoder.cpp
     ClipDecoder.hpp
+    ManagerTests.cpp
     ObsFixture.cpp
     ObsFixture.hpp
     SmokeTests.cpp
