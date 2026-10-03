@@ -14,6 +14,7 @@
 !CMakeLists.txt
 !CMakePresets.json
 !LICENSE
+!CHANGELOG.md
 !README.md
 
 # Exclude lock files
