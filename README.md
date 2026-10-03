@@ -1,59 +1,56 @@
-# OBS Plugin Template
+# Tapeloop
 
-## Introduction
+Instant replay for OBS Studio. Tapeloop keeps a rolling buffer of the sources you
+choose, so when something happens you can cut back to it from any angle, at any speed.
 
-The plugin template is meant to be used as a starting point for OBS Studio plugin development. It includes:
+It is being built for live amateur sports production, where a dedicated replay server
+is out of budget and the existing OBS options either fill the RAM with raw frames or
+are not stable enough to trust during a match.
 
-* Boilerplate plugin source code
-* A CMake project file
-* GitHub Actions workflows and repository actions
+## Status
 
-## Supported Build Environments
+Early development. Nothing is usable yet and there are no releases.
 
-| Platform  | Tool   |
-|-----------|--------|
-| Windows   | Visual Studio 17 2022 |
-| macOS     | XCode 16.0 |
-| Windows, macOS  | CMake 3.30.5 |
-| Ubuntu 24.04 | CMake 3.28.3 |
-| Ubuntu 24.04 | `ninja-build` |
-| Ubuntu 24.04 | `pkg-config`
-| Ubuntu 24.04 | `build-essential` |
+## Goals for the first release
 
-## Quick Start
+- Replay buffers for any video source, encoded on the GPU and kept in memory, never
+  written to disk.
+- Buffer length and replay resolution set by the user.
+- Playback controls: speed changes while the replay is running, reverse, frame
+  stepping and hold-to-scrub.
+- A list of marked moments to choose from.
+- Audio modes: replay audio only, replay audio over the program, or program only.
+- Keyboard hotkeys. Stream Deck and MIDI controllers come later.
 
-An absolute bare-bones [Quick Start Guide](https://github.com/obsproject/obs-plugintemplate/wiki/Quick-Start-Guide) is available in the wiki.
+## Requirements
 
-## Documentation
+- OBS Studio 32.0 or newer.
+- Windows 10 or 11, x64. macOS on Apple Silicon is planned.
+- An NVIDIA GPU with NVENC. Intel Quick Sync and AMD AMF are planned.
 
-All documentation can be found in the [Plugin Template Wiki](https://github.com/obsproject/obs-plugintemplate/wiki).
+## Building
 
-Suggested reading to get up and running:
+Tapeloop uses the build system of the
+[OBS plugin template](https://github.com/obsproject/obs-plugintemplate). The first
+configure run downloads the OBS sources and prebuilt dependencies listed in
+`buildspec.json` into `.deps/`.
 
-* [Getting started](https://github.com/obsproject/obs-plugintemplate/wiki/Getting-Started)
-* [Build system requirements](https://github.com/obsproject/obs-plugintemplate/wiki/Build-System-Requirements)
-* [Build system options](https://github.com/obsproject/obs-plugintemplate/wiki/CMake-Build-System-Options)
+Windows, with Visual Studio 2022 and CMake 3.28 or newer:
 
-## GitHub Actions & CI
+```
+cmake --preset windows-x64
+cmake --build --preset windows-x64
+```
 
-Default GitHub Actions workflows are available for the following repository actions:
+macOS, with Xcode 16 and CMake 3.28 or newer:
 
-* `push`: Run for commits or tags pushed to `master` or `main` branches.
-* `pr-pull`: Run when a Pull Request has been pushed or synchronized.
-* `dispatch`: Run when triggered by the workflow dispatch in GitHub's user interface.
-* `build-project`: Builds the actual project and is triggered by other workflows.
-* `check-format`: Checks CMake and plugin source code formatting and is triggered by other workflows.
+```
+cmake --preset macos
+cmake --build --preset macos
+```
 
-The workflows make use of GitHub repository actions (contained in `.github/actions`) and build scripts (contained in `.github/scripts`) which are not needed for local development, but might need to be adjusted if additional/different steps are required to build the plugin.
+See [CONTRIBUTING.md](CONTRIBUTING.md) before sending changes.
 
-### Retrieving build artifacts
+## License
 
-Successful builds on GitHub Actions will produce build artifacts that can be downloaded for testing. These artifacts are commonly simple archives and will not contain package installers or installation programs.
-
-### Building a Release
-
-To create a release, an appropriately named tag needs to be pushed to the `main`/`master` branch using semantic versioning (e.g., `12.3.4`, `23.4.5-beta2`). A draft release will be created on the associated repository with generated installer packages or installation programs attached as release artifacts.
-
-## Signing and Notarizing on macOS
-
-Basic concepts of codesigning and notarization on macOS are explained in the correspodning [Wiki article](https://github.com/obsproject/obs-plugintemplate/wiki/Codesigning-On-macOS) which has a specific section for the [GitHub Actions setup](https://github.com/obsproject/obs-plugintemplate/wiki/Codesigning-On-macOS#setting-up-code-signing-for-github-actions).
+GPL-2.0-or-later. See [LICENSE](LICENSE).
