@@ -1,0 +1,115 @@
+// SPDX-License-Identifier: GPL-2.0-or-later
+// Copyright (C) 2026 Vicente Aedo <ryde1337@gmail.com>
+
+#pragma once
+
+#include "core/BufferLifecycle.hpp"
+#include "core/BufferSettings.hpp"
+#include "obs/SourceCapture.hpp"
+
+#include <obs.hpp>
+
+#include <atomic>
+#include <map>
+#include <memory>
+#include <optional>
+#include <string>
+#include <vector>
+
+namespace tapeloop::obs {
+
+// What the manager asks the OBS frontend. The plugin implements it with
+// obs-frontend-api; tests replace it.
+class CaptureHost {
+public:
+	virtual ~CaptureHost() = default;
+	virtual bool streamingActive() const = 0;
+	virtual bool recordingActive() const = 0;
+};
+
+struct SourceStatus {
+	bool selected = false;
+	CaptureStats stats;
+};
+
+// Every selected source with its capture and buffer, started and stopped as the buffer
+// lifecycle and the settings say. Every call runs on the UI thread.
+class CaptureManager {
+public:
+	explicit CaptureManager(CaptureHost &host);
+	~CaptureManager();
+
+	CaptureManager(const CaptureManager &) = delete;
+	CaptureManager &operator=(const CaptureManager &) = delete;
+
+	const BufferSettings &settings() const noexcept { return settings_; }
+	// Sources selected while the buffers run start at once and unselected ones stop and
+	// free their buffer; any other change reaches a capture at its next start.
+	void setSettings(BufferSettings settings);
+
+	bool running() const noexcept { return lifecycle_.running(); }
+	bool manualControlEnabled() const noexcept { return lifecycle_.manualControlEnabled(); }
+	// False when refused.
+	bool manualStart();
+	bool manualStop();
+
+	void onStreaming(bool active);
+	void onRecording(bool active);
+	// The scene collection is being cleared: every capture stops, every buffer goes and
+	// no source reference is kept, so that the frontend can free them all.
+	void onSceneCollectionCleanup();
+	void onExit();
+
+	// Stops the captures of removed sources, restarts captures whose source changed size
+	// keeping their buffers, retries selected sources that had no size or were not found,
+	// and catches up with output changes the frontend did not report. Meant to run every
+	// second or so.
+	void poll();
+
+	// The settings under kSettingsKey of the scene collection's data. Loading starts the
+	// lifecycle over with the collection's own settings.
+	void save(obs_data_t *collection) const;
+	void load(obs_data_t *collection);
+
+	SourceStatus status(const std::string &uuid) const;
+	// Null when the source has no buffer.
+	const SourceBuffer *buffer(const std::string &uuid) const;
+
+private:
+	struct Entry {
+		SourceCapture capture;
+		// Held while capturing, with the remove signal connected to removed.
+		OBSSourceAutoRelease source;
+		// Set by the remove signal, from whatever thread removes the source.
+		std::atomic<bool> removed{false};
+		// Starting failed for lack of a size or of the source itself, which poll retries
+		// with the same keepBuffer.
+		bool retry = false;
+		bool retryKeepsBuffer = false;
+	};
+
+	// What a start found out about the source.
+	enum class StartOutcome { Started, Failed, SourceRemoved };
+
+	void reconcile();
+	// candidates is filled on first use, so a batch of starts reads the encoders and the
+	// render adapter once. A quiet start skips a source without a size without trying.
+	StartOutcome start(const std::string &uuid, Entry &entry, bool keepBuffer, bool quiet,
+			   std::optional<std::vector<EncoderInfo>> &candidates);
+	void stop(Entry &entry);
+	void releaseAll();
+	void followOutputs();
+	static void handleRemove(void *data, calldata_t *) noexcept;
+
+	CaptureHost &host_;
+	BufferSettings settings_;
+	BufferLifecycle lifecycle_;
+	std::map<std::string, std::unique_ptr<Entry>> entries_;
+	// Names saved with the settings, for log lines about sources that are not found.
+	std::map<std::string, std::string> savedNames_;
+	// Settings of a version this build does not know, written back as they came.
+	OBSDataAutoRelease foreignSettings_;
+	bool exiting_ = false;
+};
+
+} // namespace tapeloop::obs
