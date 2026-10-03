@@ -217,6 +217,36 @@ TEST_CASE("replay candidates keep equal encoders in the order listed")
 	CHECK(candidates({second, first}, Vendor::Nvidia) == Ids{"second_tex", "first_tex"});
 }
 
+TEST_CASE("encoder vendors come from the ids OBS registers")
+{
+	for (const auto &group : {nvidia(), intel(), amd(), x264()}) {
+		for (const EncoderInfo &info : group) {
+			CAPTURE(info.id);
+			CHECK(tapeloop::encoderVendor(info.id) == info.vendor);
+		}
+	}
+	CHECK(tapeloop::encoderVendor("jim_av1_nvenc") == Vendor::Nvidia);
+	CHECK(tapeloop::encoderVendor("ffmpeg_nvenc") == Vendor::Nvidia);
+	CHECK(tapeloop::encoderVendor("obs_qsv11_av1") == Vendor::Intel);
+	CHECK(tapeloop::encoderVendor("av1_texture_amf") == Vendor::Amd);
+	CHECK(tapeloop::encoderVendor(apple().id) == Vendor::Apple);
+	CHECK(tapeloop::encoderVendor("ffmpeg_vaapi_tex") == Vendor::Unknown);
+	CHECK(tapeloop::encoderVendor("obs_x264_extra") == Vendor::Unknown);
+	CHECK(tapeloop::encoderVendor("") == Vendor::Unknown);
+}
+
+TEST_CASE("adapter vendors come from the driver's name")
+{
+	CHECK(tapeloop::adapterVendor("NVIDIA GeForce RTX 3060") == Vendor::Nvidia);
+	CHECK(tapeloop::adapterVendor("AMD Radeon RX 7800 XT") == Vendor::Amd);
+	CHECK(tapeloop::adapterVendor("Radeon RX 580 Series") == Vendor::Amd);
+	CHECK(tapeloop::adapterVendor("Intel(R) UHD Graphics 770") == Vendor::Intel);
+	CHECK(tapeloop::adapterVendor("Apple M1 Pro") == Vendor::Apple);
+	CHECK(tapeloop::adapterVendor("Mesa llvmpipe (LLVM 21.1.8, 256 bits)") == Vendor::Unknown);
+	CHECK(tapeloop::adapterVendor("Microsoft Basic Render Driver") == Vendor::Unknown);
+	CHECK(tapeloop::adapterVendor("") == Vendor::Unknown);
+}
+
 TEST_CASE("replay bitrate scales with pixel rate and is capped")
 {
 	ReplayEncoderParams params;

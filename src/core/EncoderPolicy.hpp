@@ -10,6 +10,7 @@
 #include <map>
 #include <span>
 #include <string>
+#include <string_view>
 #include <variant>
 #include <vector>
 
@@ -30,6 +31,15 @@ struct EncoderInfo {
 	bool deprecated = false;
 	bool internal = false;
 };
+
+// The vendor of an OBS encoder id, from the ids OBS 32 registers; Unknown for any other.
+// VideoToolbox ids cannot be told apart from its software encoders and all count as
+// Apple.
+Vendor encoderVendor(std::string_view id);
+
+// The vendor of a graphics adapter, from the name its driver reports; Unknown when the
+// name gives none, as for software renderers.
+Vendor adapterVendor(std::string_view name);
 
 struct EncoderPreferences {
 	// Try each vendor's HEVC encoder before its H.264 one.

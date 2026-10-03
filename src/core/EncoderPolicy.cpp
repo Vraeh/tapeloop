@@ -5,6 +5,7 @@
 
 #include <algorithm>
 #include <array>
+#include <cctype>
 #include <optional>
 #include <string>
 #include <utility>
@@ -97,7 +98,54 @@ SettingValue flag(bool value)
 	return SettingValue(value);
 }
 
+bool startsWith(std::string_view text, std::string_view prefix)
+{
+	return text.substr(0, prefix.size()) == prefix;
+}
+
+bool endsWith(std::string_view text, std::string_view suffix)
+{
+	return text.size() >= suffix.size() && text.substr(text.size() - suffix.size()) == suffix;
+}
+
+std::string lowercase(std::string_view text)
+{
+	std::string lower(text);
+	std::transform(lower.begin(), lower.end(), lower.begin(),
+		       [](unsigned char c) { return static_cast<char>(std::tolower(c)); });
+	return lower;
+}
+
 } // namespace
+
+Vendor encoderVendor(std::string_view id)
+{
+	if (startsWith(id, "obs_nvenc_") || startsWith(id, "jim_") || id == "ffmpeg_nvenc" || id == "ffmpeg_hevc_nvenc")
+		return Vendor::Nvidia;
+	if (startsWith(id, "obs_qsv11"))
+		return Vendor::Intel;
+	if (endsWith(id, "_texture_amf") || endsWith(id, "_fallback_amf"))
+		return Vendor::Amd;
+	if (startsWith(id, "com.apple.videotoolbox.videoencoder."))
+		return Vendor::Apple;
+	if (id == "obs_x264")
+		return Vendor::Software;
+	return Vendor::Unknown;
+}
+
+Vendor adapterVendor(std::string_view name)
+{
+	const std::string lower = lowercase(name);
+	if (lower.find("nvidia") != std::string::npos)
+		return Vendor::Nvidia;
+	if (lower.find("radeon") != std::string::npos || lower.find("amd") != std::string::npos)
+		return Vendor::Amd;
+	if (lower.find("intel") != std::string::npos)
+		return Vendor::Intel;
+	if (lower.find("apple") != std::string::npos)
+		return Vendor::Apple;
+	return Vendor::Unknown;
+}
 
 std::vector<EncoderInfo> replayEncoderCandidates(std::span<const EncoderInfo> encoders, Vendor renderVendor,
 						 const EncoderPreferences &preferences)
