@@ -11,15 +11,13 @@
 namespace tapeloop::test {
 
 // An encoded video output that copies the packets of its encoder into a SourceBuffer,
-// after giving it the encoder's codec configuration on start. libobs offers an output
-// no way to reach objects of whoever created it, so the buffer's address travels in
-// its settings; see bufferOutputSettings.
+// after giving it the encoder's codec configuration on start.
 inline constexpr const char *kBufferOutputId = "tapeloop_test_buffer_output";
 
 void registerBufferOutput();
 
-// Settings for an output of kBufferOutputId writing into buffer, which must outlive it.
-OBSDataAutoRelease bufferOutputSettings(SourceBuffer &buffer);
+// An output of kBufferOutputId writing into buffer, which must outlive it.
+OBSOutputAutoRelease createBufferOutput(const char *name, SourceBuffer &buffer);
 
 // The encoder settings in the obs_data form encoders read.
 OBSDataAutoRelease toObsData(const EncoderSettings &settings);

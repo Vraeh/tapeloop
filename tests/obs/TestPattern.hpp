@@ -3,6 +3,8 @@
 
 #pragma once
 
+#include <obs.hpp>
+
 #include <cstddef>
 #include <cstdint>
 #include <optional>
@@ -12,11 +14,13 @@ namespace tapeloop::test {
 // A video source drawn on the GPU: a white bar that moves one step per frame over a
 // grey background, and under it the number of the frame in binary, one black or white
 // cell per bit, most significant first, so a decoded frame can be traced back to the
-// frame rendered. Settings: "width" and "height".
+// frame rendered. Settings: "width" and "height", which may change while it runs.
 inline constexpr const char *kTestPatternId = "tapeloop_test_pattern";
 inline constexpr int kFrameNumberBits = 16;
 
 void registerTestPattern();
+
+OBSSourceAutoRelease createTestPattern(uint32_t width, uint32_t height);
 
 // The frame number drawn into a decoded frame, read from its luma plane. Empty when a
 // cell is neither clearly black nor clearly white.

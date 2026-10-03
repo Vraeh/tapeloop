@@ -32,6 +32,12 @@ FetchContent_MakeAvailable(Catch2)
 set_target_properties(Catch2 Catch2WithMain PROPERTIES COMPILE_WARNING_AS_ERROR OFF)
 
 add_subdirectory(../../src/core core)
+add_subdirectory(../../src/obs obs)
+
+# A module that calls back into the test from obs_module_unload.
+add_library(tapeloop-test-unload MODULE unload-hook/UnloadHook.cpp)
+target_link_libraries(tapeloop-test-unload PRIVATE OBS::libobs)
+set_target_properties(tapeloop-test-unload PROPERTIES PREFIX "")
 
 add_executable(tapeloop-obs-tests)
 target_sources(
@@ -39,16 +45,28 @@ target_sources(
   PRIVATE
     BufferOutput.cpp
     BufferOutput.hpp
+    CaptureTests.cpp
     ClipDecoder.cpp
     ClipDecoder.hpp
     ObsFixture.cpp
     ObsFixture.hpp
     SmokeTests.cpp
+    TestEncoders.cpp
+    TestEncoders.hpp
     TestPattern.cpp
     TestPattern.hpp
 )
-target_compile_definitions(tapeloop-obs-tests PRIVATE TAPELOOP_LIBOBS_PREFIX="${TAPELOOP_LIBOBS_PREFIX}")
-target_link_libraries(tapeloop-obs-tests PRIVATE tapeloop-core OBS::libobs PkgConfig::FFMPEG Catch2::Catch2WithMain)
+target_compile_definitions(
+  tapeloop-obs-tests
+  PRIVATE
+    TAPELOOP_LIBOBS_PREFIX="${TAPELOOP_LIBOBS_PREFIX}"
+    TAPELOOP_TEST_UNLOAD_MODULE="$<TARGET_FILE:tapeloop-test-unload>"
+)
+add_dependencies(tapeloop-obs-tests tapeloop-test-unload)
+target_link_libraries(
+  tapeloop-obs-tests
+  PRIVATE tapeloop-core tapeloop-obs OBS::libobs PkgConfig::FFMPEG Catch2::Catch2WithMain
+)
 set_target_properties(tapeloop-obs-tests PROPERTIES BUILD_RPATH "${TAPELOOP_LIBOBS_PREFIX}/lib")
 tapeloop_core_warnings(tapeloop-obs-tests)
 

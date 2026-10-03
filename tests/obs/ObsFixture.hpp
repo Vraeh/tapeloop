@@ -3,7 +3,9 @@
 
 #pragma once
 
+#include <chrono>
 #include <cstdint>
+#include <functional>
 
 namespace tapeloop::test {
 
@@ -14,10 +16,10 @@ struct CanvasFormat {
 };
 
 // Starts libobs for one test case, on the OpenGL renderer of whatever X display
-// DISPLAY names, with the obs-x264 plugin, the test pattern source and the buffer
-// output loaded, and shuts it down when the test case ends. The test case fails if
-// libobs still counts allocations of its own after the shutdown, or reports objects or
-// views it had to free itself.
+// DISPLAY names, with the obs-x264 plugin, the test pattern source, the test
+// encoders, the buffer output and the capture output loaded, and shuts it down when the
+// test case ends. The test case fails if libobs still counts allocations of its own
+// after the shutdown, or reports objects or views it had to free itself.
 class ObsFixture {
 public:
 	ObsFixture();
@@ -26,11 +28,14 @@ public:
 	ObsFixture(const ObsFixture &) = delete;
 	ObsFixture &operator=(const ObsFixture &) = delete;
 
-	// Resets the main canvas. Nothing may be encoding.
-	static void resetCanvas(CanvasFormat format);
+	// Resets the main canvas and returns what obs_reset_video returned.
+	static int resetCanvas(CanvasFormat format);
 
 private:
 	long allocationsBefore_ = 0;
 };
+
+// Polls condition every few milliseconds until it holds or timeout passes.
+bool waitFor(const std::function<bool()> &condition, std::chrono::milliseconds timeout);
 
 } // namespace tapeloop::test

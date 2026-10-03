@@ -6,6 +6,7 @@
 #include <obs-module.h>
 
 #include <algorithm>
+#include <atomic>
 #include <new>
 
 namespace tapeloop::test {
@@ -17,9 +18,11 @@ constexpr uint32_t kBlack = 0xff000000;
 constexpr uint32_t kBarWidth = 16;
 constexpr uint32_t kBarStep = 8;
 
+// The size changes on the thread that updates the settings while the graphics thread
+// draws.
 struct TestPattern {
-	uint32_t width = 0;
-	uint32_t height = 0;
+	std::atomic<uint32_t> width{0};
+	std::atomic<uint32_t> height{0};
 	uint32_t frame = 0;
 };
 
@@ -43,13 +46,18 @@ const char *name(void *) noexcept
 	return "Tapeloop test pattern";
 }
 
+void update(void *data, obs_data_t *settings) noexcept
+{
+	auto *pattern = static_cast<TestPattern *>(data);
+	pattern->width = static_cast<uint32_t>(std::max<long long>(obs_data_get_int(settings, "width"), 0));
+	pattern->height = static_cast<uint32_t>(std::max<long long>(obs_data_get_int(settings, "height"), 0));
+}
+
 void *create(obs_data_t *settings, obs_source_t *) noexcept
 {
 	auto *pattern = new (std::nothrow) TestPattern;
-	if (!pattern)
-		return nullptr;
-	pattern->width = static_cast<uint32_t>(std::max<long long>(obs_data_get_int(settings, "width"), 2));
-	pattern->height = static_cast<uint32_t>(std::max<long long>(obs_data_get_int(settings, "height"), 4));
+	if (pattern)
+		update(pattern, settings);
 	return pattern;
 }
 
@@ -77,20 +85,22 @@ void tick(void *data, float) noexcept
 void render(void *data, gs_effect_t *) noexcept
 {
 	const TestPattern &pattern = *static_cast<TestPattern *>(data);
-	const uint32_t top = bitsTop(pattern.height);
-	const uint32_t travel = pattern.width > kBarWidth ? pattern.width - kBarWidth : 1;
+	const uint32_t patternWidth = pattern.width;
+	const uint32_t patternHeight = pattern.height;
+	const uint32_t top = bitsTop(patternHeight);
+	const uint32_t travel = patternWidth > kBarWidth ? patternWidth - kBarWidth : 1;
 	const uint32_t barX = pattern.frame * kBarStep % travel;
-	const uint32_t cellWidth = pattern.width / kFrameNumberBits;
+	const uint32_t cellWidth = patternWidth / kFrameNumberBits;
 
 	gs_effect_t *solid = obs_get_base_effect(OBS_EFFECT_SOLID);
 	gs_eparam_t *color = gs_effect_get_param_by_name(solid, "color");
 	while (gs_effect_loop(solid, "Solid")) {
-		fill(color, kGrey, 0, 0, pattern.width, pattern.height);
-		fill(color, kWhite, barX, 0, std::min(kBarWidth, pattern.width), top);
+		fill(color, kGrey, 0, 0, patternWidth, patternHeight);
+		fill(color, kWhite, barX, 0, std::min(kBarWidth, patternWidth), top);
 		for (int bit = 0; bit < kFrameNumberBits; ++bit) {
 			const bool set = (pattern.frame >> (kFrameNumberBits - 1 - bit)) & 1;
 			fill(color, set ? kWhite : kBlack, static_cast<uint32_t>(bit) * cellWidth, top, cellWidth,
-			     pattern.height - top);
+			     patternHeight - top);
 		}
 	}
 }
@@ -107,11 +117,20 @@ void registerTestPattern()
 	info.get_name = name;
 	info.create = create;
 	info.destroy = destroy;
+	info.update = update;
 	info.get_width = width;
 	info.get_height = height;
 	info.video_tick = tick;
 	info.video_render = render;
 	obs_register_source(&info);
+}
+
+OBSSourceAutoRelease createTestPattern(uint32_t width, uint32_t height)
+{
+	OBSDataAutoRelease settings = obs_data_create();
+	obs_data_set_int(settings, "width", width);
+	obs_data_set_int(settings, "height", height);
+	return obs_source_create(kTestPatternId, "pattern", settings, nullptr);
 }
 
 std::optional<uint32_t> readFrameNumber(const uint8_t *luma, ptrdiff_t stride, int width, int height)

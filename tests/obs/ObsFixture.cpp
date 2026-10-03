@@ -4,7 +4,10 @@
 #include "ObsFixture.hpp"
 
 #include "BufferOutput.hpp"
+#include "TestEncoders.hpp"
 #include "TestPattern.hpp"
+
+#include "obs/CaptureOutput.hpp"
 
 #include <catch2/catch_test_macros.hpp>
 #include <obs.h>
@@ -16,6 +19,7 @@
 #include <cstring>
 #include <stdexcept>
 #include <string>
+#include <thread>
 
 namespace tapeloop::test {
 namespace {
@@ -56,13 +60,17 @@ ObsFixture::ObsFixture() : allocationsBefore_(bnum_allocs())
 
 	// The destructor does not run when the constructor throws.
 	try {
-		resetCanvas({});
+		const int reset = resetCanvas({});
+		if (reset != OBS_VIDEO_SUCCESS)
+			throw std::runtime_error("obs_reset_video failed with " + std::to_string(reset));
 		obs_audio_info audio = {48000, SPEAKERS_STEREO};
 		if (!obs_reset_audio(&audio))
 			throw std::runtime_error("obs_reset_audio failed");
 		loadModule("obs-x264");
 		registerTestPattern();
+		registerTestEncoders();
 		registerBufferOutput();
+		tapeloop::obs::registerCaptureOutput();
 	} catch (...) {
 		obs_shutdown();
 		throw;
@@ -76,7 +84,18 @@ ObsFixture::~ObsFixture()
 	CHECK(leftovers == 0);
 }
 
-void ObsFixture::resetCanvas(CanvasFormat format)
+bool waitFor(const std::function<bool()> &condition, std::chrono::milliseconds timeout)
+{
+	const auto deadline = std::chrono::steady_clock::now() + timeout;
+	while (!condition()) {
+		if (std::chrono::steady_clock::now() > deadline)
+			return false;
+		std::this_thread::sleep_for(std::chrono::milliseconds(10));
+	}
+	return true;
+}
+
+int ObsFixture::resetCanvas(CanvasFormat format)
 {
 	// libobs keeps the pointer to the module name.
 	static const std::string kGraphicsModule = kPrefix + "/lib/libobs-opengl";
@@ -96,9 +115,7 @@ void ObsFixture::resetCanvas(CanvasFormat format)
 	video.range = VIDEO_RANGE_PARTIAL;
 	video.scale_type = OBS_SCALE_BICUBIC;
 
-	const int result = obs_reset_video(&video);
-	if (result != OBS_VIDEO_SUCCESS)
-		throw std::runtime_error("obs_reset_video failed with " + std::to_string(result));
+	return obs_reset_video(&video);
 }
 
 } // namespace tapeloop::test

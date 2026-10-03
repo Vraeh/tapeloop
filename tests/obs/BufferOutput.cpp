@@ -15,8 +15,6 @@
 namespace tapeloop::test {
 namespace {
 
-constexpr const char *kBufferKey = "buffer";
-
 struct BufferOutput {
 	obs_output_t *output = nullptr;
 	SourceBuffer *buffer = nullptr;
@@ -27,13 +25,11 @@ const char *name(void *) noexcept
 	return "Tapeloop test buffer output";
 }
 
-void *create(obs_data_t *settings, obs_output_t *output) noexcept
+void *create(obs_data_t *, obs_output_t *output) noexcept
 {
 	auto *state = new (std::nothrow) BufferOutput;
-	if (!state)
-		return nullptr;
-	state->output = output;
-	state->buffer = reinterpret_cast<SourceBuffer *>(static_cast<intptr_t>(obs_data_get_int(settings, kBufferKey)));
+	if (state)
+		state->output = output;
 	return state;
 }
 
@@ -102,11 +98,12 @@ void registerBufferOutput()
 	obs_register_output(&info);
 }
 
-OBSDataAutoRelease bufferOutputSettings(SourceBuffer &buffer)
+OBSOutputAutoRelease createBufferOutput(const char *name, SourceBuffer &buffer)
 {
-	OBSDataAutoRelease settings = obs_data_create();
-	obs_data_set_int(settings, kBufferKey, static_cast<long long>(reinterpret_cast<intptr_t>(&buffer)));
-	return settings;
+	OBSOutputAutoRelease output = obs_output_create(kBufferOutputId, name, nullptr, nullptr);
+	if (auto *state = static_cast<BufferOutput *>(obs_obj_get_data(output)))
+		state->buffer = &buffer;
+	return output;
 }
 
 OBSDataAutoRelease toObsData(const EncoderSettings &settings)
