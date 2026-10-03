@@ -11,7 +11,7 @@ endfunction()
 
 add_library(tapeloop-core STATIC)
 
-target_sources(tapeloop-core PRIVATE MediaTime.cpp MediaTime.hpp)
+target_sources(tapeloop-core PRIVATE Gop.cpp Gop.hpp MediaTime.cpp MediaTime.hpp)
 
 target_include_directories(tapeloop-core PUBLIC "${CMAKE_CURRENT_SOURCE_DIR}/..")
 target_compile_features(tapeloop-core PUBLIC cxx_std_20)
