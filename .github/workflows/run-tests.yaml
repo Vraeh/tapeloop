@@ -130,3 +130,59 @@ jobs:
             -instr-profile="$BUILD/core.profdata" src/core | jq -e '.data[0].totals.lines.percent | numbers')
           echo "Line coverage of src/core: $percent%"
           awk -v percent="$percent" 'BEGIN { exit !(percent >= 90) }'
+
+  obs:
+    name: linux-obs
+    runs-on: ubuntu-24.04
+    env:
+      LIBGL_ALWAYS_SOFTWARE: 1
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      # libobs looks for its data under the prefix it was built for, so a restored build
+      # must land at the same path.
+      - name: Locate libobs
+        run: echo "TAPELOOP_LIBOBS_PREFIX=$RUNNER_TEMP/libobs" >> "$GITHUB_ENV"
+
+      - name: Install dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends ninja-build pkg-config extra-cmake-modules \
+            libavcodec-dev libavformat-dev libavutil-dev libswscale-dev libswresample-dev libx264-dev \
+            libjansson-dev uthash-dev libsimde-dev zlib1g-dev uuid-dev libx11-dev libx11-xcb-dev \
+            libxcb1-dev libxcb-xinput-dev libdrm-dev libgl-dev libegl-dev libglvnd-dev libwayland-dev \
+            libxkbcommon-dev xvfb xauth libgl1-mesa-dri libegl-mesa0
+
+      - name: Restore libobs
+        id: restore-libobs
+        uses: actions/cache/restore@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          path: ${{ env.TAPELOOP_LIBOBS_PREFIX }}
+          key: libobs-asan-ubuntu-24.04-${{ hashFiles('buildspec.json', 'tests/obs/BuildLibobs.cmake', 'tests/obs/x264-plugin/**', '.github/workflows/run-tests.yaml') }}
+
+      - name: Build libobs
+        if: steps.restore-libobs.outputs.cache-hit != 'true'
+        run: |
+          cmake -DPREFIX="$TAPELOOP_LIBOBS_PREFIX" -DWORK_DIR="$RUNNER_TEMP/libobs-build" -DSANITIZE=ON \
+            -P tests/obs/BuildLibobs.cmake
+
+      - name: Save libobs
+        if: steps.restore-libobs.outputs.cache-hit != 'true'
+        uses: actions/cache/save@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          path: ${{ env.TAPELOOP_LIBOBS_PREFIX }}
+          key: ${{ steps.restore-libobs.outputs.cache-primary-key }}
+
+      - name: Configure
+        working-directory: tests/obs
+        run: cmake --preset linux-obs-asan
+
+      - name: Build
+        working-directory: tests/obs
+        run: cmake --build --preset linux-obs-asan
+
+      - name: Test
+        working-directory: tests/obs
+        run: xvfb-run --auto-servernum --server-args='-screen 0 1920x1080x24' ctest --preset linux-obs-asan
