@@ -1,0 +1,86 @@
+{
+  "version": 8,
+  "cmakeMinimumRequired": {
+    "major": 3,
+    "minor": 28,
+    "patch": 0
+  },
+  "configurePresets": [
+    {
+      "name": "linux-obs",
+      "displayName": "Linux, headless libobs",
+      "binaryDir": "${sourceDir}/../../build_tests/${presetName}",
+      "generator": "Ninja",
+      "condition": {
+        "type": "equals",
+        "lhs": "${hostSystemName}",
+        "rhs": "Linux"
+      },
+      "cacheVariables": {
+        "CMAKE_BUILD_TYPE": "RelWithDebInfo",
+        "CMAKE_COMPILE_WARNING_AS_ERROR": true,
+        "TAPELOOP_LIBOBS_PREFIX": "$env{TAPELOOP_LIBOBS_PREFIX}"
+      }
+    },
+    {
+      "name": "linux-obs-asan",
+      "displayName": "Linux, headless libobs, with ASan and UBSan",
+      "inherits": ["linux-obs"],
+      "cacheVariables": {
+        "CMAKE_C_FLAGS": "-fsanitize=address,undefined -fno-sanitize-recover=undefined -fno-omit-frame-pointer",
+        "CMAKE_CXX_FLAGS": "-fsanitize=address,undefined -fno-sanitize-recover=undefined -fno-omit-frame-pointer"
+      }
+    }
+  ],
+  "buildPresets": [
+    {
+      "name": "linux-obs",
+      "configurePreset": "linux-obs"
+    },
+    {
+      "name": "linux-obs-asan",
+      "configurePreset": "linux-obs-asan"
+    }
+  ],
+  "testPresets": [
+    {
+      "name": "linux-obs",
+      "configurePreset": "linux-obs",
+      "output": {
+        "outputOnFailure": true
+      },
+      "execution": {
+        "noTestsAction": "error",
+        "timeout": 300
+      }
+    },
+    {
+      "name": "linux-obs-asan",
+      "inherits": ["linux-obs"],
+      "configurePreset": "linux-obs-asan",
+      "environment": {
+        "ASAN_OPTIONS": "detect_leaks=1",
+        "LSAN_OPTIONS": "suppressions=${sourceDir}/lsan.supp:print_suppressions=0",
+        "UBSAN_OPTIONS": "halt_on_error=1:print_stacktrace=1"
+      }
+    }
+  ],
+  "workflowPresets": [
+    {
+      "name": "linux-obs",
+      "steps": [
+        {"type": "configure", "name": "linux-obs"},
+        {"type": "build", "name": "linux-obs"},
+        {"type": "test", "name": "linux-obs"}
+      ]
+    },
+    {
+      "name": "linux-obs-asan",
+      "steps": [
+        {"type": "configure", "name": "linux-obs-asan"},
+        {"type": "build", "name": "linux-obs-asan"},
+        {"type": "test", "name": "linux-obs-asan"}
+      ]
+    }
+  ]
+}

@@ -1,0 +1,4 @@
+# Mesa allocates inside the driver when libobs creates the OpenGL context and on the
+# first draws, and keeps it past the driver's unload at exit.
+leak:^gs_create$
+leak:^gs_draw_quadf$
