@@ -1,0 +1,10 @@
+function(tapeloop_add_fuzzer name source)
+  add_executable(${name})
+  target_sources(${name} PRIVATE ${source} FuzzInput.hpp)
+  target_link_libraries(${name} PRIVATE tapeloop-core)
+  target_link_options(${name} PRIVATE -fsanitize=fuzzer)
+  tapeloop_core_warnings(${name})
+endfunction()
+
+tapeloop_add_fuzzer(source-buffer-fuzz SourceBufferFuzz.cpp)
+tapeloop_add_fuzzer(playhead-fuzz PlayheadFuzz.cpp)
