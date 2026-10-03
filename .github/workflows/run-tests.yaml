@@ -73,3 +73,60 @@ jobs:
         with:
           name: fuzz-crashes
           path: ${{ runner.temp }}/crashes
+
+  coverage:
+    name: linux-clang-coverage
+    runs-on: ubuntu-24.04
+    env:
+      BUILD: build_tests/linux-clang-coverage
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+        with:
+          persist-credentials: false
+
+      - name: Install LLVM tools
+        run: |
+          if ! command -v llvm-cov-18 > /dev/null; then
+            sudo apt-get update
+            sudo apt-get install -y llvm-18
+          fi
+
+      - name: Configure
+        working-directory: tests
+        run: cmake --preset linux-clang-coverage
+
+      - name: Build
+        working-directory: tests
+        run: cmake --build --preset linux-clang-coverage
+
+      - name: Test
+        working-directory: tests
+        run: ctest --preset linux-clang-coverage
+
+      - name: Report
+        run: |
+          llvm-profdata-18 merge -sparse "$BUILD"/profiles/*.profraw -o "$BUILD/core.profdata"
+          llvm-cov-18 report "$BUILD/tapeloop-core-tests" -instr-profile="$BUILD/core.profdata" src/core \
+            > "$BUILD/report.txt"
+          llvm-cov-18 show "$BUILD/tapeloop-core-tests" -instr-profile="$BUILD/core.profdata" src/core \
+            -format=html -output-dir="$BUILD/html"
+          {
+            echo '### Coverage of src/core'
+            echo '```'
+            cat "$BUILD/report.txt"
+            echo '```'
+          } >> "$GITHUB_STEP_SUMMARY"
+
+      - name: Keep the HTML report
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with:
+          name: coverage-report
+          path: ${{ env.BUILD }}/html
+
+      - name: Require 90% line coverage
+        run: |
+          set -o pipefail
+          percent=$(llvm-cov-18 export -summary-only "$BUILD/tapeloop-core-tests" \
+            -instr-profile="$BUILD/core.profdata" src/core | jq -e '.data[0].totals.lines.percent | numbers')
+          echo "Line coverage of src/core: $percent%"
+          awk -v percent="$percent" 'BEGIN { exit !(percent >= 90) }'
