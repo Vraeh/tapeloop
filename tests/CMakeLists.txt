@@ -27,6 +27,7 @@ target_sources(
   PRIVATE
     core/AllocationCounter.cpp
     core/AllocationCounter.hpp
+    core/ClipTests.cpp
     core/GopTests.cpp
     core/MediaTimeTests.cpp
     core/SyntheticEncoder.hpp
