@@ -82,6 +82,9 @@ using EncoderSettings = std::map<std::string, SettingValue>;
 EncoderSettings buildReplaySettings(const EncoderInfo &encoder, const ReplayEncoderParams &params);
 
 int64_t replayBitrateKbps(const ReplayEncoderParams &params);
+// The packet bytes a buffer of the given length may hold at the given bitrate, with
+// room for the bitrate to run over its target: half as much again, for now.
+size_t replayByteBudget(int64_t bitrateKbps, Nanoseconds length);
 // The GOP length in frames, rounded to the nearest frame and at least one.
 int64_t gopFrames(Nanoseconds gop, Rational frameDuration);
 

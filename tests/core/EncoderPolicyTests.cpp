@@ -8,6 +8,7 @@
 #include <algorithm>
 #include <chrono>
 #include <cstdint>
+#include <limits>
 #include <string>
 #include <vector>
 
@@ -275,6 +276,19 @@ TEST_CASE("replay bitrate scales with pixel rate and is capped")
 	CHECK(tapeloop::replayBitrateKbps(params) == 1);
 	params.width = -5;
 	CHECK(tapeloop::replayBitrateKbps(params) == 1);
+}
+
+TEST_CASE("replay byte budget is the bitrate over the length plus half")
+{
+	CHECK(tapeloop::replayByteBudget(30'000, 60s) == 337'500'000);
+	CHECK(tapeloop::replayByteBudget(8'000, 10s) == 15'000'000);
+	CHECK(tapeloop::replayByteBudget(30'000, 0s) == 0);
+	CHECK(tapeloop::replayByteBudget(30'000, -5s) == 0);
+	CHECK(tapeloop::replayByteBudget(0, 1s) == 188);
+	CHECK(tapeloop::replayByteBudget(-10, 1s) == 188);
+	CHECK(tapeloop::replayByteBudget(int64_t{1} << 40, 1s) ==
+	      static_cast<size_t>(std::numeric_limits<int32_t>::max() / 3 * int64_t{1000} * 3 / 16));
+	CHECK(tapeloop::replayByteBudget(100'000, Nanoseconds::max()) == 172'938'225'691'027'046);
 }
 
 TEST_CASE("GOP length in frames rounds to the nearest frame")

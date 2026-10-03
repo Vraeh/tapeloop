@@ -6,6 +6,7 @@
 #include <algorithm>
 #include <array>
 #include <cctype>
+#include <limits>
 #include <optional>
 #include <string>
 #include <utility>
@@ -262,6 +263,16 @@ int64_t replayBitrateKbps(const ReplayEncoderParams &params)
 	const int64_t scaled =
 		rescale(atReferenceRate, {frameDuration.den, kReferenceFramesPerSecond}, {frameDuration.num, 1});
 	return std::clamp<int64_t>(scaled, 1, std::max(params.maxBitrateKbps, 1));
+}
+
+size_t replayByteBudget(int64_t bitrateKbps, Nanoseconds length)
+{
+	// kbps times nanoseconds is 10^-6 bits; over 8 bits per byte and times 3/2 for the
+	// margin that is 3 / (16 * 10^6) bytes.
+	constexpr int64_t kMaxBitrate = std::numeric_limits<int32_t>::max() / 3;
+	const int32_t rate = static_cast<int32_t>(std::clamp<int64_t>(bitrateKbps, 1, kMaxBitrate));
+	const int64_t bytes = rescale(std::max(length, Nanoseconds{0}).count(), {3 * rate, 16'000'000}, {1, 1});
+	return static_cast<size_t>(bytes);
 }
 
 int64_t gopFrames(Nanoseconds gop, Rational frameDuration)
