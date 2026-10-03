@@ -30,6 +30,7 @@ target_sources(
     core/ClipTests.cpp
     core/GopTests.cpp
     core/MediaTimeTests.cpp
+    core/SourceBufferTests.cpp
     core/SyntheticEncoder.hpp
 )
 target_link_libraries(tapeloop-core-tests PRIVATE tapeloop-core Catch2::Catch2WithMain)

@@ -13,7 +13,7 @@ add_library(tapeloop-core STATIC)
 
 target_sources(
   tapeloop-core
-  PRIVATE Clip.cpp Clip.hpp Gop.cpp Gop.hpp MediaTime.cpp MediaTime.hpp
+  PRIVATE Clip.cpp Clip.hpp Gop.cpp Gop.hpp MediaTime.cpp MediaTime.hpp SourceBuffer.cpp SourceBuffer.hpp
 )
 
 target_include_directories(tapeloop-core PUBLIC "${CMAKE_CURRENT_SOURCE_DIR}/..")
