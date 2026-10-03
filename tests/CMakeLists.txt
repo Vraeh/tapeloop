@@ -53,7 +53,9 @@ target_sources(
     core/SourceBufferTests.cpp
     core/SyntheticEncoder.hpp
 )
-target_link_libraries(tapeloop-core-tests PRIVATE tapeloop-core Catch2::Catch2WithMain)
+# Every core object goes into the test binary, tested or not, so that coverage also
+# reports a core file nothing calls yet.
+target_link_libraries(tapeloop-core-tests PRIVATE "$<LINK_LIBRARY:WHOLE_ARCHIVE,tapeloop-core>" Catch2::Catch2WithMain)
 tapeloop_core_warnings(tapeloop-core-tests)
 
 enable_testing()

@@ -76,6 +76,16 @@
       }
     },
     {
+      "name": "linux-clang-coverage",
+      "displayName": "Linux Clang with source-based coverage",
+      "inherits": ["linux"],
+      "cacheVariables": {
+        "CMAKE_CXX_COMPILER": "clang++",
+        "CMAKE_BUILD_TYPE": "Debug",
+        "CMAKE_CXX_FLAGS": "-fprofile-instr-generate -fcoverage-mapping"
+      }
+    },
+    {
       "name": "windows-msvc",
       "displayName": "Windows MSVC",
       "inherits": ["base"],
@@ -121,6 +131,10 @@
       "targets": ["source-buffer-fuzz", "playhead-fuzz"]
     },
     {
+      "name": "linux-clang-coverage",
+      "configurePreset": "linux-clang-coverage"
+    },
+    {
       "name": "windows-msvc",
       "configurePreset": "windows-msvc",
       "configuration": "Debug"
@@ -162,6 +176,14 @@
       "configurePreset": "linux-clang-tsan",
       "environment": {
         "TSAN_OPTIONS": "halt_on_error=1:second_deadlock_stack=1"
+      }
+    },
+    {
+      "name": "linux-clang-coverage",
+      "inherits": ["base"],
+      "configurePreset": "linux-clang-coverage",
+      "environment": {
+        "LLVM_PROFILE_FILE": "${sourceDir}/../build_tests/linux-clang-coverage/profiles/%p-%m.profraw"
       }
     },
     {
