@@ -43,6 +43,7 @@ target_sources(
   PRIVATE
     core/AllocationCounter.cpp
     core/AllocationCounter.hpp
+    core/AllocationCounterTests.cpp
     core/ClipTests.cpp
     core/EncoderPolicyTests.cpp
     core/GopTests.cpp
