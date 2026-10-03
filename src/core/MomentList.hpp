@@ -43,8 +43,11 @@ class MomentList {
 public:
 	explicit MomentList(MomentListConfig config);
 
+	~MomentList() = default;
 	MomentList(const MomentList &) = delete;
 	MomentList &operator=(const MomentList &) = delete;
+	MomentList(MomentList &&) = delete;
+	MomentList &operator=(MomentList &&) = delete;
 
 	// Gives the moment the next id, stores it, and drops the oldest moments while a
 	// limit is exceeded. The new moment itself is always kept. Returns its id, or zero
