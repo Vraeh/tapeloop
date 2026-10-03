@@ -30,6 +30,7 @@ target_sources(
     core/ClipTests.cpp
     core/GopTests.cpp
     core/MediaTimeTests.cpp
+    core/PlayheadTests.cpp
     core/SourceBufferTests.cpp
     core/SyntheticEncoder.hpp
 )
