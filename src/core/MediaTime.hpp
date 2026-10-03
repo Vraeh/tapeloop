@@ -5,11 +5,40 @@
 
 #include <chrono>
 #include <cstdint>
+#include <limits>
 
 namespace tapeloop {
 
 // Every time in the core is on the shared OBS system clock.
 using Nanoseconds = std::chrono::nanoseconds;
+
+// Times come from encoders and callers the core does not control, so sums and
+// differences clamp to the representable range instead of overflowing.
+constexpr Nanoseconds saturatingAdd(Nanoseconds a, Nanoseconds b) noexcept
+{
+	constexpr int64_t kMax = std::numeric_limits<int64_t>::max();
+	constexpr int64_t kMin = std::numeric_limits<int64_t>::min();
+	const int64_t x = a.count();
+	const int64_t y = b.count();
+	if (y > 0 && x > kMax - y)
+		return Nanoseconds{kMax};
+	if (y < 0 && x < kMin - y)
+		return Nanoseconds{kMin};
+	return Nanoseconds{x + y};
+}
+
+constexpr Nanoseconds saturatingSub(Nanoseconds a, Nanoseconds b) noexcept
+{
+	constexpr int64_t kMax = std::numeric_limits<int64_t>::max();
+	constexpr int64_t kMin = std::numeric_limits<int64_t>::min();
+	const int64_t x = a.count();
+	const int64_t y = b.count();
+	if (y < 0 && x > kMax + y)
+		return Nanoseconds{kMax};
+	if (y > 0 && x < kMin + y)
+		return Nanoseconds{kMin};
+	return Nanoseconds{x - y};
+}
 
 // One tick lasts num / den seconds, the same convention as the timebase of an OBS
 // encoder packet. Both parts must be positive.

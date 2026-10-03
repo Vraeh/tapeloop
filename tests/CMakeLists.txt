@@ -22,7 +22,17 @@ set_target_properties(Catch2 Catch2WithMain PROPERTIES COMPILE_WARNING_AS_ERROR 
 add_subdirectory(../src/core core)
 
 add_executable(tapeloop-core-tests)
-target_sources(tapeloop-core-tests PRIVATE core/MediaTimeTests.cpp)
+target_sources(
+  tapeloop-core-tests
+  PRIVATE
+    core/AllocationCounter.cpp
+    core/AllocationCounter.hpp
+    core/ClipTests.cpp
+    core/GopTests.cpp
+    core/MediaTimeTests.cpp
+    core/SourceBufferTests.cpp
+    core/SyntheticEncoder.hpp
+)
 target_link_libraries(tapeloop-core-tests PRIVATE tapeloop-core Catch2::Catch2WithMain)
 tapeloop_core_warnings(tapeloop-core-tests)
 
