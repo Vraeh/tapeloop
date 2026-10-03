@@ -1,0 +1,39 @@
+name: Run Tests
+on:
+  workflow_call:
+permissions:
+  contents: read
+jobs:
+  test:
+    name: ${{ matrix.preset }}
+    runs-on: ${{ matrix.runner }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - preset: linux-gcc
+            runner: ubuntu-24.04
+          - preset: linux-clang-asan
+            runner: ubuntu-24.04
+          - preset: linux-clang-tsan
+            runner: ubuntu-24.04
+          - preset: windows-msvc
+            runner: windows-2022
+          - preset: macos
+            runner: macos-15
+    defaults:
+      run:
+        working-directory: tests
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+        with:
+          persist-credentials: false
+
+      - name: Configure
+        run: cmake --preset ${{ matrix.preset }}
+
+      - name: Build
+        run: cmake --build --preset ${{ matrix.preset }}
+
+      - name: Test
+        run: ctest --preset ${{ matrix.preset }}

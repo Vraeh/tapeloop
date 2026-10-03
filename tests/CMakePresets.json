@@ -1,0 +1,194 @@
+{
+  "version": 8,
+  "cmakeMinimumRequired": {
+    "major": 3,
+    "minor": 28,
+    "patch": 0
+  },
+  "configurePresets": [
+    {
+      "name": "base",
+      "hidden": true,
+      "binaryDir": "${sourceDir}/../build_tests/${presetName}",
+      "cacheVariables": {
+        "CMAKE_COMPILE_WARNING_AS_ERROR": true
+      }
+    },
+    {
+      "name": "linux",
+      "hidden": true,
+      "inherits": ["base"],
+      "generator": "Ninja",
+      "condition": {
+        "type": "equals",
+        "lhs": "${hostSystemName}",
+        "rhs": "Linux"
+      }
+    },
+    {
+      "name": "linux-gcc",
+      "displayName": "Linux GCC",
+      "inherits": ["linux"],
+      "cacheVariables": {
+        "CMAKE_CXX_COMPILER": "g++",
+        "CMAKE_BUILD_TYPE": "RelWithDebInfo"
+      }
+    },
+    {
+      "name": "linux-clang-asan",
+      "displayName": "Linux Clang with ASan and UBSan",
+      "inherits": ["linux"],
+      "cacheVariables": {
+        "CMAKE_CXX_COMPILER": "clang++",
+        "CMAKE_BUILD_TYPE": "Debug",
+        "CMAKE_CXX_FLAGS": "-fsanitize=address,undefined -fno-sanitize-recover=undefined -fno-omit-frame-pointer"
+      }
+    },
+    {
+      "name": "linux-clang-tsan",
+      "displayName": "Linux Clang with TSan",
+      "inherits": ["linux"],
+      "cacheVariables": {
+        "CMAKE_CXX_COMPILER": "clang++",
+        "CMAKE_BUILD_TYPE": "Debug",
+        "CMAKE_CXX_FLAGS": "-fsanitize=thread"
+      }
+    },
+    {
+      "name": "windows-msvc",
+      "displayName": "Windows MSVC",
+      "inherits": ["base"],
+      "generator": "Visual Studio 17 2022",
+      "architecture": "x64",
+      "condition": {
+        "type": "equals",
+        "lhs": "${hostSystemName}",
+        "rhs": "Windows"
+      }
+    },
+    {
+      "name": "macos",
+      "displayName": "macOS AppleClang",
+      "inherits": ["base"],
+      "generator": "Ninja",
+      "condition": {
+        "type": "equals",
+        "lhs": "${hostSystemName}",
+        "rhs": "Darwin"
+      },
+      "cacheVariables": {
+        "CMAKE_BUILD_TYPE": "Debug"
+      }
+    }
+  ],
+  "buildPresets": [
+    {
+      "name": "linux-gcc",
+      "configurePreset": "linux-gcc"
+    },
+    {
+      "name": "linux-clang-asan",
+      "configurePreset": "linux-clang-asan"
+    },
+    {
+      "name": "linux-clang-tsan",
+      "configurePreset": "linux-clang-tsan"
+    },
+    {
+      "name": "windows-msvc",
+      "configurePreset": "windows-msvc",
+      "configuration": "Debug"
+    },
+    {
+      "name": "macos",
+      "configurePreset": "macos"
+    }
+  ],
+  "testPresets": [
+    {
+      "name": "base",
+      "hidden": true,
+      "output": {
+        "outputOnFailure": true
+      },
+      "execution": {
+        "noTestsAction": "error"
+      }
+    },
+    {
+      "name": "linux-gcc",
+      "inherits": ["base"],
+      "configurePreset": "linux-gcc"
+    },
+    {
+      "name": "linux-clang-asan",
+      "inherits": ["base"],
+      "configurePreset": "linux-clang-asan",
+      "environment": {
+        "ASAN_OPTIONS": "detect_leaks=1:strict_init_order=1",
+        "UBSAN_OPTIONS": "halt_on_error=1:print_stacktrace=1"
+      }
+    },
+    {
+      "name": "linux-clang-tsan",
+      "inherits": ["base"],
+      "configurePreset": "linux-clang-tsan",
+      "environment": {
+        "TSAN_OPTIONS": "halt_on_error=1:second_deadlock_stack=1"
+      }
+    },
+    {
+      "name": "windows-msvc",
+      "inherits": ["base"],
+      "configurePreset": "windows-msvc",
+      "configuration": "Debug"
+    },
+    {
+      "name": "macos",
+      "inherits": ["base"],
+      "configurePreset": "macos"
+    }
+  ],
+  "workflowPresets": [
+    {
+      "name": "linux-gcc",
+      "steps": [
+        {"type": "configure", "name": "linux-gcc"},
+        {"type": "build", "name": "linux-gcc"},
+        {"type": "test", "name": "linux-gcc"}
+      ]
+    },
+    {
+      "name": "linux-clang-asan",
+      "steps": [
+        {"type": "configure", "name": "linux-clang-asan"},
+        {"type": "build", "name": "linux-clang-asan"},
+        {"type": "test", "name": "linux-clang-asan"}
+      ]
+    },
+    {
+      "name": "linux-clang-tsan",
+      "steps": [
+        {"type": "configure", "name": "linux-clang-tsan"},
+        {"type": "build", "name": "linux-clang-tsan"},
+        {"type": "test", "name": "linux-clang-tsan"}
+      ]
+    },
+    {
+      "name": "windows-msvc",
+      "steps": [
+        {"type": "configure", "name": "windows-msvc"},
+        {"type": "build", "name": "windows-msvc"},
+        {"type": "test", "name": "windows-msvc"}
+      ]
+    },
+    {
+      "name": "macos",
+      "steps": [
+        {"type": "configure", "name": "macos"},
+        {"type": "build", "name": "macos"},
+        {"type": "test", "name": "macos"}
+      ]
+    }
+  ]
+}

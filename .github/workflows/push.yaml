@@ -26,6 +26,12 @@ jobs:
     permissions:
       contents: read
 
+  run-tests:
+    name: Run Tests
+    uses: ./.github/workflows/run-tests.yaml
+    permissions:
+      contents: read
+
   create-release:
     name: Create Release 🛫
     if: github.ref_type == 'tag'

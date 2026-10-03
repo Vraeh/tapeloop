@@ -45,6 +45,20 @@ Formatting is checked in CI, so run the formatters before pushing:
 
 They need the same versions CI uses: clang-format 19.1.1 and gersemi 0.21.0.
 
+## Tests
+
+The core library in `src/core` does not depend on OBS, so its tests build as a
+standalone CMake project in `tests`, with Catch2 fetched at configure time. Each
+platform has a workflow preset that configures, builds and runs them:
+
+```
+cd tests
+cmake --workflow --preset linux-gcc
+```
+
+The presets are `linux-gcc`, `linux-clang-asan`, `linux-clang-tsan`, `windows-msvc` and
+`macos`. CI runs all five on every pull request.
+
 ## License
 
 By contributing you agree that your contributions are licensed under the

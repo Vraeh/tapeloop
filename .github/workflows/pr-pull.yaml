@@ -23,3 +23,9 @@ jobs:
     secrets: inherit
     permissions:
       contents: read
+
+  run-tests:
+    name: Run Tests
+    uses: ./.github/workflows/run-tests.yaml
+    permissions:
+      contents: read
