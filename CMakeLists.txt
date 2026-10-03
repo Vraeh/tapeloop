@@ -11,12 +11,14 @@ include(compilerconfig)
 include(defaults)
 include(helpers)
 
+find_package(libobs REQUIRED)
+
 add_subdirectory(src/core)
+add_subdirectory(src/obs)
 
 add_library(${CMAKE_PROJECT_NAME} MODULE)
 
-find_package(libobs REQUIRED)
-target_link_libraries(${CMAKE_PROJECT_NAME} PRIVATE OBS::libobs tapeloop-core)
+target_link_libraries(${CMAKE_PROJECT_NAME} PRIVATE OBS::libobs tapeloop-core tapeloop-obs)
 
 if(ENABLE_FRONTEND_API)
   find_package(obs-frontend-api REQUIRED)
