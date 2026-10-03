@@ -44,8 +44,11 @@ class SourceBuffer {
 public:
 	explicit SourceBuffer(SourceBufferConfig config);
 
+	~SourceBuffer() = default;
 	SourceBuffer(const SourceBuffer &) = delete;
 	SourceBuffer &operator=(const SourceBuffer &) = delete;
+	SourceBuffer(SourceBuffer &&) = delete;
+	SourceBuffer &operator=(SourceBuffer &&) = delete;
 
 	void push(const EncodedPacket &packet);
 

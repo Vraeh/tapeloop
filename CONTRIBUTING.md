@@ -59,6 +59,16 @@ cmake --workflow --preset linux-gcc
 The presets are `linux-gcc`, `linux-clang-asan`, `linux-clang-tsan`, `windows-msvc` and
 `macos`. CI runs all five on every pull request.
 
+CI also runs clang-tidy over `src/core` with the checks in `.clang-tidy`, and any
+warning fails the job. To run it locally with Clang 18:
+
+```
+cd tests
+cmake --preset linux-clang-tidy
+cd ..
+clang-tidy -p build_tests/linux-clang-tidy src/core/*.cpp
+```
+
 ## License
 
 By contributing you agree that your contributions are licensed under the
