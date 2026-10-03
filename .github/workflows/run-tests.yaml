@@ -37,3 +37,39 @@ jobs:
 
       - name: Test
         run: ctest --preset ${{ matrix.preset }}
+
+  fuzz:
+    name: linux-clang-fuzz
+    runs-on: ubuntu-24.04
+    defaults:
+      run:
+        working-directory: tests
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+        with:
+          persist-credentials: false
+
+      - name: Configure
+        run: cmake --preset linux-clang-fuzz
+
+      - name: Build
+        run: cmake --build --preset linux-clang-fuzz
+
+      - name: Fuzz the source buffer
+        run: |
+          mkdir -p "$RUNNER_TEMP/corpus/source-buffer" "$RUNNER_TEMP/crashes"
+          ../build_tests/linux-clang-fuzz/fuzz/source-buffer-fuzz -max_total_time=60 -timeout=10 \
+            -artifact_prefix="$RUNNER_TEMP/crashes/" "$RUNNER_TEMP/corpus/source-buffer" fuzz/corpus/source-buffer
+
+      - name: Fuzz the playhead
+        run: |
+          mkdir -p "$RUNNER_TEMP/corpus/playhead" "$RUNNER_TEMP/crashes"
+          ../build_tests/linux-clang-fuzz/fuzz/playhead-fuzz -max_total_time=60 -timeout=10 \
+            -artifact_prefix="$RUNNER_TEMP/crashes/" "$RUNNER_TEMP/corpus/playhead" fuzz/corpus/playhead
+
+      - name: Keep the crashing inputs
+        if: failure()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with:
+          name: fuzz-crashes
+          path: ${{ runner.temp }}/crashes
