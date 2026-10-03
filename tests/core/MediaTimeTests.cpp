@@ -183,3 +183,33 @@ TEST_CASE("rescale matches 128-bit arithmetic")
 }
 
 #endif
+
+TEST_CASE("saturating time arithmetic clamps instead of overflowing")
+{
+	using tapeloop::Nanoseconds;
+	using tapeloop::saturatingAdd;
+	using tapeloop::saturatingSub;
+
+	const Nanoseconds max = Nanoseconds::max();
+	const Nanoseconds min = Nanoseconds::min();
+	const Nanoseconds one{1};
+
+	CHECK(saturatingAdd(Nanoseconds{2}, Nanoseconds{3}) == Nanoseconds{5});
+	CHECK(saturatingAdd(Nanoseconds{2}, Nanoseconds{-3}) == Nanoseconds{-1});
+	CHECK(saturatingAdd(max, one) == max);
+	CHECK(saturatingAdd(max - one, one) == max);
+	CHECK(saturatingAdd(min, -one) == min);
+	CHECK(saturatingAdd(min, max) == -one);
+	CHECK(saturatingAdd(max, max) == max);
+	CHECK(saturatingAdd(min, min) == min);
+
+	CHECK(saturatingSub(Nanoseconds{2}, Nanoseconds{3}) == Nanoseconds{-1});
+	CHECK(saturatingSub(max, -one) == max);
+	CHECK(saturatingSub(min, one) == min);
+	CHECK(saturatingSub(min + one, one) == min);
+	CHECK(saturatingSub(Nanoseconds{0}, min) == max);
+	CHECK(saturatingSub(-one, min) == max);
+	CHECK(saturatingSub(max, max) == Nanoseconds{0});
+	CHECK(saturatingSub(min, max) == min);
+	CHECK(saturatingSub(max, min) == max);
+}
