@@ -4,10 +4,13 @@
 #include "TestPattern.hpp"
 
 #include <obs-module.h>
+#include <util/platform.h>
 
 #include <algorithm>
 #include <atomic>
+#include <cmath>
 #include <new>
+#include <vector>
 
 namespace tapeloop::test {
 namespace {
@@ -114,6 +117,71 @@ void render(void *data, gs_effect_t *) noexcept
 	}
 }
 
+// A white frame with a steady tone, written as one block of audio per tick.
+constexpr uint32_t kToneWidth = 320;
+constexpr uint32_t kToneHeight = 180;
+constexpr uint32_t kToneRate = 48000;
+constexpr float kToneLevel = 0.5f;
+
+struct Tone {
+	obs_source_t *source = nullptr;
+	std::vector<float> samples = std::vector<float>(kToneRate / 10, kToneLevel);
+};
+
+const char *toneName(void *) noexcept
+{
+	return "Tapeloop test tone";
+}
+
+void *createTone(obs_data_t *, obs_source_t *source) noexcept
+{
+	auto *tone = new (std::nothrow) Tone;
+	if (tone) {
+		tone->source = source;
+	}
+	return tone;
+}
+
+void destroyTone(void *data) noexcept
+{
+	delete static_cast<Tone *>(data);
+}
+
+uint32_t toneWidth(void *) noexcept
+{
+	return kToneWidth;
+}
+
+uint32_t toneHeight(void *) noexcept
+{
+	return kToneHeight;
+}
+
+void toneTick(void *data, float seconds) noexcept
+{
+	Tone &tone = *static_cast<Tone *>(data);
+	const auto frames =
+		std::min<size_t>(static_cast<size_t>(std::lround(seconds * kToneRate)), tone.samples.size());
+	obs_source_audio audio = {};
+	audio.data[0] = reinterpret_cast<const uint8_t *>(tone.samples.data());
+	audio.data[1] = audio.data[0];
+	audio.frames = static_cast<uint32_t>(frames);
+	audio.speakers = SPEAKERS_STEREO;
+	audio.format = AUDIO_FORMAT_FLOAT_PLANAR;
+	audio.samples_per_sec = kToneRate;
+	audio.timestamp = os_gettime_ns();
+	obs_source_output_audio(tone.source, &audio);
+}
+
+void toneRender(void *, gs_effect_t *) noexcept
+{
+	gs_effect_t *solid = obs_get_base_effect(OBS_EFFECT_SOLID);
+	gs_eparam_t *color = gs_effect_get_param_by_name(solid, "color");
+	while (gs_effect_loop(solid, "Solid")) {
+		fill(color, kWhite, 0, 0, kToneWidth, kToneHeight);
+	}
+}
+
 const char *silenceName(void *) noexcept
 {
 	return "Tapeloop test silence";
@@ -157,6 +225,22 @@ void registerTestPattern()
 	info.get_height = height;
 	info.video_tick = tick;
 	info.video_render = render;
+	obs_register_source(&info);
+}
+
+void registerTone()
+{
+	obs_source_info info = {};
+	info.id = kToneId;
+	info.type = OBS_SOURCE_TYPE_INPUT;
+	info.output_flags = OBS_SOURCE_VIDEO | OBS_SOURCE_AUDIO | OBS_SOURCE_CUSTOM_DRAW;
+	info.get_name = toneName;
+	info.create = createTone;
+	info.destroy = destroyTone;
+	info.get_width = toneWidth;
+	info.get_height = toneHeight;
+	info.video_tick = toneTick;
+	info.video_render = toneRender;
 	obs_register_source(&info);
 }
 

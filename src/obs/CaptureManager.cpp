@@ -276,6 +276,11 @@ CaptureManager::StartOutcome CaptureManager::start(const std::string &uuid, Entr
 		entry.retry = true;
 		return StartOutcome::Failed;
 	}
+	// Before the size: a media source that plays only while active has no size until it
+	// is.
+	if (settings_.activateFor(uuid)) {
+		entry.activation.hold(source);
+	}
 	if (quiet && (obs_source_get_width(source) == 0 || obs_source_get_height(source) == 0)) {
 		entry.capture.hold(source);
 		entry.retry = true;
@@ -292,6 +297,9 @@ CaptureManager::StartOutcome CaptureManager::start(const std::string &uuid, Entr
 	const StartResult result = entry.capture.start(source, settings, keepBuffer);
 	if (result != StartResult::Started) {
 		entry.retry = result == StartResult::NoSourceSize;
+		if (!entry.retry) {
+			entry.activation.reset();
+		}
 		return StartOutcome::Failed;
 	}
 
@@ -309,6 +317,27 @@ void CaptureManager::stop(Entry &entry)
 		entry.source = nullptr;
 	}
 	entry.capture.stop();
+	entry.activation.reset();
+}
+
+void CaptureManager::Activation::hold(obs_source_t *source)
+{
+	if (source_) {
+		return;
+	}
+	source_ = obs_source_get_ref(source);
+	if (source_) {
+		obs_source_inc_active(source_);
+	}
+}
+
+void CaptureManager::Activation::reset() noexcept
+{
+	if (source_) {
+		obs_source_dec_active(source_);
+		obs_source_release(source_);
+		source_ = nullptr;
+	}
 }
 
 void CaptureManager::releaseAll()

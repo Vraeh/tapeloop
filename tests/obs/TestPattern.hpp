@@ -27,6 +27,12 @@ inline constexpr const char *kSilenceId = "tapeloop_test_silence";
 
 void registerSilence();
 
+// A white frame and a steady tone, to tell whether a source reaches the program picture
+// or the program audio.
+inline constexpr const char *kToneId = "tapeloop_test_tone";
+
+void registerTone();
+
 OBSSourceAutoRelease createTestPattern(uint32_t width, uint32_t height, const char *name = "pattern");
 
 // The frame number drawn into a decoded frame, read from its luma plane. Empty when a

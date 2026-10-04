@@ -79,6 +79,24 @@ public:
 	const SourceBuffer *buffer(const std::string &uuid) const;
 
 private:
+	// Keeps a source active, as if it were on air, until reset or destroyed. Activation
+	// adds the source to no view of the program: libobs mixes into the program audio
+	// only the sources on a canvas that mixes audio, and a capture's view does not.
+	class Activation {
+	public:
+		Activation() = default;
+		~Activation() { reset(); }
+
+		Activation(const Activation &) = delete;
+		Activation &operator=(const Activation &) = delete;
+
+		void hold(obs_source_t *source);
+		void reset() noexcept;
+
+	private:
+		obs_source_t *source_ = nullptr;
+	};
+
 	struct Entry {
 		SourceCapture capture;
 		// Held while capturing, with the remove signal connected to removed.
@@ -89,6 +107,8 @@ private:
 		// with the same keepBuffer.
 		bool retry = false;
 		bool retryKeepsBuffer = false;
+		// Held while the capture runs or waits, when the settings ask for it.
+		Activation activation;
 	};
 
 	// What a start found out about the source.
