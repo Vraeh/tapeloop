@@ -20,6 +20,19 @@ add_library(${CMAKE_PROJECT_NAME} MODULE)
 
 target_link_libraries(${CMAKE_PROJECT_NAME} PRIVATE OBS::libobs tapeloop-core tapeloop-obs)
 
+# Decoding uses a private, static FFmpeg; macOS will decode with VideoToolbox instead.
+if(NOT APPLE)
+  include("${CMAKE_CURRENT_SOURCE_DIR}/cmake/ffmpeg/ffmpeg.cmake")
+  tapeloop_add_ffmpeg()
+  add_subdirectory(src/decode)
+  target_link_libraries(${CMAKE_PROJECT_NAME} PRIVATE tapeloop-decode)
+  target_compile_definitions(${CMAKE_PROJECT_NAME} PRIVATE TAPELOOP_FFMPEG)
+  # OBS loads its own FFmpeg into the same process; ours stays inside the plugin.
+  if(CMAKE_SYSTEM_NAME STREQUAL "Linux")
+    target_link_options(${CMAKE_PROJECT_NAME} PRIVATE "LINKER:--exclude-libs,ALL")
+  endif()
+endif()
+
 # The capture manager lives on the frontend's events and scene collections.
 if(NOT ENABLE_FRONTEND_API)
   message(FATAL_ERROR "Tapeloop needs ENABLE_FRONTEND_API")
