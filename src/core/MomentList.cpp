@@ -12,8 +12,9 @@ MomentList::MomentList(MomentListConfig config) : config_(config) {}
 
 uint64_t MomentList::add(Moment moment)
 {
-	if (moment.clips.empty())
+	if (moment.clips.empty()) {
 		return 0;
+	}
 
 	moment.id = nextId_;
 	moments_.push_back(std::move(moment));
@@ -25,8 +26,9 @@ uint64_t MomentList::add(Moment moment)
 	}
 	++nextId_;
 
-	while (moments_.size() > 1 && (moments_.size() > config_.maxMoments || bytes_ > config_.maxBytes))
+	while (moments_.size() > 1 && (moments_.size() > config_.maxMoments || bytes_ > config_.maxBytes)) {
 		dropOldest();
+	}
 
 	return moments_.back().id;
 }
@@ -35,8 +37,9 @@ bool MomentList::remove(uint64_t id)
 {
 	const auto found =
 		std::find_if(moments_.begin(), moments_.end(), [id](const Moment &moment) { return moment.id == id; });
-	if (found == moments_.end())
+	if (found == moments_.end()) {
 		return false;
+	}
 
 	release(*found);
 	moments_.erase(found);
@@ -63,8 +66,9 @@ void MomentList::hold(const Moment &moment)
 	try {
 		for (const MomentClip &entry : moment.clips) {
 			for (const auto &gop : entry.clip.gops()) {
-				if (gopHolders_[gop.get()]++ == 0)
+				if (gopHolders_[gop.get()]++ == 0) {
 					bytes_ += gop->byteSize();
+				}
 				++counted;
 			}
 		}
@@ -78,8 +82,9 @@ void MomentList::release(const Moment &moment, size_t count) noexcept
 {
 	for (const MomentClip &entry : moment.clips) {
 		for (const auto &gop : entry.clip.gops()) {
-			if (count-- == 0)
+			if (count-- == 0) {
 				return;
+			}
 			const auto holders = gopHolders_.find(gop.get());
 			if (--holders->second == 0) {
 				bytes_ -= gop->byteSize();

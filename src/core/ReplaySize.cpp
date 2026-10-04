@@ -34,15 +34,17 @@ uint32_t targetHeight(ReplayResolution resolution, FrameSize canvas, FrameSize o
 
 std::optional<FrameSize> replayOutputSize(FrameSize source, uint32_t targetHeight)
 {
-	if (source.width == 0 || source.height == 0 || source.width > kMaxDimension || source.height > kMaxDimension)
+	if (source.width == 0 || source.height == 0 || source.width > kMaxDimension || source.height > kMaxDimension) {
 		return std::nullopt;
+	}
 
 	const uint32_t height = evenFloor(std::min(source.height, targetHeight));
 	// Rounded to the nearest pixel before rounding down to even.
 	const uint64_t scaled = (uint64_t{source.width} * height * 2 + source.height) / (uint64_t{source.height} * 2);
 	const uint32_t width = evenFloor(std::min<uint64_t>(scaled, source.width));
-	if (width < 2 || height < 2)
+	if (width < 2 || height < 2) {
 		return std::nullopt;
+	}
 	return FrameSize{width, height};
 }
 

@@ -16,10 +16,11 @@ MomentCut cutMoment(std::span<const MomentSource> sources, Nanoseconds anchor, N
 
 	for (const MomentSource &source : sources) {
 		Clip clip = source.buffer.get().clip(cut.moment.start, cut.moment.end);
-		if (clip.empty())
+		if (clip.empty()) {
 			cut.skipped.push_back(source.sourceKey);
-		else
+		} else {
 			cut.moment.clips.push_back({source.sourceKey, std::move(clip)});
+		}
 	}
 	return cut;
 }
