@@ -14,7 +14,6 @@
 
 #include <chrono>
 #include <cstdint>
-#include <functional>
 #include <stdexcept>
 #include <thread>
 
@@ -23,19 +22,9 @@ using tapeloop::Clip;
 using tapeloop::Nanoseconds;
 using tapeloop::SourceBuffer;
 using tapeloop::test::ObsFixture;
+using tapeloop::test::waitFor;
 
 namespace {
-
-bool waitFor(const std::function<bool()> &condition, std::chrono::milliseconds timeout)
-{
-	const auto deadline = std::chrono::steady_clock::now() + timeout;
-	while (!condition()) {
-		if (std::chrono::steady_clock::now() > deadline)
-			return false;
-		std::this_thread::sleep_for(10ms);
-	}
-	return true;
-}
 
 // A source rendered on its own view and encoded with obs-x264 into a buffer, torn down
 // in the order libobs supports: output stopped and inactive, output and encoder
@@ -69,8 +58,7 @@ public:
 
 		encoder_ = obs_video_encoder_create("obs_x264", "tapeloop-test", settings, nullptr);
 		obs_encoder_set_video(encoder_, output);
-		output_ = obs_output_create(tapeloop::test::kBufferOutputId, "tapeloop-test",
-					    tapeloop::test::bufferOutputSettings(buffer), nullptr);
+		output_ = tapeloop::test::createBufferOutput("tapeloop-test", buffer);
 		obs_output_set_video_encoder(output_, encoder_);
 	}
 
@@ -101,14 +89,6 @@ private:
 	OBSOutputAutoRelease output_;
 };
 
-OBSSourceAutoRelease createTestPattern(uint32_t width, uint32_t height)
-{
-	OBSDataAutoRelease settings = obs_data_create();
-	obs_data_set_int(settings, "width", width);
-	obs_data_set_int(settings, "height", height);
-	return obs_source_create(tapeloop::test::kTestPatternId, "pattern", settings, nullptr);
-}
-
 } // namespace
 
 TEST_CASE_METHOD(ObsFixture, "libobs starts and shuts down headless", "[obs]")
@@ -122,7 +102,7 @@ TEST_CASE_METHOD(ObsFixture, "libobs starts and shuts down headless", "[obs]")
 
 TEST_CASE_METHOD(ObsFixture, "x264 encodes a view of a source into a buffer of decodable GOPs", "[obs]")
 {
-	OBSSourceAutoRelease pattern = createTestPattern(640, 360);
+	OBSSourceAutoRelease pattern = tapeloop::test::createTestPattern(640, 360);
 	REQUIRE(pattern);
 
 	tapeloop::SourceBufferConfig config;

@@ -9,7 +9,10 @@
 
 namespace tapeloop {
 
-SourceBuffer::SourceBuffer(SourceBufferConfig config) : config_(config), builder_(config.frameDuration)
+SourceBuffer::SourceBuffer(SourceBufferConfig config)
+	: config_(config),
+	  maxBytes_(config.maxBytes),
+	  builder_(config.frameDuration)
 {
 	assert(config.frameDuration > Nanoseconds{0});
 }
@@ -141,6 +144,12 @@ void SourceBuffer::clear()
 	}
 }
 
+void SourceBuffer::setByteBudget(size_t maxBytes)
+{
+	std::lock_guard lock(mutex_);
+	maxBytes_ = maxBytes;
+}
+
 std::vector<std::shared_ptr<const Gop>> SourceBuffer::collectLocked(Nanoseconds from, Nanoseconds to) const
 {
 	std::vector<std::shared_ptr<const Gop>> gops;
@@ -182,7 +191,7 @@ void SourceBuffer::evictLocked()
 	while (gops_.size() > 1 && saturatingSub(gops_.back()->endTime(), gops_[1]->startTime()) >= config_.window)
 		dropOldest();
 
-	while (gops_.size() > 1 && sealedBytes_ > config_.maxBytes)
+	while (gops_.size() > 1 && sealedBytes_ > maxBytes_)
 		dropOldest();
 }
 

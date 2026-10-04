@@ -1,4 +1,6 @@
 # Mesa allocates inside the driver when libobs creates the OpenGL context and on the
-# first draws, and keeps it past the driver's unload at exit.
+# first draw, and keeps it past the driver's unload at exit. The first draw comes from
+# the test pattern, or from libobs's colour conversion when nothing else draws.
 leak:^gs_create$
 leak:^gs_draw_quadf$
+leak:^render_convert_plane$

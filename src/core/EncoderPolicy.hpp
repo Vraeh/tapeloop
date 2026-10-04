@@ -10,6 +10,7 @@
 #include <map>
 #include <span>
 #include <string>
+#include <string_view>
 #include <variant>
 #include <vector>
 
@@ -30,6 +31,15 @@ struct EncoderInfo {
 	bool deprecated = false;
 	bool internal = false;
 };
+
+// The vendor of an OBS encoder id, from the ids OBS 32 registers; Unknown for any other.
+// VideoToolbox ids cannot be told apart from its software encoders and all count as
+// Apple.
+Vendor encoderVendor(std::string_view id);
+
+// The vendor of a graphics adapter, from the name its driver reports; Unknown when the
+// name gives none, as for software renderers.
+Vendor adapterVendor(std::string_view name);
 
 struct EncoderPreferences {
 	// Try each vendor's HEVC encoder before its H.264 one.
@@ -72,6 +82,9 @@ using EncoderSettings = std::map<std::string, SettingValue>;
 EncoderSettings buildReplaySettings(const EncoderInfo &encoder, const ReplayEncoderParams &params);
 
 int64_t replayBitrateKbps(const ReplayEncoderParams &params);
+// The packet bytes a buffer of the given length may hold at the given bitrate, with
+// room for the bitrate to run over its target: half as much again, for now.
+size_t replayByteBudget(int64_t bitrateKbps, Nanoseconds length);
 // The GOP length in frames, rounded to the nearest frame and at least one.
 int64_t gopFrames(Nanoseconds gop, Rational frameDuration);
 

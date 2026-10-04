@@ -207,6 +207,27 @@ TEST_CASE("SourceBuffer evicts old GOPs to stay within its byte budget")
 	}
 }
 
+TEST_CASE("SourceBuffer takes a new byte budget at the next keyframe")
+{
+	SyntheticEncoder encoder({});
+	SourceBuffer buffer(makeConfig(encoder, 1h, kUnlimited));
+	pushFrames(buffer, encoder, 150);
+	REQUIRE(buffer.stats().gopCount == 5);
+
+	buffer.setByteBudget(2 * kGopBytes);
+	CHECK(buffer.stats().gopCount == 5);
+	pushFrames(buffer, encoder, 1);
+	CHECK(buffer.stats().gopCount == 3);
+	CHECK(buffer.stats().bytes == 2 * kGopBytes + 4096);
+
+	// Nothing more leaves once the budget is lifted: two GOPs kept, two sealed since, and
+	// the open one.
+	buffer.setByteBudget(kUnlimited);
+	pushFrames(buffer, encoder, 89);
+	CHECK(buffer.stats().gopCount == 5);
+	CHECK(consistent(buffer));
+}
+
 TEST_CASE("SourceBuffer treats time going backwards as a discontinuity")
 {
 	SyntheticEncoder encoder({});
