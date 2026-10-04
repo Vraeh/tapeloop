@@ -96,8 +96,9 @@ leaves out what Mesa allocates in the OpenGL driver and keeps until exit.
 CI builds the core tests with the `linux-clang-coverage` preset, reports the line coverage
 of `src/core` and fails below 90%.
 
-CI also runs clang-tidy over `src/core` with the checks in `.clang-tidy`, and any
-warning fails the job. To run it locally with Clang 18:
+CI also runs clang-tidy over `src/core` with the checks in `.clang-tidy`, and over the
+core tests with only the rule that every branch has braces; any warning fails the job.
+To run it locally with Clang 18:
 
 ```
 cd tests
