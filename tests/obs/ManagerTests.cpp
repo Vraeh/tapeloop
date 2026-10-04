@@ -477,8 +477,8 @@ TEST_CASE_METHOD(ObsFixture, "a duplicated scene collection keeps its selection 
 
 TEST_CASE_METHOD(ObsFixture, "two saved sources with one name find neither of them", "[obs][manager]")
 {
-	// libobs renames a public source that would share a name, so the ambiguity a
-	// collection can hold is two saved entries naming the same source.
+	// libobs renames an input that would share another input's name, so the ambiguity a
+	// collection can hold among inputs is two saved entries naming the same one.
 	OBSSourceAutoRelease camera = createTestPattern(640, 360, "Camera");
 	OBSDataAutoRelease collection =
 		collectionNaming({namedSource("4f8beeda-0000-4000-8000-000000000001", "Camera", true),
@@ -494,4 +494,37 @@ TEST_CASE_METHOD(ObsFixture, "two saved sources with one name find neither of th
 	manager.save(saved);
 	OBSDataAutoRelease written = obs_data_get_obj(saved, tapeloop::obs::kSettingsKey);
 	CHECK(readSettingsData(written).sources.empty());
+}
+
+TEST_CASE_METHOD(ObsFixture, "a scene or an input without video never takes a saved name", "[obs][manager]")
+{
+	// A scene can share an input's name; scenes are named per canvas.
+	OBSSceneAutoRelease scene = obs_scene_create("Main");
+	OBSSourceAutoRelease mic = obs_source_create(tapeloop::test::kSilenceId, "Mic", nullptr, nullptr);
+	OBSSourceAutoRelease speaker = obs_source_create(tapeloop::test::kSilenceId, "Speaker", nullptr, nullptr);
+	SavedSource speakerSaved = namedSource(obs_source_get_uuid(speaker), "Speaker", false);
+	speakerSaved.lengthSeconds = 30;
+	OBSDataAutoRelease collection =
+		collectionNaming({namedSource("4f8beeda-0000-4000-8000-000000000001", "Main", true),
+				  namedSource("4f8beeda-0000-4000-8000-000000000002", "Mic", true), speakerSaved});
+
+	FakeHost host;
+	CaptureManager manager(host);
+	manager.load(collection);
+	CHECK(manager.settings().sources.size() == 3);
+	CHECK_FALSE(manager.settings().sources.contains(obs_source_get_uuid(obs_scene_get_source(scene))));
+	CHECK_FALSE(manager.settings().sources.contains(obs_source_get_uuid(mic)));
+
+	// An input without video is still present, so its settings are written back.
+	OBSDataAutoRelease saved = obs_data_create();
+	manager.save(saved);
+	OBSDataAutoRelease written = obs_data_get_obj(saved, tapeloop::obs::kSettingsKey);
+	const SavedSettings again = readSettingsData(written);
+	REQUIRE(again.sources.size() == 1);
+	CHECK(again.sources[0].uuid == obs_source_get_uuid(speaker));
+	CHECK(again.sources[0].lengthSeconds == 30);
+
+	// The main canvas keeps its scenes until they are removed, as the frontend does
+	// before shutting down.
+	obs_source_remove(obs_scene_get_source(scene));
 }
