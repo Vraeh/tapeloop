@@ -52,6 +52,9 @@ bool obs_module_load()
 		bridge = std::make_unique<tapeloop::obs::FrontendBridge>();
 		addDock();
 	} catch (...) {
+		// OBS does not unload a module whose load failed.
+		dockBackend.reset();
+		bridge.reset();
 		obs_log(LOG_ERROR, "could not start");
 		return false;
 	}
@@ -61,8 +64,8 @@ bool obs_module_load()
 
 void obs_module_unload()
 {
+	// The dock went with the main window, and the frontend API with it.
 	try {
-		obs_frontend_remove_dock(kDockId);
 		dockBackend.reset();
 		bridge.reset();
 	} catch (...) {
