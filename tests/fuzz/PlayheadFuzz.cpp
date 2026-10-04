@@ -96,6 +96,7 @@ struct State {
 void checkPlay(const Playhead &playhead, const std::vector<Nanoseconds> &frames, const State &before,
 	       std::optional<Int128> &exact)
 {
+	require(playhead.rate() == before.rate && playhead.scrubbing() == before.scrubbing);
 	if (frames.empty()) {
 		require(!playhead.playing() && playhead.position() == before.position);
 		return;
