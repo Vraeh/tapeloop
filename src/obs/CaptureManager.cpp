@@ -24,9 +24,10 @@ CaptureManager::~CaptureManager()
 
 void CaptureManager::setSettings(BufferSettings settings)
 {
-	if (foreignSettings_)
+	if (foreignSettings_) {
 		blog(LOG_WARNING, "[tapeloop] This scene collection holds settings of another version; "
 				  "changes made here are not saved");
+	}
 	settings_ = std::move(settings);
 	lifecycle_.setStartWithOutputs(settings_.startWithOutputs);
 	reconcile();
@@ -34,16 +35,18 @@ void CaptureManager::setSettings(BufferSettings settings)
 
 bool CaptureManager::manualStart()
 {
-	if (!lifecycle_.manualStart())
+	if (!lifecycle_.manualStart()) {
 		return false;
+	}
 	reconcile();
 	return true;
 }
 
 bool CaptureManager::manualStop()
 {
-	if (!lifecycle_.manualStop())
+	if (!lifecycle_.manualStop()) {
 		return false;
+	}
 	reconcile();
 	return true;
 }
@@ -77,8 +80,9 @@ void CaptureManager::onExit()
 
 void CaptureManager::poll()
 {
-	if (exiting_)
+	if (exiting_) {
 		return;
+	}
 
 	for (auto it = entries_.begin(); it != entries_.end();) {
 		if (it->second->removed) {
@@ -90,22 +94,25 @@ void CaptureManager::poll()
 	}
 
 	followOutputs();
-	if (!lifecycle_.running())
+	if (!lifecycle_.running()) {
 		return;
+	}
 
 	std::optional<std::vector<EncoderInfo>> candidates;
 	for (const std::string &uuid : settings_.selectedSources()) {
 		auto found = entries_.find(uuid);
 		const bool fresh = found == entries_.end();
-		if (fresh)
+		if (fresh) {
 			found = entries_.emplace(uuid, std::make_unique<Entry>()).first;
+		}
 		Entry &entry = *found->second;
 		StartOutcome outcome = StartOutcome::Started;
 		if (fresh) {
 			outcome = start(uuid, entry, false, true, candidates);
 		} else if (!entry.capture.active()) {
-			if (entry.retry)
+			if (entry.retry) {
 				outcome = start(uuid, entry, entry.retryKeepsBuffer, true, candidates);
+			}
 		} else if (!entry.capture.sourceSizeMatches()) {
 			// The view keeps the size it started with, so the capture restarts on the
 			// source's new size; the buffer sees the restart as a discontinuity.
@@ -114,8 +121,9 @@ void CaptureManager::poll()
 			outcome = start(uuid, entry, true, false, candidates);
 		}
 		// A failed entry stays, so that only what poll is meant to retry is tried again.
-		if (outcome == StartOutcome::SourceRemoved)
+		if (outcome == StartOutcome::SourceRemoved) {
 			entries_.erase(found);
+		}
 	}
 }
 
@@ -148,8 +156,9 @@ void CaptureManager::load(obs_data_t *collection)
 		const SavedSettings saved = readSettingsData(data);
 		if (std::optional<BufferSettings> loaded = loadSettings(saved)) {
 			settings = std::move(*loaded);
-			for (const SavedSource &source : saved.sources)
+			for (const SavedSource &source : saved.sources) {
 				savedNames_[source.uuid] = source.name;
+			}
 		} else {
 			blog(LOG_WARNING,
 			     "[tapeloop] This scene collection has settings of version %lld, which this version "
@@ -178,8 +187,9 @@ SourceStatus CaptureManager::status(const std::string &uuid) const
 	const auto source = settings_.sources.find(uuid);
 	status.selected = source != settings_.sources.end() && source->second.selected;
 	const auto found = entries_.find(uuid);
-	if (found != entries_.end())
+	if (found != entries_.end()) {
 		status.stats = found->second->capture.stats();
+	}
 	return status;
 }
 
@@ -191,8 +201,9 @@ const SourceBuffer *CaptureManager::buffer(const std::string &uuid) const
 
 void CaptureManager::reconcile()
 {
-	if (exiting_)
+	if (exiting_) {
 		return;
+	}
 
 	for (auto it = entries_.begin(); it != entries_.end();) {
 		const auto source = settings_.sources.find(it->first);
@@ -205,18 +216,21 @@ void CaptureManager::reconcile()
 	}
 
 	if (!lifecycle_.running()) {
-		for (auto &[uuid, entry] : entries_)
+		for (auto &[uuid, entry] : entries_) {
 			stop(*entry);
+		}
 		return;
 	}
 	std::optional<std::vector<EncoderInfo>> candidates;
 	for (const std::string &uuid : settings_.selectedSources()) {
 		auto found = entries_.find(uuid);
-		if (found == entries_.end())
+		if (found == entries_.end()) {
 			found = entries_.emplace(uuid, std::make_unique<Entry>()).first;
+		}
 		if (!found->second->capture.active() &&
-		    start(uuid, *found->second, false, false, candidates) == StartOutcome::SourceRemoved)
+		    start(uuid, *found->second, false, false, candidates) == StartOutcome::SourceRemoved) {
 			entries_.erase(found);
+		}
 	}
 }
 
@@ -227,15 +241,17 @@ CaptureManager::StartOutcome CaptureManager::start(const std::string &uuid, Entr
 	entry.retryKeepsBuffer = keepBuffer;
 	OBSSourceAutoRelease source = obs_get_source_by_uuid(uuid.c_str());
 	// A removed source can still be found while something holds it.
-	if (source && obs_source_removed(source))
+	if (source && obs_source_removed(source)) {
 		return StartOutcome::SourceRemoved;
+	}
 	if (!source || (quiet && (obs_source_get_width(source) == 0 || obs_source_get_height(source) == 0))) {
 		entry.retry = true;
 		return StartOutcome::Failed;
 	}
 
-	if (!candidates)
+	if (!candidates) {
 		candidates = replayEncoderCandidates(registeredVideoEncoders(), renderAdapterVendor(), {});
+	}
 	CaptureSettings settings;
 	settings.resolution = settings_.resolutionFor(uuid);
 	settings.bufferLength = settings_.lengthFor(uuid);
@@ -264,19 +280,22 @@ void CaptureManager::stop(Entry &entry)
 
 void CaptureManager::releaseAll()
 {
-	for (auto &[uuid, entry] : entries_)
+	for (auto &[uuid, entry] : entries_) {
 		stop(*entry);
+	}
 	entries_.clear();
 }
 
 void CaptureManager::followOutputs()
 {
 	const bool streaming = host_.streamingActive();
-	if (streaming != lifecycle_.streaming())
+	if (streaming != lifecycle_.streaming()) {
 		onStreaming(streaming);
+	}
 	const bool recording = host_.recordingActive();
-	if (recording != lifecycle_.recording())
+	if (recording != lifecycle_.recording()) {
 		onRecording(recording);
+	}
 }
 
 void CaptureManager::handleRemove(void *data, calldata_t *) noexcept

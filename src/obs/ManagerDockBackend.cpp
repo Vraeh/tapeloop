@@ -12,8 +12,9 @@ namespace {
 bool addVideoInput(void *param, obs_source_t *source) noexcept
 {
 	if (obs_source_get_type(source) != OBS_SOURCE_TYPE_INPUT ||
-	    (obs_source_get_output_flags(source) & OBS_SOURCE_VIDEO) == 0)
+	    (obs_source_get_output_flags(source) & OBS_SOURCE_VIDEO) == 0) {
 		return true;
+	}
 	try {
 		ui::DockSource entry;
 		entry.uuid = obs_source_get_uuid(source);

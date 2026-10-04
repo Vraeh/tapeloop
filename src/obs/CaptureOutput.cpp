@@ -26,8 +26,9 @@ const char *name(void *) noexcept
 void *create(obs_data_t *, obs_output_t *output) noexcept
 {
 	auto *capture = new (std::nothrow) CaptureOutput;
-	if (capture)
+	if (capture) {
 		capture->output = output;
+	}
 	return capture;
 }
 
@@ -40,18 +41,21 @@ bool start(void *data) noexcept
 {
 	auto &capture = *static_cast<CaptureOutput *>(data);
 	if (!capture.target || !capture.target->buffer || !obs_output_can_begin_data_capture(capture.output, 0) ||
-	    !obs_output_initialize_encoders(capture.output, 0))
+	    !obs_output_initialize_encoders(capture.output, 0)) {
 		return false;
+	}
 
 	// Some encoders only know their configuration after the first keyframe; those repeat
 	// it in the stream.
 	uint8_t *config = nullptr;
 	size_t size = 0;
-	if (!obs_encoder_get_extra_data(obs_output_get_video_encoder(capture.output), &config, &size))
+	if (!obs_encoder_get_extra_data(obs_output_get_video_encoder(capture.output), &config, &size)) {
 		size = 0;
+	}
 	try {
-		if (capture.target->clearOnStart)
+		if (capture.target->clearOnStart) {
 			capture.target->buffer->clear();
+		}
 		capture.target->buffer->setCodecConfig(std::span<const uint8_t>(config, size));
 	} catch (...) {
 		return false;

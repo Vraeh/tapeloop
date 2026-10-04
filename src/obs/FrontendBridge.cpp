@@ -39,8 +39,9 @@ FrontendBridge::~FrontendBridge()
 
 void FrontendBridge::removeFrontendCallbacks() noexcept
 {
-	if (!frontendCallbacks_)
+	if (!frontendCallbacks_) {
 		return;
+	}
 	frontendCallbacks_ = false;
 	obs_frontend_remove_save_callback(handleSave, this);
 	obs_frontend_remove_event_callback(handleEvent, this);
@@ -93,10 +94,11 @@ void FrontendBridge::handleSave(obs_data_t *collection, bool saving, void *data)
 {
 	CaptureManager &manager = *static_cast<FrontendBridge *>(data)->manager_;
 	try {
-		if (saving)
+		if (saving) {
 			manager.save(collection);
-		else
+		} else {
 			manager.load(collection);
+		}
 	} catch (...) {
 		blog(LOG_ERROR, "[tapeloop] Saving or loading the settings failed");
 	}
@@ -108,16 +110,19 @@ void FrontendBridge::handleTick(void *data, float seconds) noexcept
 	// goes to the UI thread.
 	auto &bridge = *static_cast<FrontendBridge *>(data);
 	bridge.sincePoll_ += seconds;
-	if (bridge.sincePoll_ < 1.0f)
+	if (bridge.sincePoll_ < 1.0f) {
 		return;
+	}
 	bridge.sincePoll_ = 0.0f;
 	auto *task = new (std::nothrow) std::function<void()>;
-	if (!task)
+	if (!task) {
 		return;
+	}
 	try {
 		*task = [manager = bridge.manager_.get(), alive = std::weak_ptr<int>(bridge.alive_)] {
-			if (alive.lock())
+			if (alive.lock()) {
 				manager->poll();
+			}
 		};
 	} catch (...) {
 		delete task;
