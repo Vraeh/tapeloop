@@ -21,9 +21,13 @@ constexpr uint32_t kBarStep = 8;
 // The size changes on the thread that updates the settings while the graphics thread
 // draws.
 struct TestPattern {
+	obs_source_t *source = nullptr;
 	std::atomic<uint32_t> width{0};
 	std::atomic<uint32_t> height{0};
+	std::atomic<bool> sizeOnlyWhenShown{false};
 	uint32_t frame = 0;
+
+	bool hidden() const noexcept { return sizeOnlyWhenShown && !obs_source_showing(source); }
 };
 
 // The bar fills the top three quarters, the frame number the bottom quarter.
@@ -51,12 +55,14 @@ void update(void *data, obs_data_t *settings) noexcept
 	auto *pattern = static_cast<TestPattern *>(data);
 	pattern->width = static_cast<uint32_t>(std::max<long long>(obs_data_get_int(settings, "width"), 0));
 	pattern->height = static_cast<uint32_t>(std::max<long long>(obs_data_get_int(settings, "height"), 0));
+	pattern->sizeOnlyWhenShown = obs_data_get_bool(settings, "size_only_when_shown");
 }
 
-void *create(obs_data_t *settings, obs_source_t *) noexcept
+void *create(obs_data_t *settings, obs_source_t *source) noexcept
 {
 	auto *pattern = new (std::nothrow) TestPattern;
 	if (pattern) {
+		pattern->source = source;
 		update(pattern, settings);
 	}
 	return pattern;
@@ -69,12 +75,14 @@ void destroy(void *data) noexcept
 
 uint32_t width(void *data) noexcept
 {
-	return static_cast<TestPattern *>(data)->width;
+	const TestPattern &pattern = *static_cast<TestPattern *>(data);
+	return pattern.hidden() ? 0 : pattern.width.load();
 }
 
 uint32_t height(void *data) noexcept
 {
-	return static_cast<TestPattern *>(data)->height;
+	const TestPattern &pattern = *static_cast<TestPattern *>(data);
+	return pattern.hidden() ? 0 : pattern.height.load();
 }
 
 // Ticks run once per frame on the graphics thread, before any view renders the frame.

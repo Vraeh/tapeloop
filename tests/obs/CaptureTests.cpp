@@ -294,13 +294,56 @@ TEST_CASE_METHOD(ObsFixture, "a capture notices when its source changes size", "
 	CHECK(capture.sourceSizeMatches());
 }
 
-TEST_CASE_METHOD(ObsFixture, "a source without a size is not captured", "[obs][capture]")
+TEST_CASE_METHOD(ObsFixture, "a source without a size is shown and waited for", "[obs][capture]")
 {
 	OBSSourceAutoRelease pattern = createTestPattern(0, 0);
 	SourceCapture capture;
 	CHECK(capture.start(pattern, {}) == StartResult::NoSourceSize);
 	CHECK_FALSE(capture.active());
+	CHECK(capture.waiting());
+	CHECK(capture.stats().state == CaptureState::Waiting);
+	CHECK(obs_source_showing(pattern));
 	CHECK(capture.buffer() == nullptr);
+
+	// A second try while waiting holds the source once, not twice.
+	CHECK(capture.start(pattern, {}) == StartResult::NoSourceSize);
+	capture.stop();
+	CHECK_FALSE(obs_source_showing(pattern));
+	CHECK(capture.stats().state == CaptureState::Stopped);
+}
+
+TEST_CASE_METHOD(ObsFixture, "a capture waiting for a size starts on the view it already has", "[obs][capture]")
+{
+	OBSSourceAutoRelease pattern = createTestPattern(0, 0);
+	SourceCapture capture;
+	REQUIRE(capture.start(pattern, {}) == StartResult::NoSourceSize);
+
+	OBSDataAutoRelease sized = obs_data_create();
+	obs_data_set_int(sized, "width", 640);
+	obs_data_set_int(sized, "height", 360);
+	obs_source_update(pattern, sized);
+	REQUIRE(waitFor([&] { return obs_source_get_width(pattern) == 640; }, 5s));
+	REQUIRE(capture.start(pattern, {}) == StartResult::Started);
+	CHECK_FALSE(capture.waiting());
+	CHECK(waitFor([&] { return hasGops(capture, 1); }, 60s));
+	capture.stop();
+	CHECK_FALSE(obs_source_showing(pattern));
+}
+
+TEST_CASE_METHOD(ObsFixture, "a waiting capture lets go of its source when it cannot start", "[obs][capture]")
+{
+	OBSSourceAutoRelease pattern = createTestPattern(0, 0);
+	SourceCapture capture;
+	REQUIRE(capture.start(pattern, {}) == StartResult::NoSourceSize);
+
+	OBSDataAutoRelease huge = obs_data_create();
+	obs_data_set_int(huge, "width", 20000);
+	obs_data_set_int(huge, "height", 360);
+	obs_source_update(pattern, huge);
+	REQUIRE(waitFor([&] { return obs_source_get_width(pattern) == 20000; }, 5s));
+	CHECK(capture.start(pattern, {}) == StartResult::SourceTooLarge);
+	CHECK_FALSE(capture.waiting());
+	CHECK_FALSE(obs_source_showing(pattern));
 }
 
 TEST_CASE_METHOD(ObsFixture, "a restart keeps the buffer only when asked", "[obs][capture]")

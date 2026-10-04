@@ -229,7 +229,7 @@ TEST_CASE_METHOD(ObsFixture, "a retried start empties the buffer when the first 
 	obs_source_update(pattern, sizeless);
 	REQUIRE(waitFor([&] { return obs_source_get_width(pattern) == 0; }, 5s));
 	REQUIRE(manager.manualStart());
-	CHECK(manager.status(uuid).stats.state == CaptureState::Stopped);
+	CHECK(manager.status(uuid).stats.state == CaptureState::Waiting);
 
 	OBSDataAutoRelease sized = obs_data_create();
 	obs_data_set_int(sized, "width", 640);
@@ -350,7 +350,7 @@ TEST_CASE_METHOD(ObsFixture, "a source too small to start is retried", "[obs][ma
 	CaptureManager manager(host);
 	manager.setSettings(selecting(uuid));
 	REQUIRE(manager.manualStart());
-	CHECK(manager.status(uuid).stats.state == CaptureState::Stopped);
+	CHECK(manager.status(uuid).stats.state == CaptureState::Waiting);
 
 	OBSDataAutoRelease sized = obs_data_create();
 	obs_data_set_int(sized, "width", 640);
@@ -494,4 +494,85 @@ TEST_CASE_METHOD(ObsFixture, "two saved sources with one name find neither of th
 	manager.save(saved);
 	OBSDataAutoRelease written = obs_data_get_obj(saved, tapeloop::obs::kSettingsKey);
 	CHECK(readSettingsData(written).sources.empty());
+}
+
+namespace {
+
+// Like a display or window capture: no size while nothing shows it.
+OBSSourceAutoRelease createHiddenPattern(const char *name)
+{
+	OBSDataAutoRelease settings = obs_data_create();
+	obs_data_set_int(settings, "width", 640);
+	obs_data_set_int(settings, "height", 360);
+	obs_data_set_bool(settings, "size_only_when_shown", true);
+	return obs_source_create(tapeloop::test::kTestPatternId, name, settings, nullptr);
+}
+
+} // namespace
+
+TEST_CASE_METHOD(ObsFixture, "a source with no size until it is shown starts once the capture shows it",
+		 "[obs][manager]")
+{
+	OBSSourceAutoRelease display = createHiddenPattern("Display");
+	const std::string uuid = uuidOf(display);
+	REQUIRE(obs_source_get_width(display) == 0);
+
+	FakeHost host;
+	CaptureManager manager(host);
+	BufferSettings settings = selecting(uuid);
+	settings.startWithOutputs = false;
+	manager.setSettings(settings);
+	REQUIRE(manager.manualStart());
+	CHECK(manager.status(uuid).stats.state == CaptureState::Waiting);
+	CHECK(obs_source_showing(display));
+	CHECK_FALSE(obs_source_active(display));
+	CHECK(obs_source_get_width(display) == 640);
+
+	manager.poll();
+	CHECK(manager.status(uuid).stats.state == CaptureState::Running);
+	CHECK(waitFor([&] { return hasGops(manager, uuid, 1); }, 60s));
+
+	manager.manualStop();
+	CHECK_FALSE(obs_source_showing(display));
+}
+
+TEST_CASE_METHOD(ObsFixture, "a source waiting for its size is let go of whenever its capture would stop",
+		 "[obs][manager]")
+{
+	OBSSourceAutoRelease display = createHiddenPattern("Display");
+	const std::string uuid = uuidOf(display);
+	FakeHost host;
+	CaptureManager manager(host);
+	BufferSettings settings = selecting(uuid);
+	settings.startWithOutputs = false;
+
+	SECTION("buffers stopped")
+	{
+		manager.setSettings(settings);
+		REQUIRE(manager.manualStart());
+		REQUIRE(manager.status(uuid).stats.state == CaptureState::Waiting);
+		manager.manualStop();
+	}
+	SECTION("source unselected")
+	{
+		manager.setSettings(settings);
+		REQUIRE(manager.manualStart());
+		BufferSettings none = settings;
+		none.sources.clear();
+		manager.setSettings(none);
+	}
+	SECTION("scene collection cleanup")
+	{
+		manager.setSettings(settings);
+		REQUIRE(manager.manualStart());
+		manager.onSceneCollectionCleanup();
+	}
+	SECTION("exit")
+	{
+		manager.setSettings(settings);
+		REQUIRE(manager.manualStart());
+		manager.onExit();
+	}
+	CHECK_FALSE(obs_source_showing(display));
+	CHECK(manager.status(uuid).stats.state == CaptureState::Stopped);
 }
