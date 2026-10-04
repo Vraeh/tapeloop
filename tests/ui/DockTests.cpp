@@ -113,6 +113,25 @@ TEST_CASE("selected sources show the state of their buffer")
 	CHECK(table->item(2, 1)->text().isEmpty());
 }
 
+TEST_CASE("a source waiting for a picture says so with an icon and a tooltip")
+{
+	FakeBackend backend = backendWithSources();
+	backend.shown[0].state = SourceState::Waiting;
+	backend.current.sources["uuid-camera-1"].selected = true;
+	TapeloopDock dock(backend, localeText());
+	auto *table = child<QTableWidget>(dock, "sources");
+
+	const QTableWidgetItem *status = table->item(0, 1);
+	CHECK(status->text() == "Waiting for a picture");
+	CHECK_FALSE(status->icon().isNull());
+	CHECK(status->toolTip().contains("starts its buffer as soon as it has one"));
+
+	backend.shown[0].state = SourceState::Running;
+	dock.refresh();
+	CHECK(table->item(0, 1)->icon().isNull());
+	CHECK(table->item(0, 1)->toolTip().isEmpty());
+}
+
 TEST_CASE("the dock picks up sources that come and go")
 {
 	FakeBackend backend = backendWithSources();
@@ -224,6 +243,7 @@ TEST_CASE("every string the dock asks for is in the locale file")
 	FakeBackend backend = backendWithSources();
 	backend.shown[0].state = SourceState::Running;
 	backend.shown[1].state = SourceState::Failed;
+	backend.shown[2].state = SourceState::Waiting;
 	for (const auto &source : backend.shown) {
 		backend.current.sources[source.uuid].selected = true;
 	}
