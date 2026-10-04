@@ -35,6 +35,7 @@ set_target_properties(Catch2 Catch2WithMain PROPERTIES COMPILE_WARNING_AS_ERROR 
 
 add_subdirectory(../../src/core core)
 add_subdirectory(../../src/obs obs)
+add_subdirectory(../../src/decode decode)
 
 # A module that calls back into the test from obs_module_unload.
 add_library(tapeloop-test-unload MODULE unload-hook/UnloadHook.cpp)
@@ -50,6 +51,7 @@ target_sources(
     CaptureTests.cpp
     ClipDecoder.cpp
     ClipDecoder.hpp
+    DecodeTests.cpp
     DockBackendTests.cpp
     ManagerTests.cpp
     ObsFixture.cpp
@@ -69,7 +71,7 @@ target_compile_definitions(
 add_dependencies(tapeloop-obs-tests tapeloop-test-unload)
 target_link_libraries(
   tapeloop-obs-tests
-  PRIVATE tapeloop-core tapeloop-obs OBS::libobs FFmpeg::avcodec Catch2::Catch2WithMain
+  PRIVATE tapeloop-core tapeloop-obs tapeloop-decode OBS::libobs FFmpeg::avcodec Catch2::Catch2WithMain
 )
 # libobs loads the system's FFmpeg; the static one stays inside the test binary.
 target_link_options(tapeloop-obs-tests PRIVATE "LINKER:--exclude-libs,ALL")
