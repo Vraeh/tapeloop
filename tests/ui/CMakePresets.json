@@ -1,0 +1,54 @@
+{
+  "version": 8,
+  "cmakeMinimumRequired": {
+    "major": 3,
+    "minor": 28,
+    "patch": 0
+  },
+  "configurePresets": [
+    {
+      "name": "linux-ui",
+      "displayName": "Linux, Qt offscreen",
+      "binaryDir": "${sourceDir}/../../build_tests/${presetName}",
+      "generator": "Ninja",
+      "condition": {
+        "type": "equals",
+        "lhs": "${hostSystemName}",
+        "rhs": "Linux"
+      },
+      "cacheVariables": {
+        "CMAKE_BUILD_TYPE": "RelWithDebInfo",
+        "CMAKE_COMPILE_WARNING_AS_ERROR": true
+      }
+    }
+  ],
+  "buildPresets": [
+    {
+      "name": "linux-ui",
+      "configurePreset": "linux-ui"
+    }
+  ],
+  "testPresets": [
+    {
+      "name": "linux-ui",
+      "configurePreset": "linux-ui",
+      "output": {
+        "outputOnFailure": true
+      },
+      "execution": {
+        "noTestsAction": "error",
+        "timeout": 120
+      }
+    }
+  ],
+  "workflowPresets": [
+    {
+      "name": "linux-ui",
+      "steps": [
+        {"type": "configure", "name": "linux-ui"},
+        {"type": "build", "name": "linux-ui"},
+        {"type": "test", "name": "linux-ui"}
+      ]
+    }
+  ]
+}

@@ -186,3 +186,29 @@ jobs:
       - name: Test
         working-directory: tests/obs
         run: xvfb-run --auto-servernum --server-args='-screen 0 1920x1080x24' ctest --preset linux-obs-asan
+
+  ui:
+    name: linux-ui
+    runs-on: ubuntu-24.04
+    defaults:
+      run:
+        working-directory: tests/ui
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - name: Install Qt
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends ninja-build qt6-base-dev libgl-dev libegl-dev \
+            libxkbcommon-dev
+
+      - name: Configure
+        run: cmake --preset linux-ui
+
+      - name: Build
+        run: cmake --build --preset linux-ui
+
+      - name: Test
+        run: ctest --preset linux-ui

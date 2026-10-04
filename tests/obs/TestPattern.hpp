@@ -20,6 +20,11 @@ inline constexpr int kFrameNumberBits = 16;
 
 void registerTestPattern();
 
+// An input with audio only and no samples, to show what video-only code leaves out.
+inline constexpr const char *kSilenceId = "tapeloop_test_silence";
+
+void registerSilence();
+
 OBSSourceAutoRelease createTestPattern(uint32_t width, uint32_t height);
 
 // The frame number drawn into a decoded frame, read from its luma plane. Empty when a

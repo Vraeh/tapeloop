@@ -68,6 +68,7 @@ ObsFixture::ObsFixture() : allocationsBefore_(bnum_allocs())
 			throw std::runtime_error("obs_reset_audio failed");
 		loadModule("obs-x264");
 		registerTestPattern();
+		registerSilence();
 		registerTestEncoders();
 		registerBufferOutput();
 		tapeloop::obs::registerCaptureOutput();

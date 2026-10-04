@@ -48,6 +48,7 @@ target_sources(
     CaptureTests.cpp
     ClipDecoder.cpp
     ClipDecoder.hpp
+    DockBackendTests.cpp
     ManagerTests.cpp
     ObsFixture.cpp
     ObsFixture.hpp

@@ -105,7 +105,33 @@ void render(void *data, gs_effect_t *) noexcept
 	}
 }
 
+const char *silenceName(void *) noexcept
+{
+	return "Tapeloop test silence";
+}
+
+int silence = 0;
+
+void *createSilence(obs_data_t *, obs_source_t *) noexcept
+{
+	return &silence;
+}
+
+void destroySilence(void *) noexcept {}
+
 } // namespace
+
+void registerSilence()
+{
+	obs_source_info info = {};
+	info.id = kSilenceId;
+	info.type = OBS_SOURCE_TYPE_INPUT;
+	info.output_flags = OBS_SOURCE_AUDIO;
+	info.get_name = silenceName;
+	info.create = createSilence;
+	info.destroy = destroySilence;
+	obs_register_source(&info);
+}
 
 void registerTestPattern()
 {
