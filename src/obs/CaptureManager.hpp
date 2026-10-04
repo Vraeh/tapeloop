@@ -66,8 +66,11 @@ public:
 	// second or so.
 	void poll();
 
-	// The settings under kSettingsKey of the scene collection's data. Loading starts the
-	// lifecycle over with the collection's own settings.
+	// The settings under kSettingsKey of the scene collection's data. Saving leaves out
+	// sources the collection no longer has. Loading finds a source whose UUID changed,
+	// as every UUID does in a duplicated collection, by its saved name (see
+	// matchSourcesByName), and starts the lifecycle over with the collection's own
+	// settings.
 	void save(obs_data_t *collection) const;
 	void load(obs_data_t *collection);
 
@@ -105,7 +108,8 @@ private:
 	BufferSettings settings_;
 	BufferLifecycle lifecycle_;
 	std::map<std::string, std::unique_ptr<Entry>> entries_;
-	// Names saved with the settings, for log lines about sources that are not found.
+	// Names saved with the settings, to find a source whose UUID changed and for log
+	// lines about sources that are not found.
 	std::map<std::string, std::string> savedNames_;
 	// Settings of a version this build does not know, written back as they came.
 	OBSDataAutoRelease foreignSettings_;
