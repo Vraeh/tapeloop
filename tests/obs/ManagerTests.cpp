@@ -498,21 +498,25 @@ TEST_CASE_METHOD(ObsFixture, "two saved sources with one name find neither of th
 
 TEST_CASE_METHOD(ObsFixture, "a scene or an input without video never takes a saved name", "[obs][manager]")
 {
-	// A scene can share an input's name; scenes are named per canvas.
+	// A scene can share an input's name; scenes are named per canvas. Groups are listed
+	// with the inputs.
 	OBSSceneAutoRelease scene = obs_scene_create("Main");
+	obs_source_t *group = obs_sceneitem_get_source(obs_scene_add_group(scene, "Group"));
 	OBSSourceAutoRelease mic = obs_source_create(tapeloop::test::kSilenceId, "Mic", nullptr, nullptr);
 	OBSSourceAutoRelease speaker = obs_source_create(tapeloop::test::kSilenceId, "Speaker", nullptr, nullptr);
 	SavedSource speakerSaved = namedSource(obs_source_get_uuid(speaker), "Speaker", false);
 	speakerSaved.lengthSeconds = 30;
 	OBSDataAutoRelease collection =
 		collectionNaming({namedSource("4f8beeda-0000-4000-8000-000000000001", "Main", true),
-				  namedSource("4f8beeda-0000-4000-8000-000000000002", "Mic", true), speakerSaved});
+				  namedSource("4f8beeda-0000-4000-8000-000000000002", "Mic", true),
+				  namedSource("4f8beeda-0000-4000-8000-000000000003", "Group", true), speakerSaved});
 
 	FakeHost host;
 	CaptureManager manager(host);
 	manager.load(collection);
-	CHECK(manager.settings().sources.size() == 3);
+	CHECK(manager.settings().sources.size() == 4);
 	CHECK_FALSE(manager.settings().sources.contains(obs_source_get_uuid(obs_scene_get_source(scene))));
+	CHECK_FALSE(manager.settings().sources.contains(obs_source_get_uuid(group)));
 	CHECK_FALSE(manager.settings().sources.contains(obs_source_get_uuid(mic)));
 
 	// An input without video is still present, so its settings are written back.
@@ -526,5 +530,6 @@ TEST_CASE_METHOD(ObsFixture, "a scene or an input without video never takes a sa
 
 	// The main canvas keeps its scenes until they are removed, as the frontend does
 	// before shutting down.
+	obs_source_remove(group);
 	obs_source_remove(obs_scene_get_source(scene));
 }
