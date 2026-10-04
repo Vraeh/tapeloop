@@ -47,8 +47,8 @@ public:
 
 	void advance(Nanoseconds elapsed);
 
-	// Does nothing on the last frame when the rate is forward, or on the first when it
-	// is reverse: there is nowhere to go.
+	// On the last frame with a forward rate, or on the first with a reverse one, starts
+	// again from the other end. A clip of one frame has nowhere to go and stays paused.
 	void play() noexcept;
 	void pause() noexcept { playing_ = false; }
 	void togglePause() noexcept;

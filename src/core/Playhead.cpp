@@ -75,9 +75,15 @@ void Playhead::advance(Nanoseconds elapsed)
 
 void Playhead::play() noexcept
 {
-	if (!frames_.empty()) {
-		playing_ = rate_ > 0 ? position_ < frames_.back() : position_ > frames_.front();
+	if (frames_.empty()) {
+		return;
 	}
+	if (rate_ > 0 && position_ >= frames_.back()) {
+		moveTo(frames_.front());
+	} else if (rate_ < 0 && position_ <= frames_.front()) {
+		moveTo(frames_.back());
+	}
+	playing_ = frames_.front() < frames_.back();
 }
 
 void Playhead::togglePause() noexcept

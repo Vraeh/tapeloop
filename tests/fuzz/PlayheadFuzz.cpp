@@ -90,10 +90,26 @@ struct State {
 	}
 };
 
-// Whether play() can start: there is somewhere to go in the direction of the rate.
-bool canPlay(const std::vector<Nanoseconds> &frames, const State &state)
+// What play() promises from a paused or playing state: at the bound the rate heads for
+// it starts again from the other end, elsewhere it carries on from where it is, and it
+// plays whenever the clip has more than one frame.
+void checkPlay(const Playhead &playhead, const std::vector<Nanoseconds> &frames, const State &before,
+	       std::optional<Int128> &exact)
 {
-	return !frames.empty() && (state.rate > 0 ? state.position < frames.back() : state.position > frames.front());
+	if (frames.empty()) {
+		require(!playhead.playing() && playhead.position() == before.position);
+		return;
+	}
+	require(playhead.playing() == (frames.size() > 1));
+	if (before.rate > 0 && before.position == frames.back()) {
+		require(playhead.position() == frames.front());
+		exact = Int128{playhead.position().count()} * kUnitsPerNanosecond;
+	} else if (before.rate < 0 && before.position == frames.front()) {
+		require(playhead.position() == frames.back());
+		exact = Int128{playhead.position().count()} * kUnitsPerNanosecond;
+	} else {
+		require(playhead.position() == before.position);
+	}
 }
 
 void checkAlways(const Playhead &playhead, const std::vector<Nanoseconds> &frames, const Limits &limits)
@@ -220,7 +236,7 @@ extern "C" int LLVMFuzzerTestOneInput(const uint8_t *data, size_t size)
 		}
 		case 3:
 			playhead.play();
-			require(playhead.playing() == (frames.empty() ? before.playing : canPlay(frames, before)));
+			checkPlay(playhead, frames, before, exact);
 			break;
 		case 4:
 			playhead.pause();
@@ -228,7 +244,11 @@ extern "C" int LLVMFuzzerTestOneInput(const uint8_t *data, size_t size)
 			break;
 		case 5:
 			playhead.togglePause();
-			require(playhead.playing() == (!before.playing && canPlay(frames, before)));
+			if (before.playing) {
+				require(!playhead.playing() && playhead.position() == before.position);
+			} else {
+				checkPlay(playhead, frames, before, exact);
+			}
 			break;
 		case 6: {
 			const int32_t rate = input.i32();
