@@ -205,7 +205,8 @@ extern "C" int LLVMFuzzerTestOneInput(const uint8_t *data, size_t size)
 			playhead.load(frames);
 			std::sort(frames.begin(), frames.end());
 			frames.erase(std::unique(frames.begin(), frames.end()), frames.end());
-			require(!playhead.playing() && !playhead.scrubbing() && playhead.rate() == before.rate);
+			require(!playhead.playing() && !playhead.scrubbing());
+			require(playhead.rate() == (before.rate < 0 ? -before.rate : before.rate));
 			require(playhead.position() == (frames.empty() ? Nanoseconds{0} : frames.front()));
 			exact = Int128{playhead.position().count()} * kUnitsPerNanosecond;
 			break;

@@ -46,6 +46,7 @@ void Playhead::load(std::vector<Nanoseconds> frameTimes)
 	remainder_ = 0;
 	playing_ = false;
 	scrubbing_ = false;
+	rate_ = rate_ < 0 ? -rate_ : rate_;
 }
 
 void Playhead::advance(Nanoseconds elapsed)

@@ -448,7 +448,22 @@ TEST_CASE("Playhead load stops playback and scrubbing")
 	CHECK_FALSE(playhead.playing());
 	CHECK_FALSE(playhead.scrubbing());
 	CHECK(playhead.position() == frameTime(0));
-	CHECK(playhead.rate() == -500);
+}
+
+TEST_CASE("Playhead load keeps the speed and plays forward")
+{
+	Playhead playhead = loaded(120);
+	playhead.setRate(-500);
+	playhead.load(frames(30));
+	CHECK(playhead.rate() == 500);
+
+	playhead.setRate(2000);
+	playhead.load(frames(30));
+	CHECK(playhead.rate() == 2000);
+
+	playhead.play();
+	playhead.advance(10ms);
+	CHECK(playhead.position() == frameTime(0) + 20ms);
 }
 
 TEST_CASE("Playhead sorts and deduplicates the frame times it loads")
