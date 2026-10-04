@@ -197,8 +197,19 @@ TEST_CASE("only a capturable source takes the settings of a name, but any source
 	settings.sources["audio"] = {false, 30s, std::nullopt};
 	const std::map<std::string, std::string> names = {{"gone", "Mic"}, {"audio", "Mic"}};
 
-	const auto moves = tapeloop::matchSourcesByName(settings, names, {{"audio", "Mic", false}});
-	CHECK(moves.empty());
-	CHECK(settings.sources.contains("gone"));
+	SECTION("no capturable source has the name")
+	{
+		const auto moves = tapeloop::matchSourcesByName(settings, names, {{"audio", "Mic", false}});
+		CHECK(moves.empty());
+		CHECK(settings.sources.contains("gone"));
+	}
+	SECTION("a capturable source has it")
+	{
+		// Were the audio input taken as missing, it would claim the camera too and
+		// neither would move.
+		const auto moves = tapeloop::matchSourcesByName(settings, names,
+								{{"audio", "Mic", false}, {"camera", "Mic", true}});
+		CHECK(moves == std::map<std::string, std::string>{{"gone", "camera"}});
+	}
 	CHECK(settings.sources.at("audio").length == 30s);
 }
