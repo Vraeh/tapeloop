@@ -10,6 +10,7 @@
 #include <catch2/catch_test_macros.hpp>
 #include <obs.hpp>
 
+#include <chrono>
 #include <string>
 
 using tapeloop::BufferSettings;
@@ -93,4 +94,26 @@ TEST_CASE_METHOD(ObsFixture, "the dock sees a source waiting for its size", "[ob
 	REQUIRE(sources.size() == 1);
 	CHECK(sources[0].state == SourceState::Waiting);
 	REQUIRE(backend.toggleRunning());
+}
+
+TEST_CASE_METHOD(ObsFixture, "every settings change from the dock asks for one save", "[obs][dock]")
+{
+	OBSSourceAutoRelease camera = createTestPattern(320, 180, "Camera");
+	OfflineHost host;
+	CaptureManager manager(host);
+	int saves = 0;
+	ManagerDockBackend backend(manager, [&saves] { ++saves; });
+
+	BufferSettings settings = backend.settings();
+	settings.sources[obs_source_get_uuid(camera)].selected = true;
+	backend.setSettings(settings);
+	CHECK(saves == 1);
+	settings.length = std::chrono::seconds(90);
+	backend.setSettings(settings);
+	CHECK(saves == 2);
+
+	// Starting and stopping the buffers is not an edit of the settings.
+	REQUIRE(backend.toggleRunning());
+	REQUIRE(backend.toggleRunning());
+	CHECK(saves == 2);
 }

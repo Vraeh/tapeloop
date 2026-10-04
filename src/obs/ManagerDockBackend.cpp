@@ -63,4 +63,12 @@ std::vector<ui::DockSource> ManagerDockBackend::sources() const
 	return sources;
 }
 
+void ManagerDockBackend::setSettings(const BufferSettings &settings)
+{
+	manager_.setSettings(settings);
+	if (requestSave_) {
+		requestSave_();
+	}
+}
+
 } // namespace tapeloop::obs
