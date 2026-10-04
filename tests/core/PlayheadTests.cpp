@@ -450,6 +450,26 @@ TEST_CASE("Playhead starts again from the other end when played at the end")
 	}
 }
 
+TEST_CASE("Playhead starts again from the other end without a leftover fraction")
+{
+	// At half speed a scrub of 201 ns covers 100.5 ns: it ends on the last frame with
+	// half a nanosecond carried over, which a restart must not keep.
+	Playhead playhead;
+	playhead.load({0ns, 100ns});
+	playhead.beginScrub(ScrubDirection::Forward);
+	playhead.advance(201ns);
+	playhead.endScrub();
+	REQUIRE(playhead.position() == 100ns);
+
+	playhead.setRate(500);
+	playhead.play();
+	REQUIRE(playhead.position() == 0ns);
+	playhead.advance(1ns);
+	CHECK(playhead.position() == 0ns);
+	playhead.advance(1ns);
+	CHECK(playhead.position() == 1ns);
+}
+
 TEST_CASE("Playhead with a single frame has nowhere to play")
 {
 	Playhead playhead;
