@@ -370,15 +370,15 @@ TEST_CASE_METHOD(ObsFixture, "settings are saved with the scene collection and l
 	settings.length = 90s;
 	settings.resolution = {ResolutionMode::Fixed, 720};
 	settings.startWithOutputs = false;
-	settings.sources[uuidOf(camera)] = {true, 30s, std::nullopt};
+	settings.sources[uuidOf(camera)] = {true, 30s, std::nullopt, std::nullopt};
 	settings.sources[uuidOf(wide)] =
-		SourceSettings{false, std::nullopt, ReplayResolution{ResolutionMode::Output, 1080}};
+		SourceSettings{false, std::nullopt, ReplayResolution{ResolutionMode::Output, 1080}, std::nullopt};
 
 	OBSDataAutoRelease collection = obs_data_create();
 	{
 		CaptureManager manager(host);
 		BufferSettings withGone = settings;
-		withGone.sources["9f1c0a7e-0000-4000-8000-000000000001"] = {true, 30s, std::nullopt};
+		withGone.sources["9f1c0a7e-0000-4000-8000-000000000001"] = {true, 30s, std::nullopt, std::nullopt};
 		manager.setSettings(withGone);
 		manager.save(collection);
 	}

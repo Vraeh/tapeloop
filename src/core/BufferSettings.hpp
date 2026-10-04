@@ -29,6 +29,7 @@ struct SourceSettings {
 	bool selected = false;
 	std::optional<Nanoseconds> length;
 	std::optional<ReplayResolution> resolution;
+	std::optional<bool> activateOffAir;
 
 	bool operator==(const SourceSettings &) const = default;
 };
@@ -38,10 +39,14 @@ struct BufferSettings {
 	Nanoseconds length = kDefaultBufferLength;
 	ReplayResolution resolution;
 	bool startWithOutputs = true;
+	// Whether a selected source is kept active while it is captured, as if it were on
+	// air: media sources play, captures hook their targets. The program does not change.
+	bool activateOffAir = false;
 	std::map<std::string, SourceSettings> sources;
 
 	Nanoseconds lengthFor(const std::string &uuid) const;
 	ReplayResolution resolutionFor(const std::string &uuid) const;
+	bool activateFor(const std::string &uuid) const;
 	std::vector<std::string> selectedSources() const;
 
 	bool operator==(const BufferSettings &) const = default;
@@ -60,14 +65,18 @@ struct SavedSource {
 	std::optional<int64_t> lengthSeconds;
 	std::optional<std::string> resolution;
 	std::optional<int64_t> height;
+	std::optional<bool> activateOffAir;
 };
 
+// A reader skips the keys it does not know, so a field added later, as activateOffAir
+// was, needs no new version.
 struct SavedSettings {
 	int64_t version = kSettingsVersion;
 	int64_t lengthSeconds = 0;
 	std::string resolution;
 	int64_t height = 0;
 	bool startWithOutputs = true;
+	bool activateOffAir = false;
 	std::vector<SavedSource> sources;
 };
 
