@@ -236,6 +236,9 @@ TEST_CASE("every string the dock asks for is in the locale file")
 	backend.isRunning = true;
 	dock.refresh();
 	CHECK(missing.empty());
+
+	// The plugin looks the dock's title up itself, when it adds the dock.
+	CHECK(tapeloop::test::localeStrings().contains("Dock.Title"));
 }
 
 TEST_CASE("refreshing the dock changes nothing")
