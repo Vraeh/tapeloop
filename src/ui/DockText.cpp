@@ -14,34 +14,6 @@ constexpr std::array<uint32_t, 5> kFixedHeights = {360, 480, 720, 1080, 2160};
 
 } // namespace
 
-const std::vector<const char *> &dockTextKeys()
-{
-	static const std::vector<const char *> keys = {
-		"Dock.Title",
-		"Dock.Source",
-		"Dock.Status",
-		"Dock.Status.Stopped",
-		"Dock.Status.Running",
-		"Dock.Status.Failed",
-		"Dock.SourceSettings",
-		"Dock.Length",
-		"Dock.SecondsSuffix",
-		"Dock.Resolution",
-		"Dock.Resolution.Canvas",
-		"Dock.Resolution.Output",
-		"Dock.Resolution.Fixed",
-		"Dock.StartWithOutputs",
-		"Dock.Start",
-		"Dock.Stop",
-		"Dock.FollowsOutputs",
-		"Dock.ApplyNote",
-		"SourceSettings.Title",
-		"SourceSettings.OwnLength",
-		"SourceSettings.OwnResolution",
-	};
-	return keys;
-}
-
 void addResolutions(QComboBox &combo, const TextLookup &text)
 {
 	combo.addItem(text("Dock.Resolution.Canvas"));

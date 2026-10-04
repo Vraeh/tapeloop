@@ -23,6 +23,17 @@ std::map<std::string, QString> localeStrings()
 	return strings;
 }
 
+tapeloop::ui::TextLookup recordingLocaleText(std::set<std::string> &missing)
+{
+	return [strings = localeStrings(), &missing](const char *key) {
+		const auto found = strings.find(key);
+		if (found != strings.end())
+			return found->second;
+		missing.insert(key);
+		return QString(key);
+	};
+}
+
 tapeloop::ui::TextLookup localeText()
 {
 	return [strings = localeStrings()](const char *key) {

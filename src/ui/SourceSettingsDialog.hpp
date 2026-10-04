@@ -20,11 +20,11 @@ public:
 	SourceSettingsDialog(const QString &sourceName, const SourceSettings &current, const BufferSettings &global,
 			     const TextLookup &text, QWidget *parent = nullptr);
 
-	// The source's settings as the dialog leaves them; the selection is kept.
+	// The source's own length and resolution as the dialog leaves them; the selection is
+	// not the dialog's and stays unset.
 	SourceSettings result() const;
 
 private:
-	SourceSettings current_;
 	QCheckBox *ownLength_;
 	QSpinBox *length_;
 	QCheckBox *ownResolution_;

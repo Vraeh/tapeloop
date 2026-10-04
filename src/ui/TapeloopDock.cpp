@@ -9,6 +9,7 @@
 #include <QComboBox>
 #include <QFormLayout>
 #include <QHeaderView>
+#include <QKeyEvent>
 #include <QLabel>
 #include <QPushButton>
 #include <QSignalBlocker>
@@ -17,6 +18,7 @@
 #include <QTimer>
 #include <QVBoxLayout>
 
+#include <algorithm>
 #include <chrono>
 #include <utility>
 
@@ -53,7 +55,8 @@ TapeloopDock::TapeloopDock(DockBackend &backend, TextLookup text, QWidget *paren
 	  resolution_(new QComboBox(this)),
 	  startWithOutputs_(new QCheckBox(text_("Dock.StartWithOutputs"), this)),
 	  note_(new QLabel(text_("Dock.ApplyNote"), this)),
-	  startStop_(new QPushButton(this))
+	  startStop_(new QPushButton(this)),
+	  followsOutputs_(new QLabel(text_("Dock.FollowsOutputs"), this))
 {
 	sources_->setObjectName("sources");
 	sources_->setHorizontalHeaderLabels({text_("Dock.Source"), text_("Dock.Status")});
@@ -64,18 +67,23 @@ TapeloopDock::TapeloopDock(DockBackend &backend, TextLookup text, QWidget *paren
 	sources_->setSelectionMode(QAbstractItemView::SingleSelection);
 	sources_->setEditTriggers(QAbstractItemView::NoEditTriggers);
 	sources_->setTabKeyNavigation(false);
+	sources_->installEventFilter(this);
 
 	sourceSettings_->setObjectName("sourceSettings");
 	sourceSettings_->setEnabled(false);
 	length_->setObjectName("length");
 	length_->setRange(seconds(kMinBufferLength), seconds(kMaxBufferLength));
 	length_->setSuffix(text_("Dock.SecondsSuffix"));
+	length_->setKeyboardTracking(false);
 	resolution_->setObjectName("resolution");
 	addResolutions(*resolution_, text_);
 	startWithOutputs_->setObjectName("startWithOutputs");
 	note_->setObjectName("note");
 	note_->setWordWrap(true);
 	startStop_->setObjectName("startStop");
+	followsOutputs_->setObjectName("followsOutputs");
+	followsOutputs_->setWordWrap(true);
+	followsOutputs_->hide();
 
 	auto *form = new QFormLayout;
 	form->addRow(text_("Dock.Length"), length_);
@@ -88,6 +96,7 @@ TapeloopDock::TapeloopDock(DockBackend &backend, TextLookup text, QWidget *paren
 	layout->addLayout(form);
 	layout->addWidget(note_);
 	layout->addWidget(startStop_);
+	layout->addWidget(followsOutputs_);
 
 	connect(sources_, &QTableWidget::itemChanged, this, [this](QTableWidgetItem *item) {
 		if (item->column() != kSourceColumn)
@@ -100,10 +109,13 @@ TapeloopDock::TapeloopDock(DockBackend &backend, TextLookup text, QWidget *paren
 		});
 		refresh();
 	});
-	connect(sources_, &QTableWidget::currentCellChanged, this,
-		[this](int row) { sourceSettings_->setEnabled(row >= 0); });
-	connect(sources_, &QTableWidget::cellDoubleClicked, this, [this](int row) { editSourceSettings(row); });
-	connect(sourceSettings_, &QPushButton::clicked, this, [this] { editSourceSettings(sources_->currentRow()); });
+	// The current cell stays on the checkbox, so that Space always toggles it.
+	connect(sources_, &QTableWidget::currentCellChanged, this, [this](int row, int column) {
+		sourceSettings_->setEnabled(row >= 0);
+		if (row >= 0 && column != kSourceColumn)
+			sources_->setCurrentCell(row, kSourceColumn);
+	});
+	connect(sourceSettings_, &QPushButton::clicked, this, [this] { openSourceSettings(sources_->currentRow()); });
 	connect(length_, &QSpinBox::valueChanged, this, [this](int value) {
 		changeSettings([](BufferSettings &settings,
 				  int seconds) { settings.length = std::chrono::seconds(seconds); },
@@ -122,8 +134,12 @@ TapeloopDock::TapeloopDock(DockBackend &backend, TextLookup text, QWidget *paren
 		refresh();
 	});
 
+	// OBS adds docks hidden; a hidden dock has nothing to show.
 	auto *timer = new QTimer(this);
-	connect(timer, &QTimer::timeout, this, &TapeloopDock::refresh);
+	connect(timer, &QTimer::timeout, this, [this] {
+		if (isVisible())
+			refresh();
+	});
 	timer->start(1000);
 	refresh();
 }
@@ -160,13 +176,38 @@ void TapeloopDock::refresh()
 		const bool enabled = backend_.manualControlEnabled();
 		startStop_->setEnabled(enabled);
 		startStop_->setToolTip(enabled ? QString() : text_("Dock.FollowsOutputs"));
+		followsOutputs_->setVisible(!enabled);
 	});
+}
+
+void TapeloopDock::showEvent(QShowEvent *event)
+{
+	QWidget::showEvent(event);
+	refresh();
+}
+
+bool TapeloopDock::eventFilter(QObject *watched, QEvent *event)
+{
+	if (watched == sources_ && event->type() == QEvent::KeyPress) {
+		const int key = static_cast<QKeyEvent *>(event)->key();
+		if (key == Qt::Key_Return || key == Qt::Key_Enter) {
+			openSourceSettings(sources_->currentRow());
+			return true;
+		}
+	}
+	return QWidget::eventFilter(watched, event);
 }
 
 void TapeloopDock::rebuildSources(const std::vector<DockSource> &sources)
 {
 	const QSignalBlocker block(sources_);
+	const int currentRow = sources_->currentRow();
+	const std::string current = currentRow >= 0 && static_cast<size_t>(currentRow) < shownUuids_.size()
+					    ? shownUuids_[static_cast<size_t>(currentRow)]
+					    : std::string();
+
 	sources_->setRowCount(static_cast<int>(sources.size()));
+	int restored = -1;
 	for (size_t i = 0; i < sources.size(); ++i) {
 		const int row = static_cast<int>(i);
 		auto *name = new QTableWidgetItem(QString::fromStdString(sources[i].name));
@@ -176,9 +217,17 @@ void TapeloopDock::rebuildSources(const std::vector<DockSource> &sources)
 		auto *status = new QTableWidgetItem;
 		status->setFlags(Qt::ItemIsEnabled | Qt::ItemIsSelectable);
 		sources_->setItem(row, kStatusColumn, status);
+		if (!current.empty() && sources[i].uuid == current)
+			restored = row;
 	}
 	updateSources(sources);
-	sourceSettings_->setEnabled(sources_->currentRow() >= 0);
+
+	// The current row follows its source, not its position.
+	if (restored >= 0)
+		sources_->setCurrentCell(restored, kSourceColumn);
+	else
+		sources_->setCurrentCell(-1, -1);
+	sourceSettings_->setEnabled(restored >= 0);
 }
 
 void TapeloopDock::updateSources(const std::vector<DockSource> &sources)
@@ -219,22 +268,39 @@ void TapeloopDock::changeSettings(void (*change)(BufferSettings &, int), int val
 	refresh();
 }
 
-void TapeloopDock::editSourceSettings(int row)
+void TapeloopDock::openSourceSettings(int row)
 {
 	if (row < 0 || row >= sources_->rowCount())
 		return;
 	guarded([&] {
-		const std::string uuid =
-			sources_->item(row, kSourceColumn)->data(Qt::UserRole).toString().toStdString();
+		const QTableWidgetItem *item = sources_->item(row, kSourceColumn);
+		const std::string uuid = item->data(Qt::UserRole).toString().toStdString();
 		const BufferSettings settings = backend_.settings();
 		const auto found = settings.sources.find(uuid);
 		const SourceSettings current = found != settings.sources.end() ? found->second : SourceSettings{};
-		SourceSettingsDialog dialog(sources_->item(row, kSourceColumn)->text(), current, settings, text_, this);
-		if (dialog.exec() != QDialog::Accepted)
-			return;
-		BufferSettings changed = backend_.settings();
-		changed.sources[uuid] = dialog.result();
-		backend_.setSettings(changed);
+
+		// Not run with exec(): its nested event loop could outlive the dock if OBS closed it
+		// meanwhile. As a child, the dialog goes with the dock.
+		auto *dialog = new SourceSettingsDialog(item->text(), current, settings, text_, this);
+		dialog->setObjectName("sourceSettingsDialog");
+		dialog->setAttribute(Qt::WA_DeleteOnClose);
+		connect(dialog, &QDialog::accepted, this,
+			[this, dialog, uuid] { applySourceSettings(uuid, dialog->result()); });
+		dialog->open();
+	});
+}
+
+void TapeloopDock::applySourceSettings(const std::string &uuid, const SourceSettings &chosen)
+{
+	// The scene collection can change while the dialog is open.
+	if (std::find(shownUuids_.begin(), shownUuids_.end(), uuid) == shownUuids_.end())
+		return;
+	guarded([&] {
+		BufferSettings settings = backend_.settings();
+		SourceSettings &source = settings.sources[uuid];
+		source.length = chosen.length;
+		source.resolution = chosen.resolution;
+		backend_.setSettings(settings);
 	});
 	refresh();
 }

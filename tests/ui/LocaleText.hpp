@@ -8,6 +8,7 @@
 #include <QString>
 
 #include <map>
+#include <set>
 #include <string>
 
 namespace tapeloop::test {
@@ -17,5 +18,9 @@ std::map<std::string, QString> localeStrings();
 
 // Looks keys up in localeStrings(); a missing key comes back as itself.
 tapeloop::ui::TextLookup localeText();
+
+// Like localeText, and adds every key it does not find to missing, which must outlive
+// whatever uses the lookup.
+tapeloop::ui::TextLookup recordingLocaleText(std::set<std::string> &missing);
 
 } // namespace tapeloop::test

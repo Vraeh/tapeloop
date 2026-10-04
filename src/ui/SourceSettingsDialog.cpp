@@ -17,7 +17,6 @@ namespace tapeloop::ui {
 SourceSettingsDialog::SourceSettingsDialog(const QString &sourceName, const SourceSettings &current,
 					   const BufferSettings &global, const TextLookup &text, QWidget *parent)
 	: QDialog(parent),
-	  current_(current),
 	  ownLength_(new QCheckBox(text("SourceSettings.OwnLength"), this)),
 	  length_(new QSpinBox(this)),
 	  ownResolution_(new QCheckBox(text("SourceSettings.OwnResolution"), this)),
@@ -29,6 +28,7 @@ SourceSettingsDialog::SourceSettingsDialog(const QString &sourceName, const Sour
 	length_->setRange(static_cast<int>(std::chrono::duration_cast<std::chrono::seconds>(kMinBufferLength).count()),
 			  static_cast<int>(std::chrono::duration_cast<std::chrono::seconds>(kMaxBufferLength).count()));
 	length_->setSuffix(text("Dock.SecondsSuffix"));
+	length_->setKeyboardTracking(false);
 	length_->setValue(static_cast<int>(
 		std::chrono::duration_cast<std::chrono::seconds>(current.length.value_or(global.length)).count()));
 	ownLength_->setObjectName("ownLength");
@@ -58,7 +58,7 @@ SourceSettingsDialog::SourceSettingsDialog(const QString &sourceName, const Sour
 
 SourceSettings SourceSettingsDialog::result() const
 {
-	SourceSettings settings = current_;
+	SourceSettings settings;
 	settings.length = ownLength_->isChecked() ? std::optional<Nanoseconds>(std::chrono::seconds(length_->value()))
 						  : std::nullopt;
 	settings.resolution = ownResolution_->isChecked()

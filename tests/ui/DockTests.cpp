@@ -10,8 +10,12 @@
 #include <catch2/catch_test_macros.hpp>
 
 #include <QAbstractButton>
+#include <QApplication>
+#include <QKeyEvent>
+#include <QLabel>
 #include <QCheckBox>
 #include <QComboBox>
+#include <QDialog>
 #include <QDir>
 #include <QPushButton>
 #include <QSpinBox>
@@ -19,6 +23,7 @@
 
 #include <chrono>
 #include <cstdlib>
+#include <set>
 #include <string>
 
 using namespace std::chrono_literals;
@@ -43,6 +48,12 @@ FakeBackend backendWithSources()
 		{"uuid-scoreboard", "Scoreboard", false, SourceState::Stopped, 0s, 0},
 	};
 	return backend;
+}
+
+// The dialog has no Q_OBJECT, so it is found as a QDialog.
+tapeloop::ui::SourceSettingsDialog *sourceDialog(const QWidget &dock)
+{
+	return static_cast<tapeloop::ui::SourceSettingsDialog *>(dock.findChild<QDialog *>("sourceSettingsDialog"));
 }
 
 template<typename Widget> Widget *child(const QWidget &parent, const char *name)
@@ -179,7 +190,6 @@ TEST_CASE("the source settings dialog sets and clears a source's own settings")
 	child<QComboBox>(dialog, "resolution")->setCurrentIndex(6);
 
 	SourceSettings result = dialog.result();
-	CHECK(result.selected);
 	CHECK(result.length == 30s);
 	CHECK(result.resolution == ReplayResolution{ResolutionMode::Fixed, 2160});
 
@@ -208,13 +218,155 @@ TEST_CASE("every control of the dock can be reached with the keyboard")
 	CHECK(controls == 6);
 }
 
-TEST_CASE("every string the dock shows is in the locale file")
+TEST_CASE("every string the dock asks for is in the locale file")
 {
-	const auto strings = tapeloop::test::localeStrings();
-	for (const char *key : tapeloop::ui::dockTextKeys()) {
-		CAPTURE(key);
-		CHECK(strings.contains(key));
-	}
+	FakeBackend backend = backendWithSources();
+	backend.shown[0].state = SourceState::Running;
+	backend.shown[1].state = SourceState::Failed;
+	for (const auto &source : backend.shown)
+		backend.current.sources[source.uuid].selected = true;
+	backend.manualEnabled = false;
+
+	std::set<std::string> missing;
+	TapeloopDock dock(backend, tapeloop::test::recordingLocaleText(missing));
+	auto *table = child<QTableWidget>(dock, "sources");
+	table->setCurrentCell(0, 0);
+	child<QPushButton>(dock, "sourceSettings")->click();
+	REQUIRE(sourceDialog(dock));
+	backend.isRunning = true;
+	dock.refresh();
+	CHECK(missing.empty());
+}
+
+TEST_CASE("refreshing the dock changes nothing")
+{
+	FakeBackend backend = backendWithSources();
+	backend.current.sources["uuid-camera-1"].selected = true;
+	backend.current.length = 120s;
+	backend.current.resolution = {ResolutionMode::Fixed, 480};
+	backend.current.startWithOutputs = false;
+	TapeloopDock dock(backend, localeText());
+	dock.refresh();
+	dock.refresh();
+	CHECK(backend.settingsChanges == 0);
+	CHECK(child<QSpinBox>(dock, "length")->value() == 120);
+	CHECK(child<QComboBox>(dock, "resolution")->currentIndex() == 3);
+}
+
+TEST_CASE("the dock's source settings change only that source's own settings")
+{
+	FakeBackend backend = backendWithSources();
+	backend.current.sources["uuid-scoreboard"].selected = true;
+	TapeloopDock dock(backend, localeText());
+	auto *table = child<QTableWidget>(dock, "sources");
+	auto *button = child<QPushButton>(dock, "sourceSettings");
+	CHECK_FALSE(button->isEnabled());
+	table->setCurrentCell(2, 0);
+	REQUIRE(button->isEnabled());
+	button->click();
+
+	auto *dialog = sourceDialog(dock);
+	REQUIRE(dialog);
+	CHECK(dialog->windowTitle() == "Settings for Scoreboard");
+	child<QCheckBox>(*dialog, "ownLength")->setChecked(true);
+	child<QSpinBox>(*dialog, "length")->setValue(30);
+	// A change made elsewhere while the dialog is open is not undone.
+	backend.current.sources["uuid-scoreboard"].selected = false;
+	dialog->accept();
+
+	const SourceSettings &scoreboard = backend.current.sources.at("uuid-scoreboard");
+	CHECK(scoreboard.length == 30s);
+	CHECK_FALSE(scoreboard.resolution);
+	CHECK_FALSE(scoreboard.selected);
+}
+
+TEST_CASE("the dock drops a source's settings once the source is gone")
+{
+	FakeBackend backend = backendWithSources();
+	TapeloopDock dock(backend, localeText());
+	child<QTableWidget>(dock, "sources")->setCurrentCell(1, 0);
+	child<QPushButton>(dock, "sourceSettings")->click();
+	auto *dialog = sourceDialog(dock);
+	REQUIRE(dialog);
+	child<QCheckBox>(*dialog, "ownLength")->setChecked(true);
+
+	backend.shown.erase(backend.shown.begin() + 1);
+	dock.refresh();
+	const int changes = backend.settingsChanges;
+	dialog->accept();
+	CHECK(backend.settingsChanges == changes);
+	CHECK_FALSE(backend.current.sources.contains("uuid-camera-2"));
+}
+
+TEST_CASE("the current row of the dock follows its source")
+{
+	FakeBackend backend = backendWithSources();
+	TapeloopDock dock(backend, localeText());
+	auto *table = child<QTableWidget>(dock, "sources");
+	table->setCurrentCell(2, 0);
+
+	backend.shown.insert(backend.shown.begin(), {"uuid-aerial", "Aerial", false, SourceState::Stopped, 0s, 0});
+	dock.refresh();
+	REQUIRE(table->currentRow() == 3);
+	CHECK(table->item(table->currentRow(), 0)->text() == "Scoreboard");
+
+	backend.shown.pop_back();
+	dock.refresh();
+	CHECK(table->currentRow() == -1);
+	CHECK_FALSE(child<QPushButton>(dock, "sourceSettings")->isEnabled());
+}
+
+TEST_CASE("the source list works from the keyboard")
+{
+	FakeBackend backend = backendWithSources();
+	TapeloopDock dock(backend, localeText());
+	auto *table = child<QTableWidget>(dock, "sources");
+	table->setCurrentCell(0, 0);
+
+	QKeyEvent right(QEvent::KeyPress, Qt::Key_Right, Qt::NoModifier);
+	QApplication::sendEvent(table, &right);
+	CHECK(table->currentColumn() == 0);
+
+	QKeyEvent space(QEvent::KeyPress, Qt::Key_Space, Qt::NoModifier, " ");
+	QApplication::sendEvent(table, &space);
+	CHECK(backend.current.sources["uuid-camera-1"].selected);
+
+	QKeyEvent enter(QEvent::KeyPress, Qt::Key_Return, Qt::NoModifier);
+	QApplication::sendEvent(table, &enter);
+	CHECK(sourceDialog(dock));
+}
+
+TEST_CASE("the dock says why the manual control is off")
+{
+	FakeBackend backend = backendWithSources();
+	backend.manualEnabled = false;
+	TapeloopDock dock(backend, localeText());
+	dock.show();
+	auto *reason = child<QLabel>(dock, "followsOutputs");
+	CHECK(reason->isVisible());
+	CHECK(reason->text() == "The buffers follow streaming and recording while either runs.");
+
+	backend.manualEnabled = true;
+	dock.refresh();
+	CHECK_FALSE(reason->isVisible());
+}
+
+TEST_CASE("a length being typed in the dock is not overwritten")
+{
+	FakeBackend backend = backendWithSources();
+	TapeloopDock dock(backend, localeText());
+	dock.show();
+	dock.activateWindow();
+	auto *length = child<QSpinBox>(dock, "length");
+	CHECK_FALSE(length->keyboardTracking());
+	length->setFocus();
+	QApplication::processEvents();
+	REQUIRE(length->hasFocus());
+
+	length->setValue(200);
+	backend.current.length = 45s;
+	dock.refresh();
+	CHECK(length->value() == 200);
 }
 
 // Renders the dock in a few states into TAPELOOP_SCREENSHOT_DIR, for review by eye.

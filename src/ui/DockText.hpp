@@ -8,7 +8,6 @@
 #include <QString>
 
 #include <functional>
-#include <vector>
 
 class QComboBox;
 
@@ -16,9 +15,6 @@ namespace tapeloop::ui {
 
 // Looks a string up by its key in data/locale; the plugin passes obs_module_text.
 using TextLookup = std::function<QString(const char *key)>;
-
-// Every key the dock and its dialog look up.
-const std::vector<const char *> &dockTextKeys();
 
 // Fills combo with the replay resolutions the dock offers.
 void addResolutions(QComboBox &combo, const TextLookup &text);
