@@ -56,8 +56,9 @@ void update(void *data, obs_data_t *settings) noexcept
 void *create(obs_data_t *settings, obs_source_t *) noexcept
 {
 	auto *pattern = new (std::nothrow) TestPattern;
-	if (pattern)
+	if (pattern) {
 		update(pattern, settings);
+	}
 	return pattern;
 }
 
@@ -172,12 +173,13 @@ std::optional<uint32_t> readFrameNumber(const uint8_t *luma, ptrdiff_t stride, i
 	uint32_t number = 0;
 	for (int bit = 0; bit < kFrameNumberBits; ++bit) {
 		const uint8_t value = luma[row * stride + bit * cellWidth + cellWidth / 2];
-		if (value > kWhiteAbove)
+		if (value > kWhiteAbove) {
 			number = (number << 1) | 1;
-		else if (value < kBlackBelow)
+		} else if (value < kBlackBelow) {
 			number <<= 1;
-		else
+		} else {
 			return std::nullopt;
+		}
 	}
 	return number;
 }

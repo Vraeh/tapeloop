@@ -33,8 +33,9 @@ std::atomic<int> leftovers{0};
 
 void logHandler(int level, const char *format, va_list args, void *) noexcept
 {
-	if (std::strstr(format, "(s) were remaining") || std::strstr(format, "Number of remaining views"))
+	if (std::strstr(format, "(s) were remaining") || std::strstr(format, "Number of remaining views")) {
 		++leftovers;
+	}
 	char message[4096];
 	std::vsnprintf(message, sizeof(message), format, args);
 	std::fprintf(level <= LOG_WARNING ? stderr : stdout, "%s\n", message);
@@ -45,8 +46,9 @@ void loadModule(const std::string &name)
 	const std::string binary = kPrefix + "/lib/obs-plugins/" + name + ".so";
 	const std::string data = kPrefix + "/share/obs/obs-plugins/" + name;
 	obs_module_t *module = nullptr;
-	if (obs_open_module(&module, binary.c_str(), data.c_str()) != MODULE_SUCCESS || !obs_init_module(module))
+	if (obs_open_module(&module, binary.c_str(), data.c_str()) != MODULE_SUCCESS || !obs_init_module(module)) {
 		throw std::runtime_error("Could not load " + binary);
+	}
 }
 
 } // namespace
@@ -55,17 +57,20 @@ ObsFixture::ObsFixture() : allocationsBefore_(bnum_allocs())
 {
 	leftovers = 0;
 	base_set_log_handler(logHandler, nullptr);
-	if (!obs_startup("en-US", nullptr, nullptr))
+	if (!obs_startup("en-US", nullptr, nullptr)) {
 		throw std::runtime_error("obs_startup failed");
+	}
 
 	// The destructor does not run when the constructor throws.
 	try {
 		const int reset = resetCanvas({});
-		if (reset != OBS_VIDEO_SUCCESS)
+		if (reset != OBS_VIDEO_SUCCESS) {
 			throw std::runtime_error("obs_reset_video failed with " + std::to_string(reset));
+		}
 		obs_audio_info audio = {48000, SPEAKERS_STEREO};
-		if (!obs_reset_audio(&audio))
+		if (!obs_reset_audio(&audio)) {
 			throw std::runtime_error("obs_reset_audio failed");
+		}
 		loadModule("obs-x264");
 		registerTestPattern();
 		registerSilence();
@@ -89,8 +94,9 @@ bool waitFor(const std::function<bool()> &condition, std::chrono::milliseconds t
 {
 	const auto deadline = std::chrono::steady_clock::now() + timeout;
 	while (!condition()) {
-		if (std::chrono::steady_clock::now() > deadline)
+		if (std::chrono::steady_clock::now() > deadline) {
 			return false;
+		}
 		std::this_thread::sleep_for(std::chrono::milliseconds(10));
 	}
 	return true;

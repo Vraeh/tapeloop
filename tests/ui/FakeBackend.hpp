@@ -42,8 +42,9 @@ public:
 
 	bool toggleRunning() override
 	{
-		if (!manualEnabled)
+		if (!manualEnabled) {
 			return false;
+		}
 		isRunning = !isRunning;
 		++toggles;
 		return true;

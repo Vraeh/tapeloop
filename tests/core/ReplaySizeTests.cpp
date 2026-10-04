@@ -51,8 +51,9 @@ TEST_CASE("replay output size is always even")
 			for (const uint32_t target : {1u, 2u, 3u, 37u, 1080u}) {
 				CAPTURE(width, height, target);
 				const std::optional<FrameSize> size = replayOutputSize({width, height}, target);
-				if (!size)
+				if (!size) {
 					continue;
+				}
 				CHECK(size->width % 2 == 0);
 				CHECK(size->height % 2 == 0);
 				CHECK(size->width >= 2);

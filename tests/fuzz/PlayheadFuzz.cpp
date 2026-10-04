@@ -28,8 +28,9 @@ constexpr Int128 kUnitsPerNanosecond = 2000;
 Int128 floorUnits(Int128 units)
 {
 	Int128 nanoseconds = units / kUnitsPerNanosecond;
-	if (units % kUnitsPerNanosecond < 0)
+	if (units % kUnitsPerNanosecond < 0) {
 		--nanoseconds;
+	}
 	return nanoseconds;
 }
 
@@ -40,11 +41,12 @@ std::vector<Nanoseconds> readFrames(FuzzInput &input)
 	std::vector<Nanoseconds> frames(input.below(64));
 	Nanoseconds time{input.i64()};
 	for (Nanoseconds &frame : frames) {
-		if (input.byte() % 8 == 0)
+		if (input.byte() % 8 == 0) {
 			time = Nanoseconds{input.i64()};
-		else
+		} else {
 			time = tapeloop::saturatingAdd(time,
 						       Nanoseconds{static_cast<int64_t>(input.below(40'000'000))});
+		}
 		frame = time;
 	}
 	return frames;
@@ -143,10 +145,11 @@ void checkAdvance(Playhead &playhead, const std::vector<Nanoseconds> &frames, Na
 	}
 
 	const int32_t direction = before.scrubbing ? scrubRate : before.rate;
-	if (direction > 0)
+	if (direction > 0) {
 		require(after.position >= before.position);
-	else
+	} else {
 		require(after.position <= before.position);
+	}
 
 	if (before.scrubbing) {
 		require(after.playing == before.playing);
@@ -160,15 +163,17 @@ void checkAdvance(Playhead &playhead, const std::vector<Nanoseconds> &frames, Na
 	const std::optional<Int128> target =
 		exact ? std::optional<Int128>(*exact + Int128{elapsed.count()} * 2 * before.rate) : std::nullopt;
 	if (atBound) {
-		if (target)
+		if (target) {
 			require(before.rate > 0 ? floorUnits(*target) >= frames.back().count()
 						: floorUnits(*target) <= frames.front().count());
+		}
 		exact = Int128{after.position.count()} * kUnitsPerNanosecond;
 		return;
 	}
 	require(split.position() == after.position && split.playing());
-	if (target)
+	if (target) {
 		require(floorUnits(*target) == after.position.count());
+	}
 	exact = target;
 }
 
@@ -227,11 +232,12 @@ extern "C" int LLVMFuzzerTestOneInput(const uint8_t *data, size_t size)
 		case 6: {
 			const int32_t rate = input.i32();
 			playhead.setRate(rate);
-			if (rate == 0)
+			if (rate == 0) {
 				require(!playhead.playing() && playhead.rate() == before.rate);
-			else
+			} else {
 				require(playhead.rate() == limits.rateFor(rate) &&
 					playhead.playing() == before.playing);
+			}
 			break;
 		}
 		case 7:

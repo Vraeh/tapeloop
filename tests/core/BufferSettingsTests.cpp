@@ -109,8 +109,9 @@ TEST_CASE("buffer lengths and fixed heights stay within what the dock offers")
 	CHECK(tapeloop::clampBufferLength(1s) == 10s);
 	CHECK(tapeloop::clampBufferLength(61s) == 61s);
 	CHECK(tapeloop::clampBufferLength(1h) == 300s);
-	for (const uint32_t height : {360u, 480u, 720u, 1080u, 2160u})
+	for (const uint32_t height : {360u, 480u, 720u, 1080u, 2160u}) {
 		CHECK(tapeloop::isFixedHeight(height));
+	}
 	CHECK_FALSE(tapeloop::isFixedHeight(0));
 	CHECK_FALSE(tapeloop::isFixedHeight(1440));
 }

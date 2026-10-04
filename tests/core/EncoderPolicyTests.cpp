@@ -73,8 +73,9 @@ std::vector<EncoderInfo> x264()
 std::vector<EncoderInfo> combined(std::vector<std::vector<EncoderInfo>> groups)
 {
 	std::vector<EncoderInfo> all;
-	for (const auto &group : groups)
+	for (const auto &group : groups) {
 		all.insert(all.end(), group.begin(), group.end());
+	}
 	return all;
 }
 
@@ -90,8 +91,9 @@ Ids candidates(const std::vector<EncoderInfo> &encoders, Vendor renderVendor, bo
 	EncoderPreferences preferences;
 	preferences.preferHevc = preferHevc;
 	Ids ids;
-	for (const EncoderInfo &info : tapeloop::replayEncoderCandidates(encoders, renderVendor, preferences))
+	for (const EncoderInfo &info : tapeloop::replayEncoderCandidates(encoders, renderVendor, preferences)) {
 		ids.push_back(info.id);
+	}
 	return ids;
 }
 

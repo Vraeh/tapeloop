@@ -29,21 +29,25 @@ int64_t referenceNanoseconds(int64_t ticks, Rational timebase)
 	const int64_t periods = ticks / timebase.den;
 	const int64_t scaledRest = (ticks % timebase.den) * nanosecondsPerPeriod;
 	int64_t result = periods * nanosecondsPerPeriod + scaledRest / timebase.den;
-	if (2 * (scaledRest % timebase.den) >= timebase.den)
+	if (2 * (scaledRest % timebase.den) >= timebase.den) {
 		++result;
+	}
 	return result;
 }
 
 std::vector<int64_t> sampleTicks(int64_t ticksPerDay)
 {
 	std::vector<int64_t> ticks;
-	for (int64_t t = 0; t < 2000; ++t)
+	for (int64_t t = 0; t < 2000; ++t) {
 		ticks.push_back(t);
+	}
 	const int64_t stride = ticksPerDay / 20011;
-	for (int64_t t = 2000; t < ticksPerDay - 2000; t += stride)
+	for (int64_t t = 2000; t < ticksPerDay - 2000; t += stride) {
 		ticks.push_back(t);
-	for (int64_t t = ticksPerDay - 2000; t <= ticksPerDay; ++t)
+	}
+	for (int64_t t = ticksPerDay - 2000; t <= ticksPerDay; ++t) {
 		ticks.push_back(t);
+	}
 	return ticks;
 }
 
@@ -150,12 +154,15 @@ int64_t reference128(int64_t value, Rational from, Rational to)
 	const Int128 denominator = Int128{from.den} * to.num;
 	Int128 quotient = numerator / denominator;
 	const Int128 remainder = numerator % denominator;
-	if (2 * (remainder < 0 ? -remainder : remainder) >= denominator)
+	if (2 * (remainder < 0 ? -remainder : remainder) >= denominator) {
 		quotient += numerator < 0 ? -1 : 1;
-	if (quotient > kMax)
+	}
+	if (quotient > kMax) {
 		return kMax;
-	if (quotient < kMin)
+	}
+	if (quotient < kMin) {
 		return kMin;
+	}
 	return static_cast<int64_t>(quotient);
 }
 

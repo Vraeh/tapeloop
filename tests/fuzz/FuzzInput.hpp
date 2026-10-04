@@ -24,8 +24,9 @@ public:
 
 	uint8_t byte() noexcept
 	{
-		if (data_.empty())
+		if (data_.empty()) {
 			return 0;
+		}
 		const uint8_t value = data_.front();
 		data_ = data_.subspan(1);
 		return value;
@@ -36,8 +37,9 @@ public:
 	uint64_t u64() noexcept
 	{
 		uint64_t value = 0;
-		for (int shift = 0; shift < 64; shift += 8)
+		for (int shift = 0; shift < 64; shift += 8) {
 			value |= uint64_t{byte()} << shift;
+		}
 		return value;
 	}
 

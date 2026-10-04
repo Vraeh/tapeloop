@@ -55,13 +55,16 @@ std::vector<uint8_t> withoutParameterSets(std::span<const uint8_t> data)
 		const size_t begin = units[n];
 		size_t end = n + 1 < units.size() ? units[n + 1] - 3 : data.size();
 		// A NAL unit never ends in a zero byte; these belong to the next start code.
-		while (end > begin && data[end - 1] == 0)
+		while (end > begin && data[end - 1] == 0) {
 			--end;
-		if (end == begin)
+		}
+		if (end == begin) {
 			continue;
+		}
 		const uint8_t type = data[begin] & 0x1f;
-		if (type == kSps || type == kPps)
+		if (type == kSps || type == kPps) {
 			continue;
+		}
 		kept.insert(kept.end(), {0, 0, 0, 1});
 		kept.insert(kept.end(), data.begin() + static_cast<ptrdiff_t>(begin),
 			    data.begin() + static_cast<ptrdiff_t>(end));
@@ -81,22 +84,25 @@ void check(int result, const char *what)
 std::vector<DecodedFrame> decodeGop(const Gop &gop)
 {
 	const AVCodec *decoder = avcodec_find_decoder(AV_CODEC_ID_H264);
-	if (!decoder)
+	if (!decoder) {
 		throw std::runtime_error("libavcodec has no H.264 decoder");
+	}
 
 	std::unique_ptr<AVCodecContext, ContextDeleter> context(avcodec_alloc_context3(decoder));
 	std::unique_ptr<AVPacket, PacketDeleter> packet(av_packet_alloc());
 	std::unique_ptr<AVFrame, FrameDeleter> frame(av_frame_alloc());
-	if (!context || !packet || !frame)
+	if (!context || !packet || !frame) {
 		throw std::runtime_error("libavcodec allocation failed");
+	}
 	context->thread_count = 1;
 	context->err_recognition |= AV_EF_EXPLODE;
 
 	if (const CodecConfig *config = gop.codecConfig(); config && !config->empty()) {
 		// libavcodec frees extradata with the context and reads past its end.
 		context->extradata = static_cast<uint8_t *>(av_mallocz(config->size() + AV_INPUT_BUFFER_PADDING_SIZE));
-		if (!context->extradata)
+		if (!context->extradata) {
 			throw std::runtime_error("libavcodec allocation failed");
+		}
 		std::memcpy(context->extradata, config->data(), config->size());
 		context->extradata_size = static_cast<int>(config->size());
 	}
@@ -106,11 +112,13 @@ std::vector<DecodedFrame> decodeGop(const Gop &gop)
 	const auto receive = [&] {
 		for (;;) {
 			const int result = avcodec_receive_frame(context.get(), frame.get());
-			if (result == AVERROR(EAGAIN) || result == AVERROR_EOF)
+			if (result == AVERROR(EAGAIN) || result == AVERROR_EOF) {
 				return;
+			}
 			check(result, "avcodec_receive_frame");
-			if (frame->decode_error_flags != 0 || (frame->flags & AV_FRAME_FLAG_CORRUPT) != 0)
+			if (frame->decode_error_flags != 0 || (frame->flags & AV_FRAME_FLAG_CORRUPT) != 0) {
 				throw std::runtime_error("libavcodec concealed damage in a frame");
+			}
 			frames.push_back(
 				{frame->pts, frame->width, frame->height,
 				 readFrameNumber(frame->data[0], frame->linesize[0], frame->width, frame->height)});
@@ -139,8 +147,9 @@ std::vector<DecodedFrame> decodeGop(const Gop &gop)
 std::vector<std::vector<DecodedFrame>> decodeGops(const Clip &clip)
 {
 	std::vector<std::vector<DecodedFrame>> gops;
-	for (const auto &gop : clip.gops())
+	for (const auto &gop : clip.gops()) {
 		gops.push_back(decodeGop(*gop));
+	}
 	return gops;
 }
 

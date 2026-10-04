@@ -15,8 +15,9 @@ std::map<std::string, QString> localeStrings()
 	while (std::getline(file, line)) {
 		const size_t equals = line.find('=');
 		if (equals == std::string::npos || line.size() < equals + 3 || line[equals + 1] != '"' ||
-		    line.back() != '"')
+		    line.back() != '"') {
 			continue;
+		}
 		strings[line.substr(0, equals)] =
 			QString::fromStdString(line.substr(equals + 2, line.size() - equals - 3));
 	}
@@ -27,8 +28,9 @@ tapeloop::ui::TextLookup recordingLocaleText(std::set<std::string> &missing)
 {
 	return [strings = localeStrings(), &missing](const char *key) {
 		const auto found = strings.find(key);
-		if (found != strings.end())
+		if (found != strings.end()) {
 			return found->second;
+		}
 		missing.insert(key);
 		return QString(key);
 	};

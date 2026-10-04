@@ -34,8 +34,9 @@ Nanoseconds frameTime(int64_t frame)
 std::vector<Nanoseconds> frames(int64_t count)
 {
 	std::vector<Nanoseconds> times;
-	for (int64_t frame = 0; frame < count; ++frame)
+	for (int64_t frame = 0; frame < count; ++frame) {
 		times.push_back(frameTime(frame));
+	}
 	return times;
 }
 
@@ -147,8 +148,9 @@ TEST_CASE("Playhead steps whole frames across GOP boundaries")
 	tapeloop::GopBuilder builder(encoder.frameDuration());
 	for (int frame = 0; frame < 90; ++frame) {
 		builder.append(encoder.next());
-		if (encoder.isKeyframe(encoder.nextFrame()))
+		if (encoder.isKeyframe(encoder.nextFrame())) {
 			gops.push_back(builder.seal());
+		}
 	}
 	const tapeloop::Clip clip(gops, encoder.timeOf(5), encoder.timeOf(85));
 
@@ -236,8 +238,9 @@ TEST_CASE("Playhead scrub moves by the area under the curve")
 	// each cut. The 90 ticks are 30 ns longer than 1.5 s, at 4x by then.
 	Playhead ticked = loaded(600);
 	ticked.beginScrub(ScrubDirection::Forward);
-	for (int tick = 0; tick < 90; ++tick)
+	for (int tick = 0; tick < 90; ++tick) {
 		ticked.advance(16'666'667ns);
+	}
 	const Nanoseconds difference = ticked.position() - playhead.position() - 120ns;
 	CHECK(difference < 1us);
 	CHECK(difference > -1us);
@@ -502,8 +505,9 @@ TEST_CASE("Playhead scrub ramp of zero length jumps straight to the end rate")
 	Playhead ticked(config);
 	ticked.load(frames(600));
 	ticked.beginScrub(ScrubDirection::Forward);
-	for (int tick = 0; tick < 125; ++tick)
+	for (int tick = 0; tick < 125; ++tick) {
 		ticked.advance(10ms);
+	}
 	CHECK(ticked.position() == kOrigin + 4125ms);
 }
 
@@ -544,8 +548,9 @@ TEST_CASE("Playhead does not drift in reverse at a fractional rate")
 	playhead.seek(frameTime(3600 * 60 - 1));
 	playhead.setRate(-333);
 	playhead.play();
-	for (int tick = 0; tick < tickCount; ++tick)
+	for (int tick = 0; tick < tickCount; ++tick) {
 		playhead.advance(ticks[tick % 3]);
+	}
 
 	CHECK(playhead.position() == frameTime(3600 * 60 - 1) - 1'198'467ms);
 }
@@ -559,8 +564,9 @@ TEST_CASE("Playhead position is exact against 128-bit arithmetic")
 	// One frame per second for a day, starting in the middle, so no sequence below
 	// reaches a bound.
 	std::vector<Nanoseconds> times;
-	for (int64_t second = 0; second < 86'400; ++second)
+	for (int64_t second = 0; second < 86'400; ++second) {
 		times.push_back(Nanoseconds{second * 1'000'000'000});
+	}
 	Playhead playhead;
 	playhead.load(times);
 	playhead.seek(43'200s);
@@ -585,8 +591,9 @@ TEST_CASE("Playhead position is exact against 128-bit arithmetic")
 			break;
 		default: {
 			const int64_t step = elapsed(random);
-			if (playhead.playing())
+			if (playhead.playing()) {
 				exact += Int128{step} * 2 * playhead.rate();
+			}
 			playhead.advance(Nanoseconds{step});
 			break;
 		}

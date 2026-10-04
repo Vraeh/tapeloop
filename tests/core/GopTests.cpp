@@ -31,8 +31,9 @@ TEST_CASE("GopBuilder copies packets into one block")
 	GopBuilder builder(encoder.frameDuration());
 	CHECK(builder.empty());
 
-	for (int i = 0; i < 4; ++i)
+	for (int i = 0; i < 4; ++i) {
 		builder.append(encoder.next());
+	}
 	CHECK(builder.byteSize() == 130);
 
 	const auto gop = builder.seal();
@@ -86,12 +87,14 @@ TEST_CASE("GopBuilder snapshots are not affected by later packets")
 	config.gopLength = 10;
 	SyntheticEncoder encoder(config);
 	GopBuilder builder(encoder.frameDuration());
-	for (int i = 0; i < 3; ++i)
+	for (int i = 0; i < 3; ++i) {
 		builder.append(encoder.next());
+	}
 
 	const auto snapshot = builder.snapshot();
-	for (int i = 0; i < 5; ++i)
+	for (int i = 0; i < 5; ++i) {
 		builder.append(encoder.next());
+	}
 	const auto sealed = builder.seal();
 
 	CHECK(snapshot->packets().size() == 3);
@@ -108,8 +111,9 @@ TEST_CASE("GopBuilder gives every GOP the codec configuration it holds")
 	SyntheticEncoder encoder(config);
 	GopBuilder builder(encoder.frameDuration());
 
-	for (int i = 0; i < 3; ++i)
+	for (int i = 0; i < 3; ++i) {
 		builder.append(encoder.next());
+	}
 	CHECK(builder.seal()->codecConfig() == nullptr);
 
 	auto first = std::make_shared<const CodecConfig>(CodecConfig{0, 0, 0, 1, 0x67});
@@ -117,8 +121,9 @@ TEST_CASE("GopBuilder gives every GOP the codec configuration it holds")
 	builder.setCodecConfig(first);
 	std::vector<std::shared_ptr<const tapeloop::Gop>> gops;
 	for (int gop = 0; gop < 2; ++gop) {
-		for (int i = 0; i < 3; ++i)
+		for (int i = 0; i < 3; ++i) {
 			builder.append(encoder.next());
+		}
 		gops.push_back(builder.seal());
 	}
 	builder.append(encoder.next());
@@ -126,8 +131,9 @@ TEST_CASE("GopBuilder gives every GOP the codec configuration it holds")
 	builder.append(encoder.next());
 	builder.append(encoder.next());
 	gops.push_back(builder.seal());
-	for (const auto &gop : gops)
+	for (const auto &gop : gops) {
 		CHECK(gop->codecConfig() == firstAddress);
+	}
 
 	builder.setCodecConfig(std::make_shared<const CodecConfig>(CodecConfig{0, 0, 0, 1, 0x40}));
 	builder.append(encoder.next());
@@ -143,8 +149,9 @@ TEST_CASE("GopBuilder gives every GOP the codec configuration it holds")
 
 TEST_CASE("GopBuilder does not allocate per packet in steady state")
 {
-	if (!tapeloop::test::kAllocationHooks)
+	if (!tapeloop::test::kAllocationHooks) {
 		SKIP("operator new cannot be replaced under this sanitizer");
+	}
 
 	SyntheticEncoder::Config config;
 	config.keyframeSize = 20'000;
@@ -156,8 +163,9 @@ TEST_CASE("GopBuilder does not allocate per packet in steady state")
 	// The first GOPs size the buffers.
 	for (int i = 0; i < 90; ++i) {
 		const EncodedPacket packet = encoder.next();
-		if (packet.keyframe && !builder.empty())
+		if (packet.keyframe && !builder.empty()) {
 			builder.seal();
+		}
 		builder.append(packet);
 	}
 
@@ -169,22 +177,25 @@ TEST_CASE("GopBuilder does not allocate per packet in steady state")
 			builder.seal();
 			// The Gop, its bytes and its packet table; the codec configuration is
 			// shared, not copied.
-			if (tapeloop::test::kExactAllocationCounts)
+			if (tapeloop::test::kExactAllocationCounts) {
 				CHECK(allocations.count() <= 3);
+			}
 		}
 
 		AllocationCounter allocations;
 		builder.append(keyframe);
-		for (int i = 1; i < 30; ++i)
+		for (int i = 1; i < 30; ++i) {
 			builder.append(encoder.next());
+		}
 		CHECK(allocations.count() == 0);
 	}
 }
 
 TEST_CASE("GopBuilder loses nothing when sealing fails")
 {
-	if (!tapeloop::test::kAllocationFailures)
+	if (!tapeloop::test::kAllocationFailures) {
 		SKIP("allocation failures cannot be injected in this configuration");
+	}
 
 	SyntheticEncoder::Config config;
 	config.gopLength = 10;
@@ -194,8 +205,9 @@ TEST_CASE("GopBuilder loses nothing when sealing fails")
 		CAPTURE(skip);
 		SyntheticEncoder encoder(config);
 		GopBuilder builder(encoder.frameDuration());
-		for (int i = 0; i < 5; ++i)
+		for (int i = 0; i < 5; ++i) {
 			builder.append(encoder.next());
+		}
 
 		std::shared_ptr<const tapeloop::Gop> gop;
 		bool failed = false;

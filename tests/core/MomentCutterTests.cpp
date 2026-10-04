@@ -60,8 +60,9 @@ struct Camera {
 
 	void pushUntil(Nanoseconds time)
 	{
-		while (encoder.timeOf(encoder.nextFrame()) <= time)
+		while (encoder.timeOf(encoder.nextFrame()) <= time) {
 			buffer.push(encoder.next());
+		}
 	}
 
 	SyntheticEncoder encoder;
@@ -71,8 +72,9 @@ struct Camera {
 const Clip *clipOf(const Moment &moment, const std::string &key)
 {
 	for (const auto &entry : moment.clips) {
-		if (entry.sourceKey == key)
+		if (entry.sourceKey == key) {
 			return &entry.clip;
+		}
 	}
 	return nullptr;
 }
@@ -81,16 +83,18 @@ const Clip *clipOf(const Moment &moment, const std::string &key)
 Nanoseconds firstFrameFrom(const Camera &camera, Nanoseconds t)
 {
 	int64_t frame = 0;
-	while (camera.encoder.timeOf(frame) < t)
+	while (camera.encoder.timeOf(frame) < t) {
 		++frame;
+	}
 	return camera.encoder.timeOf(frame);
 }
 
 Nanoseconds lastFrameUntil(const Camera &camera, Nanoseconds t)
 {
 	int64_t frame = 0;
-	while (camera.encoder.timeOf(frame + 1) <= t)
+	while (camera.encoder.timeOf(frame + 1) <= t) {
 		++frame;
+	}
 	return camera.encoder.timeOf(frame);
 }
 
@@ -102,8 +106,9 @@ TEST_CASE("cutMoment cuts the same range from every source")
 	Camera close(1s + 5ms);
 	Camera late(7s + 11ms);
 	Camera idle(0ms);
-	for (Camera *camera : {&wide, &close, &late})
+	for (Camera *camera : {&wide, &close, &late}) {
 		camera->pushUntil(10s);
+	}
 
 	const std::vector<MomentSource> sources = {{"wide", wide.buffer},
 						   {"close", close.buffer},
@@ -247,8 +252,9 @@ TEST_CASE("Moments cut from the same buffers share their GOPs")
 		for (const auto &entry : cut->moment.clips) {
 			clipBytes += entry.clip.byteSize();
 			for (const auto &gop : entry.clip.gops()) {
-				if (distinct.insert(gop.get()).second)
+				if (distinct.insert(gop.get()).second) {
 					distinctBytes += gop->byteSize();
+				}
 			}
 		}
 	}
@@ -267,19 +273,22 @@ TEST_CASE("Moments cut from the same buffers share their GOPs")
 TEST_CASE("cutMoment can run while the encoders push")
 {
 	std::vector<std::unique_ptr<Camera>> cameras;
-	for (int i = 0; i < 3; ++i)
+	for (int i = 0; i < 3; ++i) {
 		cameras.push_back(std::make_unique<Camera>(Nanoseconds{i * 7'000'000}, 2s));
+	}
 
 	std::vector<MomentSource> sources;
-	for (size_t i = 0; i < cameras.size(); ++i)
+	for (size_t i = 0; i < cameras.size(); ++i) {
 		sources.push_back({"camera " + std::to_string(i), cameras[i]->buffer});
+	}
 
 	std::atomic<int> running{static_cast<int>(cameras.size())};
 	std::vector<std::thread> producers;
 	for (auto &camera : cameras) {
 		producers.emplace_back([&running, &camera] {
-			for (int frame = 0; frame < 6000; ++frame)
+			for (int frame = 0; frame < 6000; ++frame) {
 				camera->buffer.push(camera->encoder.next());
+			}
 			--running;
 		});
 	}
@@ -295,34 +304,40 @@ TEST_CASE("cutMoment can run while the encoders push")
 	do {
 		const Nanoseconds now = cameras[0]->buffer.stats().newestTime;
 		MomentCut cut = cutMoment(sources, now, 1s);
-		if (cut.moment.clips.size() + cut.skipped.size() != sources.size())
+		if (cut.moment.clips.size() + cut.skipped.size() != sources.size()) {
 			++failures;
+		}
 		for (const auto &entry : cut.moment.clips) {
 			const std::vector<Nanoseconds> times = entry.clip.frameTimes();
 			if (entry.clip.in() < cut.moment.start || entry.clip.out() > cut.moment.end ||
-			    times.front() != entry.clip.in() || times.back() != entry.clip.out())
+			    times.front() != entry.clip.in() || times.back() != entry.clip.out()) {
 				++failures;
+			}
 			for (const auto &gop : entry.clip.gops()) {
-				if (!tapeloop::test::hasExpectedBytes(*gop))
+				if (!tapeloop::test::hasExpectedBytes(*gop)) {
 					++failures;
+				}
 			}
 		}
 		list.add(std::move(cut.moment));
 		++cuts;
 	} while (running > 0);
-	for (auto &producer : producers)
+	for (auto &producer : producers) {
 		producer.join();
+	}
 
 	CHECK(failures == 0);
 	CHECK(cuts > 0);
 
 	// The buffers have long evicted most of what the stored moments hold.
-	for (const auto &camera : cameras)
+	for (const auto &camera : cameras) {
 		CHECK(camera->buffer.stats().oldestTime > camera->encoder.timeOf(5000));
+	}
 	for (const Moment &moment : list.moments()) {
 		for (const auto &entry : moment.clips) {
-			for (const auto &gop : entry.clip.gops())
+			for (const auto &gop : entry.clip.gops()) {
 				CHECK(tapeloop::test::hasExpectedBytes(*gop));
+			}
 		}
 	}
 }
