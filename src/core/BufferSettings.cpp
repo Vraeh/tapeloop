@@ -6,6 +6,8 @@
 #include <algorithm>
 #include <array>
 #include <limits>
+#include <set>
+#include <utility>
 
 namespace tapeloop {
 namespace {
@@ -131,6 +133,50 @@ std::optional<BufferSettings> loadSettings(const SavedSettings &saved)
 		settings.sources[entry.uuid] = source;
 	}
 	return settings;
+}
+
+std::map<std::string, std::string> matchSourcesByName(BufferSettings &settings,
+						      const std::map<std::string, std::string> &savedNames,
+						      const std::vector<SourceIdentity> &sources)
+{
+	std::set<std::string> present;
+	std::map<std::string, std::vector<std::string>> byName;
+	for (const SourceIdentity &source : sources) {
+		present.insert(source.uuid);
+		byName[source.name].push_back(source.uuid);
+	}
+
+	std::map<std::string, std::vector<std::string>> claims;
+	for (const auto &[uuid, source] : settings.sources) {
+		if (present.contains(uuid)) {
+			continue;
+		}
+		const auto name = savedNames.find(uuid);
+		if (name == savedNames.end() || name->second.empty()) {
+			continue;
+		}
+		const auto named = byName.find(name->second);
+		if (named == byName.end() || named->second.size() != 1) {
+			continue;
+		}
+		const std::string &target = named->second.front();
+		if (!settings.sources.contains(target)) {
+			claims[target].push_back(uuid);
+		}
+	}
+
+	std::map<std::string, std::string> moves;
+	for (const auto &[target, claimants] : claims) {
+		if (claimants.size() != 1) {
+			continue;
+		}
+		const std::string &from = claimants.front();
+		auto node = settings.sources.extract(from);
+		node.key() = target;
+		settings.sources.insert(std::move(node));
+		moves.emplace(from, target);
+	}
+	return moves;
 }
 
 } // namespace tapeloop
