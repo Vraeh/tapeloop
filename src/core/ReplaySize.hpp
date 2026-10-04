@@ -23,6 +23,8 @@ struct ReplayResolution {
 	ResolutionMode mode = ResolutionMode::Canvas;
 	// Only for ResolutionMode::Fixed.
 	uint32_t height = 1080;
+
+	bool operator==(const ReplayResolution &) const = default;
 };
 
 uint32_t targetHeight(ReplayResolution resolution, FrameSize canvas, FrameSize output);

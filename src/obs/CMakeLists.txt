@@ -6,7 +6,17 @@ add_library(tapeloop-obs STATIC)
 
 target_sources(
   tapeloop-obs
-  PRIVATE CaptureOutput.cpp CaptureOutput.hpp ObsEncoders.cpp ObsEncoders.hpp SourceCapture.cpp SourceCapture.hpp
+  PRIVATE
+    CaptureManager.cpp
+    CaptureManager.hpp
+    CaptureOutput.cpp
+    CaptureOutput.hpp
+    ObsEncoders.cpp
+    ObsEncoders.hpp
+    SettingsData.cpp
+    SettingsData.hpp
+    SourceCapture.cpp
+    SourceCapture.hpp
 )
 
 target_include_directories(tapeloop-obs PUBLIC "${CMAKE_CURRENT_SOURCE_DIR}/..")
