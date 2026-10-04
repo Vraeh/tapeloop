@@ -6,6 +6,7 @@
 #include <catch2/catch_test_macros.hpp>
 
 #include <chrono>
+#include <map>
 #include <optional>
 #include <string>
 #include <vector>
@@ -16,6 +17,7 @@ using tapeloop::ReplayResolution;
 using tapeloop::ResolutionMode;
 using tapeloop::SavedSettings;
 using tapeloop::SavedSource;
+using tapeloop::SourceIdentity;
 using tapeloop::SourceSettings;
 
 TEST_CASE("buffer settings start from the defaults")
@@ -114,4 +116,100 @@ TEST_CASE("buffer lengths and fixed heights stay within what the dock offers")
 	}
 	CHECK_FALSE(tapeloop::isFixedHeight(0));
 	CHECK_FALSE(tapeloop::isFixedHeight(1440));
+}
+
+TEST_CASE("settings of a UUID that is gone move to the one source with its saved name")
+{
+	BufferSettings settings;
+	settings.sources["old-camera"] = {true, 30s, std::nullopt};
+	settings.sources["old-wide"] = {false, std::nullopt, ReplayResolution{ResolutionMode::Fixed, 720}};
+	settings.sources["kept"] = {true, std::nullopt, std::nullopt};
+	const std::map<std::string, std::string> names = {{"old-camera", "Camera"},
+							  {"old-wide", "Wide"},
+							  {"kept", "Kept"}};
+	const std::vector<SourceIdentity> sources = {{"new-camera", "Camera"},
+						     {"new-wide", "Wide"},
+						     {"kept", "Kept"},
+						     {"other", "Other"}};
+
+	const auto moves = tapeloop::matchSourcesByName(settings, names, sources);
+	CHECK(moves == std::map<std::string, std::string>{{"old-camera", "new-camera"}, {"old-wide", "new-wide"}});
+	CHECK(settings.sources.size() == 3);
+	CHECK(settings.sources.at("new-camera") == SourceSettings{true, 30s, std::nullopt});
+	CHECK(settings.sources.at("new-wide").resolution == ReplayResolution{ResolutionMode::Fixed, 720});
+	CHECK(settings.sources.at("kept").selected);
+}
+
+TEST_CASE("a saved name matches nothing when the choice is not clear")
+{
+	const std::map<std::string, std::string> names = {{"gone", "Camera"},
+							  {"also-gone", "Camera"},
+							  {"unnamed", ""},
+							  {"lost", "Lost"}};
+
+	SECTION("two sources share the name")
+	{
+		BufferSettings settings;
+		settings.sources["gone"] = {true, std::nullopt, std::nullopt};
+		const auto moves =
+			tapeloop::matchSourcesByName(settings, names, {{"first", "Camera"}, {"second", "Camera"}});
+		CHECK(moves.empty());
+		CHECK(settings.sources.contains("gone"));
+	}
+
+	SECTION("two missing UUIDs claim the same source")
+	{
+		BufferSettings settings;
+		settings.sources["gone"] = {true, std::nullopt, std::nullopt};
+		settings.sources["also-gone"] = {false, 30s, std::nullopt};
+		const auto moves = tapeloop::matchSourcesByName(settings, names, {{"camera", "Camera"}});
+		CHECK(moves.empty());
+		CHECK(settings.sources.size() == 2);
+	}
+
+	SECTION("the source with the name has settings of its own")
+	{
+		BufferSettings settings;
+		settings.sources["gone"] = {true, 30s, std::nullopt};
+		settings.sources["camera"] = {false, std::nullopt, std::nullopt};
+		const auto moves = tapeloop::matchSourcesByName(settings, names, {{"camera", "Camera"}});
+		CHECK(moves.empty());
+		CHECK_FALSE(settings.sources.at("camera").selected);
+		CHECK(settings.sources.contains("gone"));
+	}
+
+	SECTION("no name was saved, or no source has it")
+	{
+		BufferSettings settings;
+		settings.sources["unnamed"] = {true, std::nullopt, std::nullopt};
+		settings.sources["lost"] = {true, std::nullopt, std::nullopt};
+		settings.sources["unknown"] = {true, std::nullopt, std::nullopt};
+		const auto moves = tapeloop::matchSourcesByName(settings, names, {{"camera", ""}, {"x", "Camera"}});
+		CHECK(moves.empty());
+		CHECK(settings.sources.size() == 3);
+	}
+}
+
+TEST_CASE("only a capturable source takes the settings of a name, but any source counts as present")
+{
+	BufferSettings settings;
+	settings.sources["gone"] = {true, std::nullopt, std::nullopt};
+	settings.sources["audio"] = {false, 30s, std::nullopt};
+	const std::map<std::string, std::string> names = {{"gone", "Mic"}, {"audio", "Mic"}};
+
+	SECTION("no capturable source has the name")
+	{
+		const auto moves = tapeloop::matchSourcesByName(settings, names, {{"audio", "Mic", false}});
+		CHECK(moves.empty());
+		CHECK(settings.sources.contains("gone"));
+	}
+	SECTION("a capturable source has it")
+	{
+		// Were the audio input taken as missing, it would claim the camera too and
+		// neither would move.
+		const auto moves = tapeloop::matchSourcesByName(settings, names,
+								{{"audio", "Mic", false}, {"camera", "Mic", true}});
+		CHECK(moves == std::map<std::string, std::string>{{"gone", "camera"}});
+	}
+	CHECK(settings.sources.at("audio").length == 30s);
 }

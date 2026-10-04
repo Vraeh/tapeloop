@@ -152,12 +152,12 @@ void registerTestPattern()
 	obs_register_source(&info);
 }
 
-OBSSourceAutoRelease createTestPattern(uint32_t width, uint32_t height)
+OBSSourceAutoRelease createTestPattern(uint32_t width, uint32_t height, const char *name)
 {
 	OBSDataAutoRelease settings = obs_data_create();
 	obs_data_set_int(settings, "width", width);
 	obs_data_set_int(settings, "height", height);
-	return obs_source_create(kTestPatternId, "pattern", settings, nullptr);
+	return obs_source_create(kTestPatternId, name, settings, nullptr);
 }
 
 std::optional<uint32_t> readFrameNumber(const uint8_t *luma, ptrdiff_t stride, int width, int height)

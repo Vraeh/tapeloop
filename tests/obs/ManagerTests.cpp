@@ -12,15 +12,20 @@
 
 #include <chrono>
 #include <string>
+#include <vector>
 
 using namespace std::chrono_literals;
 using tapeloop::BufferSettings;
 using tapeloop::FrameSize;
 using tapeloop::ReplayResolution;
 using tapeloop::ResolutionMode;
+using tapeloop::SavedSettings;
+using tapeloop::SavedSource;
 using tapeloop::SourceSettings;
 using tapeloop::obs::CaptureManager;
 using tapeloop::obs::CaptureState;
+using tapeloop::obs::createSettingsData;
+using tapeloop::obs::readSettingsData;
 using tapeloop::test::createTestPattern;
 using tapeloop::test::ObsFixture;
 using tapeloop::test::waitFor;
@@ -358,21 +363,31 @@ TEST_CASE_METHOD(ObsFixture, "a source too small to start is retried", "[obs][ma
 
 TEST_CASE_METHOD(ObsFixture, "settings are saved with the scene collection and loaded back", "[obs][manager]")
 {
+	OBSSourceAutoRelease camera = createTestPattern(640, 360, "Camera");
+	OBSSourceAutoRelease wide = createTestPattern(640, 360, "Wide");
 	FakeHost host;
 	BufferSettings settings;
 	settings.length = 90s;
 	settings.resolution = {ResolutionMode::Fixed, 720};
 	settings.startWithOutputs = false;
-	settings.sources["9f1c0a7e-0000-4000-8000-000000000001"] = {true, 30s, std::nullopt};
-	settings.sources["9f1c0a7e-0000-4000-8000-000000000002"] =
+	settings.sources[uuidOf(camera)] = {true, 30s, std::nullopt};
+	settings.sources[uuidOf(wide)] =
 		SourceSettings{false, std::nullopt, ReplayResolution{ResolutionMode::Output, 1080}};
 
 	OBSDataAutoRelease collection = obs_data_create();
 	{
 		CaptureManager manager(host);
-		manager.setSettings(settings);
+		BufferSettings withGone = settings;
+		withGone.sources["9f1c0a7e-0000-4000-8000-000000000001"] = {true, 30s, std::nullopt};
+		manager.setSettings(withGone);
 		manager.save(collection);
 	}
+	OBSDataAutoRelease written = obs_data_get_obj(collection, tapeloop::obs::kSettingsKey);
+	const SavedSettings saved = readSettingsData(written);
+	REQUIRE(saved.sources.size() == 2);
+	CHECK(saved.sources[0].name + saved.sources[1].name ==
+	      (uuidOf(camera) < uuidOf(wide) ? "CameraWide" : "WideCamera"));
+
 	CaptureManager loaded(host);
 	loaded.load(collection);
 	CHECK(loaded.settings() == settings);
@@ -400,4 +415,121 @@ TEST_CASE_METHOD(ObsFixture, "settings of an unknown version are kept as they ca
 	OBSDataAutoRelease written = obs_data_get_obj(saved, tapeloop::obs::kSettingsKey);
 	CHECK(obs_data_get_int(written, "version") == 2);
 	CHECK(std::string(obs_data_get_string(written, "something")) == "new");
+}
+
+namespace {
+
+// A collection as a duplicate of it would be saved: the same names under UUIDs the new
+// sources do not have.
+OBSDataAutoRelease collectionNaming(const std::vector<SavedSource> &sources)
+{
+	SavedSettings saved;
+	saved.lengthSeconds = 60;
+	saved.resolution = "canvas";
+	saved.startWithOutputs = false;
+	saved.sources = sources;
+	OBSDataAutoRelease data = createSettingsData(saved);
+	OBSDataAutoRelease collection = obs_data_create();
+	obs_data_set_obj(collection, tapeloop::obs::kSettingsKey, data);
+	return collection;
+}
+
+SavedSource namedSource(const char *uuid, const char *name, bool selected)
+{
+	SavedSource source;
+	source.uuid = uuid;
+	source.name = name;
+	source.selected = selected;
+	return source;
+}
+
+} // namespace
+
+TEST_CASE_METHOD(ObsFixture, "a duplicated scene collection keeps its selection by name", "[obs][manager]")
+{
+	OBSSourceAutoRelease camera = createTestPattern(640, 360, "Camera");
+	OBSSourceAutoRelease wide = createTestPattern(640, 360, "Wide");
+	SavedSource wideSaved = namedSource("4f8beeda-0000-4000-8000-000000000002", "Wide", false);
+	wideSaved.lengthSeconds = 30;
+	OBSDataAutoRelease collection =
+		collectionNaming({namedSource("4f8beeda-0000-4000-8000-000000000001", "Camera", true), wideSaved,
+				  namedSource("4f8beeda-0000-4000-8000-000000000003", "Deleted", true)});
+
+	FakeHost host;
+	CaptureManager manager(host);
+	manager.load(collection);
+	REQUIRE(manager.settings().sources.size() == 3);
+	CHECK(manager.settings().sources.at(uuidOf(camera)).selected);
+	CHECK(manager.settings().lengthFor(uuidOf(wide)) == 30s);
+	CHECK(manager.manualStart());
+	CHECK(manager.status(uuidOf(camera)).stats.state == CaptureState::Running);
+
+	OBSDataAutoRelease saved = obs_data_create();
+	manager.save(saved);
+	OBSDataAutoRelease written = obs_data_get_obj(saved, tapeloop::obs::kSettingsKey);
+	const SavedSettings again = readSettingsData(written);
+	REQUIRE(again.sources.size() == 2);
+	for (const SavedSource &source : again.sources) {
+		CHECK((source.uuid == uuidOf(camera) || source.uuid == uuidOf(wide)));
+	}
+	manager.manualStop();
+}
+
+TEST_CASE_METHOD(ObsFixture, "two saved sources with one name find neither of them", "[obs][manager]")
+{
+	// libobs renames an input that would share another input's name, so the ambiguity a
+	// collection can hold among inputs is two saved entries naming the same one.
+	OBSSourceAutoRelease camera = createTestPattern(640, 360, "Camera");
+	OBSDataAutoRelease collection =
+		collectionNaming({namedSource("4f8beeda-0000-4000-8000-000000000001", "Camera", true),
+				  namedSource("4f8beeda-0000-4000-8000-000000000002", "Camera", false)});
+
+	FakeHost host;
+	CaptureManager manager(host);
+	manager.load(collection);
+	CHECK(manager.settings().selectedSources() == std::vector<std::string>{"4f8beeda-0000-4000-8000-000000000001"});
+	CHECK_FALSE(manager.status(uuidOf(camera)).selected);
+
+	OBSDataAutoRelease saved = obs_data_create();
+	manager.save(saved);
+	OBSDataAutoRelease written = obs_data_get_obj(saved, tapeloop::obs::kSettingsKey);
+	CHECK(readSettingsData(written).sources.empty());
+}
+
+TEST_CASE_METHOD(ObsFixture, "a scene or an input without video never takes a saved name", "[obs][manager]")
+{
+	// A scene can share an input's name; scenes are named per canvas. Groups are listed
+	// with the inputs.
+	OBSSceneAutoRelease scene = obs_scene_create("Main");
+	obs_source_t *group = obs_sceneitem_get_source(obs_scene_add_group(scene, "Group"));
+	OBSSourceAutoRelease mic = obs_source_create(tapeloop::test::kSilenceId, "Mic", nullptr, nullptr);
+	OBSSourceAutoRelease speaker = obs_source_create(tapeloop::test::kSilenceId, "Speaker", nullptr, nullptr);
+	SavedSource speakerSaved = namedSource(obs_source_get_uuid(speaker), "Speaker", false);
+	speakerSaved.lengthSeconds = 30;
+	OBSDataAutoRelease collection =
+		collectionNaming({namedSource("4f8beeda-0000-4000-8000-000000000001", "Main", true),
+				  namedSource("4f8beeda-0000-4000-8000-000000000002", "Mic", true),
+				  namedSource("4f8beeda-0000-4000-8000-000000000003", "Group", true), speakerSaved});
+
+	FakeHost host;
+	CaptureManager manager(host);
+	manager.load(collection);
+	CHECK(manager.settings().sources.size() == 4);
+	CHECK_FALSE(manager.settings().sources.contains(obs_source_get_uuid(obs_scene_get_source(scene))));
+	CHECK_FALSE(manager.settings().sources.contains(obs_source_get_uuid(group)));
+	CHECK_FALSE(manager.settings().sources.contains(obs_source_get_uuid(mic)));
+
+	// An input without video is still present, so its settings are written back.
+	OBSDataAutoRelease saved = obs_data_create();
+	manager.save(saved);
+	OBSDataAutoRelease written = obs_data_get_obj(saved, tapeloop::obs::kSettingsKey);
+	const SavedSettings again = readSettingsData(written);
+	REQUIRE(again.sources.size() == 1);
+	CHECK(again.sources[0].uuid == obs_source_get_uuid(speaker));
+	CHECK(again.sources[0].lengthSeconds == 30);
+
+	// The main canvas keeps its scenes until they are removed, as the frontend does
+	// before shutting down.
+	obs_source_remove(group);
+	obs_source_remove(obs_scene_get_source(scene));
 }

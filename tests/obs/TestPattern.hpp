@@ -25,7 +25,7 @@ inline constexpr const char *kSilenceId = "tapeloop_test_silence";
 
 void registerSilence();
 
-OBSSourceAutoRelease createTestPattern(uint32_t width, uint32_t height);
+OBSSourceAutoRelease createTestPattern(uint32_t width, uint32_t height, const char *name = "pattern");
 
 // The frame number drawn into a decoded frame, read from its luma plane. Empty when a
 // cell is neither clearly black nor clearly white.
