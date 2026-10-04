@@ -4,6 +4,7 @@
 #include "obs/ManagerDockBackend.hpp"
 
 #include <algorithm>
+#include <cctype>
 
 namespace tapeloop::obs {
 namespace {
@@ -50,8 +51,12 @@ std::vector<ui::DockSource> ManagerDockBackend::sources() const
 		source.buffered = status.stats.bufferedDuration;
 		source.bytes = status.stats.buffer.bytes;
 	}
-	std::sort(sources.begin(), sources.end(),
-		  [](const ui::DockSource &a, const ui::DockSource &b) { return a.name < b.name; });
+	std::sort(sources.begin(), sources.end(), [](const ui::DockSource &a, const ui::DockSource &b) {
+		return std::lexicographical_compare(a.name.begin(), a.name.end(), b.name.begin(), b.name.end(),
+						    [](unsigned char x, unsigned char y) {
+							    return std::tolower(x) < std::tolower(y);
+						    });
+	});
 	return sources;
 }
 

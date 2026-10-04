@@ -9,7 +9,7 @@
 namespace tapeloop::obs {
 
 // The dock's view of the capture manager: the video inputs of the scene collection,
-// sorted by name, with their selection and capture state.
+// sorted by name regardless of case, with their selection and capture state.
 class ManagerDockBackend : public ui::DockBackend {
 public:
 	explicit ManagerDockBackend(CaptureManager &manager) : manager_(manager) {}

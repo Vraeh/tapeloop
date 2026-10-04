@@ -35,7 +35,8 @@ TEST_CASE_METHOD(ObsFixture, "the dock sees the video inputs of the scene collec
 	obs_data_set_int(settings, "width", 320);
 	obs_data_set_int(settings, "height", 180);
 	OBSSourceAutoRelease second = obs_source_create(tapeloop::test::kTestPatternId, "B camera", settings, nullptr);
-	OBSSourceAutoRelease first = obs_source_create(tapeloop::test::kTestPatternId, "A camera", settings, nullptr);
+	OBSSourceAutoRelease first = obs_source_create(tapeloop::test::kTestPatternId, "a camera", settings, nullptr);
+	OBSSourceAutoRelease audio = obs_source_create(tapeloop::test::kSilenceId, "Microphone", nullptr, nullptr);
 	OBSSceneAutoRelease scene = obs_scene_create("Scene");
 
 	OfflineHost host;
@@ -43,8 +44,9 @@ TEST_CASE_METHOD(ObsFixture, "the dock sees the video inputs of the scene collec
 	ManagerDockBackend backend(manager);
 
 	auto sources = backend.sources();
+	// Audio inputs and scenes are not listed; names sort regardless of case.
 	REQUIRE(sources.size() == 2);
-	CHECK(sources[0].name == "A camera");
+	CHECK(sources[0].name == "a camera");
 	CHECK(sources[1].name == "B camera");
 	CHECK(sources[0].uuid == obs_source_get_uuid(first));
 	CHECK_FALSE(sources[0].selected);
