@@ -470,6 +470,25 @@ TEST_CASE("Playhead starts again from the other end without a leftover fraction"
 	CHECK(playhead.position() == 1ns);
 }
 
+TEST_CASE("Playhead starts again from the end without a leftover fraction")
+{
+	// The same in reverse: a backward scrub of 199 ns at half speed ends on the first
+	// frame with half a nanosecond still to go.
+	Playhead playhead;
+	playhead.load({0ns, 100ns});
+	playhead.seek(100ns);
+	playhead.beginScrub(ScrubDirection::Backward);
+	playhead.advance(199ns);
+	playhead.endScrub();
+	REQUIRE(playhead.position() == 0ns);
+
+	playhead.setRate(-500);
+	playhead.play();
+	REQUIRE(playhead.position() == 100ns);
+	playhead.advance(1ns);
+	CHECK(playhead.position() == 99ns);
+}
+
 TEST_CASE("Playhead with a single frame has nowhere to play")
 {
 	Playhead playhead;
