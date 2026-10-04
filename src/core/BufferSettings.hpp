@@ -80,11 +80,13 @@ std::optional<BufferSettings> loadSettings(const SavedSettings &saved);
 struct SourceIdentity {
 	std::string uuid;
 	std::string name;
+	// Whether it can be captured, as the dock lists it: an input with video.
+	bool capturable = true;
 };
 
 // A duplicated scene collection gives every source a new UUID. The settings saved for a
-// UUID that `sources` does not have move to the source with the name saved alongside,
-// when exactly one source has that name, it has no settings of its own, and no other
+// UUID that `sources` does not have move to the capturable source with the name saved
+// alongside, when exactly one has that name, it has no settings of its own, and no other
 // missing UUID claims it too. Returns the moves, from the saved UUID to the new one.
 std::map<std::string, std::string> matchSourcesByName(BufferSettings &settings,
 						      const std::map<std::string, std::string> &savedNames,

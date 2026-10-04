@@ -189,3 +189,16 @@ TEST_CASE("a saved name matches nothing when the choice is not clear")
 		CHECK(settings.sources.size() == 3);
 	}
 }
+
+TEST_CASE("only a capturable source takes the settings of a name, but any source counts as present")
+{
+	BufferSettings settings;
+	settings.sources["gone"] = {true, std::nullopt, std::nullopt};
+	settings.sources["audio"] = {false, 30s, std::nullopt};
+	const std::map<std::string, std::string> names = {{"gone", "Mic"}, {"audio", "Mic"}};
+
+	const auto moves = tapeloop::matchSourcesByName(settings, names, {{"audio", "Mic", false}});
+	CHECK(moves.empty());
+	CHECK(settings.sources.contains("gone"));
+	CHECK(settings.sources.at("audio").length == 30s);
+}
