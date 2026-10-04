@@ -15,8 +15,10 @@ set(CMAKE_CXX_EXTENSIONS OFF)
 
 list(APPEND CMAKE_PREFIX_PATH "${TAPELOOP_LIBOBS_PREFIX}")
 find_package(libobs REQUIRED)
-find_package(PkgConfig REQUIRED)
-pkg_check_modules(FFMPEG REQUIRED IMPORTED_TARGET libavcodec libavutil)
+
+# The decoder of the clips is the plugin's own FFmpeg, not the system's.
+include("${CMAKE_CURRENT_SOURCE_DIR}/../../cmake/ffmpeg/ffmpeg.cmake")
+tapeloop_add_ffmpeg()
 
 include(FetchContent)
 
@@ -67,8 +69,10 @@ target_compile_definitions(
 add_dependencies(tapeloop-obs-tests tapeloop-test-unload)
 target_link_libraries(
   tapeloop-obs-tests
-  PRIVATE tapeloop-core tapeloop-obs OBS::libobs PkgConfig::FFMPEG Catch2::Catch2WithMain
+  PRIVATE tapeloop-core tapeloop-obs OBS::libobs FFmpeg::avcodec Catch2::Catch2WithMain
 )
+# libobs loads the system's FFmpeg; the static one stays inside the test binary.
+target_link_options(tapeloop-obs-tests PRIVATE "LINKER:--exclude-libs,ALL")
 set_target_properties(tapeloop-obs-tests PROPERTIES BUILD_RPATH "${TAPELOOP_LIBOBS_PREFIX}/lib")
 tapeloop_core_warnings(tapeloop-obs-tests)
 
