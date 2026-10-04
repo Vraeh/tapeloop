@@ -292,7 +292,9 @@ void TapeloopDock::openSourceSettings(int row)
 
 void TapeloopDock::applySourceSettings(const std::string &uuid, const SourceSettings &chosen)
 {
-	// The scene collection can change while the dialog is open.
+	// The scene collection can change while the dialog is open, even while the dock is
+	// hidden and not refreshing.
+	refresh();
 	if (std::find(shownUuids_.begin(), shownUuids_.end(), uuid) == shownUuids_.end())
 		return;
 	guarded([&] {

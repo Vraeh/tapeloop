@@ -290,8 +290,8 @@ TEST_CASE("the dock drops a source's settings once the source is gone")
 	REQUIRE(dialog);
 	child<QCheckBox>(*dialog, "ownLength")->setChecked(true);
 
+	// Not refreshed in between, as when the dock is hidden.
 	backend.shown.erase(backend.shown.begin() + 1);
-	dock.refresh();
 	const int changes = backend.settingsChanges;
 	dialog->accept();
 	CHECK(backend.settingsChanges == changes);
