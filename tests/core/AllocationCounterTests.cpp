@@ -14,8 +14,9 @@ using tapeloop::test::AllocationFailure;
 // Assertions wait until the hooks are released, since reporting them can allocate.
 TEST_CASE("Allocation hooks count the nothrow operator new")
 {
-	if (!tapeloop::test::kAllocationHooks)
+	if (!tapeloop::test::kAllocationHooks) {
 		SKIP("operator new cannot be replaced under this sanitizer");
+	}
 
 	void *single = nullptr;
 	void *array = nullptr;
@@ -35,8 +36,9 @@ TEST_CASE("Allocation hooks count the nothrow operator new")
 
 TEST_CASE("An injected failure makes the nothrow operator new return null")
 {
-	if (!tapeloop::test::kAllocationFailures)
+	if (!tapeloop::test::kAllocationFailures) {
 		SKIP("allocation failures cannot be injected in this configuration");
+	}
 
 	void *first = nullptr;
 	void *second = nullptr;

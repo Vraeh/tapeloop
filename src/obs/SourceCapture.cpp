@@ -42,8 +42,9 @@ SourceCapture::~SourceCapture()
 
 StartResult SourceCapture::start(obs_source_t *source, const CaptureSettings &settings, bool keepBuffer)
 {
-	if (output_)
+	if (output_) {
 		return StartResult::AlreadyRunning;
+	}
 
 	const char *name = obs_source_get_name(source);
 	obs_video_info video = {};
@@ -96,8 +97,9 @@ StartResult SourceCapture::start(obs_source_t *source, const CaptureSettings &se
 		// success, and an existing one is emptied by the output once the encoder runs.
 		const bool reuse = buffer_ && canReuse(bufferConfig_, bufferConfig);
 		std::unique_ptr<SourceBuffer> replacement;
-		if (!reuse)
+		if (!reuse) {
 			replacement = std::make_unique<SourceBuffer>(bufferConfig);
+		}
 		target_.buffer = reuse ? buffer_.get() : replacement.get();
 		target_.clearOnStart = reuse && !keepBuffer;
 
@@ -125,8 +127,9 @@ StartResult SourceCapture::start(obs_source_t *source, const CaptureSettings &se
 			obs_encoder_t *encoder =
 				obs_video_encoder_create(candidate.id.c_str(), label.c_str(), encoderSettings, nullptr);
 			obs_data_release(encoderSettings);
-			if (!encoder)
+			if (!encoder) {
 				continue;
+			}
 
 			obs_encoder_set_video(encoder, mix);
 			obs_output_set_video_encoder(output_, encoder);
@@ -211,17 +214,19 @@ void SourceCapture::tearDown()
 bool SourceCapture::sourceSizeMatches() const
 {
 	OBSSourceAutoRelease source = obs_weak_source_get_source(source_);
-	if (!source)
+	if (!source) {
 		return true;
+	}
 	return obs_source_get_width(source) == sourceSize_.width && obs_source_get_height(source) == sourceSize_.height;
 }
 
 CaptureStats SourceCapture::stats() const
 {
 	CaptureStats stats;
-	if (output_)
+	if (output_) {
 		stats.state = target_.failed || !obs_output_active(output_) ? CaptureState::Failed
 									    : CaptureState::Running;
+	}
 	stats.encoderId = encoderId_;
 	stats.outputSize = outputSize_;
 	if (buffer_) {

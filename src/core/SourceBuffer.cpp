@@ -44,8 +44,9 @@ void SourceBuffer::push(const EncodedPacket &packet)
 		// Times in the buffer must keep increasing for clips to find frames, so the
 		// GOPs that do not end before the new keyframe make way for it, before
 		// eviction measures what is left.
-		if (restarting)
+		if (restarting) {
 			dropFromLocked(packet.time);
+		}
 		evictLocked();
 	}
 
@@ -59,14 +60,16 @@ void SourceBuffer::setCodecConfig(std::span<const uint8_t> codecConfig)
 {
 	// The copy is made before locking, so the encoder thread never waits for it.
 	std::shared_ptr<const CodecConfig> shared;
-	if (!codecConfig.empty())
+	if (!codecConfig.empty()) {
 		shared = std::make_shared<const CodecConfig>(codecConfig.begin(), codecConfig.end());
+	}
 
 	std::lock_guard lock(mutex_);
 	sealLocked();
 	builder_.setCodecConfig(std::move(shared));
-	if (synced_)
+	if (synced_) {
 		++discontinuities_;
+	}
 	synced_ = false;
 }
 
@@ -77,8 +80,9 @@ Clip SourceBuffer::clip(Nanoseconds duration) const
 	Nanoseconds to{0};
 	{
 		std::lock_guard lock(mutex_);
-		if (gops_.empty() && builder_.empty())
+		if (gops_.empty() && builder_.empty()) {
 			return {};
+		}
 		to = newestTimeLocked();
 		from = saturatingSub(to, std::max(duration, Nanoseconds{0}));
 		gops = collectLocked(from, to);
@@ -108,19 +112,23 @@ SourceBufferStats SourceBuffer::stats() const
 	// to an earlier one, so counting at each change of pointer counts each one once.
 	const CodecConfig *previous = nullptr;
 	const auto countConfig = [&](const CodecConfig *codecConfig) {
-		if (codecConfig && codecConfig != previous)
+		if (codecConfig && codecConfig != previous) {
 			stats.configBytes += codecConfig->size();
+		}
 		previous = codecConfig;
 	};
-	for (const auto &gop : gops_)
+	for (const auto &gop : gops_) {
 		countConfig(gop->codecConfig());
-	if (!builder_.empty())
+	}
+	if (!builder_.empty()) {
 		countConfig(builder_.codecConfig());
+	}
 
-	if (!gops_.empty())
+	if (!gops_.empty()) {
 		stats.oldestTime = gops_.front()->startTime();
-	else if (!builder_.empty())
+	} else if (!builder_.empty()) {
 		stats.oldestTime = builder_.startTime();
+	}
 	stats.newestTime = newestTimeLocked();
 	stats.droppedBeforeKeyframe = droppedBeforeKeyframe_;
 	stats.discontinuities = discontinuities_;
@@ -153,8 +161,9 @@ void SourceBuffer::setByteBudget(size_t maxBytes)
 std::vector<std::shared_ptr<const Gop>> SourceBuffer::collectLocked(Nanoseconds from, Nanoseconds to) const
 {
 	std::vector<std::shared_ptr<const Gop>> gops;
-	if (from > to)
+	if (from > to) {
 		return gops;
+	}
 
 	const auto first = std::partition_point(gops_.begin(), gops_.end(),
 						[from](const auto &gop) { return gop->lastTime() < from; });
@@ -163,16 +172,18 @@ std::vector<std::shared_ptr<const Gop>> SourceBuffer::collectLocked(Nanoseconds 
 	gops.reserve(static_cast<size_t>(last - first) + 1);
 	gops.insert(gops.end(), first, last);
 
-	if (!builder_.empty() && builder_.startTime() <= to && builder_.lastTime() >= from)
+	if (!builder_.empty() && builder_.startTime() <= to && builder_.lastTime() >= from) {
 		gops.push_back(builder_.snapshot());
+	}
 
 	return gops;
 }
 
 void SourceBuffer::sealLocked()
 {
-	if (builder_.empty())
+	if (builder_.empty()) {
 		return;
+	}
 
 	// Stored before the builder lets go of the packets, so a failed allocation loses
 	// nothing.
@@ -188,11 +199,13 @@ void SourceBuffer::evictLocked()
 		gops_.pop_front();
 	};
 
-	while (gops_.size() > 1 && saturatingSub(gops_.back()->endTime(), gops_[1]->startTime()) >= config_.window)
+	while (gops_.size() > 1 && saturatingSub(gops_.back()->endTime(), gops_[1]->startTime()) >= config_.window) {
 		dropOldest();
+	}
 
-	while (gops_.size() > 1 && sealedBytes_ > maxBytes_)
+	while (gops_.size() > 1 && sealedBytes_ > maxBytes_) {
 		dropOldest();
+	}
 }
 
 void SourceBuffer::dropFromLocked(Nanoseconds time)
@@ -205,10 +218,12 @@ void SourceBuffer::dropFromLocked(Nanoseconds time)
 
 Nanoseconds SourceBuffer::newestTimeLocked() const noexcept
 {
-	if (!builder_.empty())
+	if (!builder_.empty()) {
 		return builder_.lastTime();
-	if (!gops_.empty())
+	}
+	if (!gops_.empty()) {
 		return gops_.back()->lastTime();
+	}
 	return Nanoseconds{0};
 }
 

@@ -62,8 +62,9 @@ std::map<uint32_t, Nanoseconds> frameTimes(const Clip &clip)
 	for (size_t gop = 0; gop < decoded.size(); ++gop) {
 		const auto packets = clip.gops()[gop]->packets();
 		for (size_t i = 0; i < decoded[gop].size() && i < packets.size(); ++i) {
-			if (decoded[gop][i].frameNumber)
+			if (decoded[gop][i].frameNumber) {
 				times.emplace(*decoded[gop][i].frameNumber, packets[i].time);
+			}
 		}
 	}
 	return times;
@@ -121,8 +122,9 @@ TEST_CASE_METHOD(ObsFixture, "capture times increase on the shared clock", "[obs
 	std::vector<Nanoseconds> times;
 	const Clip clip = everything(capture);
 	for (const auto &gop : clip.gops()) {
-		for (const tapeloop::PacketRecord &packet : gop->packets())
+		for (const tapeloop::PacketRecord &packet : gop->packets()) {
 			times.push_back(packet.time);
+		}
 	}
 	REQUIRE(times.size() > 2);
 	CHECK(times.back() <= now + 1s);
@@ -155,8 +157,9 @@ TEST_CASE_METHOD(ObsFixture, "two captures of one source line up on the same fra
 	size_t common = 0;
 	for (const auto &[frame, time] : secondTimes) {
 		const auto found = firstTimes.find(frame);
-		if (found == firstTimes.end())
+		if (found == firstTimes.end()) {
 			continue;
+		}
 		++common;
 		CAPTURE(frame);
 		CHECK(std::llabs((found->second - time).count()) <= kFrameInterval.count());

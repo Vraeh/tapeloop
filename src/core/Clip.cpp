@@ -31,15 +31,17 @@ size_t lastPacketUntil(const Gop &gop, Nanoseconds t)
 
 Clip::Clip(std::vector<std::shared_ptr<const Gop>> gops, Nanoseconds from, Nanoseconds to)
 {
-	if (from > to)
+	if (from > to) {
 		return;
+	}
 
 	const auto first = std::partition_point(gops.begin(), gops.end(),
 						[from](const auto &gop) { return gop->lastTime() < from; });
 	const auto last =
 		std::partition_point(first, gops.end(), [to](const auto &gop) { return gop->startTime() <= to; });
-	if (first == last)
+	if (first == last) {
 		return;
+	}
 
 	const Gop &head = **first;
 	const Gop &tail = **(last - 1);
@@ -48,8 +50,9 @@ Clip::Clip(std::vector<std::shared_ptr<const Gop>> gops, Nanoseconds from, Nanos
 
 	// Only possible when a single GOP has frames on both sides of the range but none
 	// inside it.
-	if (in > out)
+	if (in > out) {
 		return;
+	}
 
 	gops.erase(last, gops.end());
 	gops.erase(gops.begin(), first);
@@ -63,8 +66,9 @@ std::vector<Nanoseconds> Clip::frameTimes() const
 	std::vector<Nanoseconds> times;
 	for (const auto &gop : gops_) {
 		for (const PacketRecord &packet : gop->packets()) {
-			if (packet.time >= in_ && packet.time <= out_)
+			if (packet.time >= in_ && packet.time <= out_) {
 				times.push_back(packet.time);
+			}
 		}
 	}
 	return times;
@@ -72,8 +76,9 @@ std::vector<Nanoseconds> Clip::frameTimes() const
 
 FrameLocation Clip::locate(Nanoseconds t) const noexcept
 {
-	if (empty())
+	if (empty()) {
 		return {};
+	}
 	t = std::clamp(t, in_, out_);
 
 	// The first GOP starts at or before in, so some GOP starts at or before t.
@@ -86,8 +91,9 @@ FrameLocation Clip::locate(Nanoseconds t) const noexcept
 size_t Clip::byteSize() const noexcept
 {
 	size_t bytes = 0;
-	for (const auto &gop : gops_)
+	for (const auto &gop : gops_) {
 		bytes += gop->byteSize();
+	}
 	return bytes;
 }
 

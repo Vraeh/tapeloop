@@ -54,8 +54,9 @@ public:
 	{
 		const int64_t frame = frame_++;
 		data_.resize(sizeOf(frame));
-		for (size_t i = 0; i < data_.size(); ++i)
+		for (size_t i = 0; i < data_.size(); ++i) {
 			data_[i] = expectedByte(frame, i);
+		}
 		return {data_, frame, frame, timeOf(frame), isKeyframe(frame)};
 	}
 
@@ -71,8 +72,9 @@ inline bool hasExpectedBytes(const Gop &gop)
 	for (size_t i = 0; i < gop.packets().size(); ++i) {
 		const std::span<const uint8_t> data = gop.packetData(i);
 		for (size_t offset = 0; offset < data.size(); ++offset) {
-			if (data[offset] != SyntheticEncoder::expectedByte(gop.packets()[i].pts, offset))
+			if (data[offset] != SyntheticEncoder::expectedByte(gop.packets()[i].pts, offset)) {
 				return false;
+			}
 		}
 	}
 	return true;

@@ -28,6 +28,7 @@ bool obs_module_load()
 
 void obs_module_unload()
 {
-	if (hook)
+	if (hook) {
 		hook(hookParam);
+	}
 }

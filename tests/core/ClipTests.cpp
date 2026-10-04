@@ -39,8 +39,9 @@ std::vector<std::shared_ptr<const Gop>> encodeGops(SyntheticEncoder &encoder, in
 	GopBuilder builder(encoder.frameDuration());
 	while (gops.size() < static_cast<size_t>(count)) {
 		builder.append(encoder.next());
-		if (encoder.isKeyframe(encoder.nextFrame()))
+		if (encoder.isKeyframe(encoder.nextFrame())) {
 			gops.push_back(builder.seal());
+		}
 	}
 	return gops;
 }
@@ -68,8 +69,9 @@ TEST_CASE("Clip keeps the frames between in and out at 59.94 fps")
 
 		const std::vector<Nanoseconds> times = clip.frameTimes();
 		REQUIRE(times.size() == 61);
-		for (size_t i = 0; i < times.size(); ++i)
+		for (size_t i = 0; i < times.size(); ++i) {
 			CHECK(times[i] == encoder.timeOf(40 + static_cast<int64_t>(i)));
+		}
 	}
 
 	SECTION("range between frame times snaps inwards")
@@ -181,11 +183,13 @@ TEST_CASE("Clip locates across a gap between GOPs")
 	std::vector<std::shared_ptr<const Gop>> gops;
 	for (int frame = 0; frame < 90; ++frame) {
 		const auto packet = encoder.next();
-		if (frame >= 30 && frame < 60)
+		if (frame >= 30 && frame < 60) {
 			continue;
+		}
 		builder.append(packet);
-		if (encoder.isKeyframe(encoder.nextFrame()))
+		if (encoder.isKeyframe(encoder.nextFrame())) {
 			gops.push_back(builder.seal());
+		}
 	}
 	REQUIRE(gops.size() == 2);
 

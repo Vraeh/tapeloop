@@ -8,8 +8,9 @@ namespace tapeloop {
 void BufferLifecycle::setStartWithOutputs(bool on) noexcept
 {
 	startWithOutputs_ = on;
-	if (on && outputActive())
+	if (on && outputActive()) {
 		running_ = true;
+	}
 }
 
 void BufferLifecycle::reset(bool startWithOutputs, bool streaming, bool recording) noexcept
@@ -34,24 +35,27 @@ void BufferLifecycle::setRecording(bool active) noexcept
 
 bool BufferLifecycle::manualStart() noexcept
 {
-	if (!manualControlEnabled())
+	if (!manualControlEnabled()) {
 		return false;
+	}
 	running_ = true;
 	return true;
 }
 
 bool BufferLifecycle::manualStop() noexcept
 {
-	if (!manualControlEnabled())
+	if (!manualControlEnabled()) {
 		return false;
+	}
 	running_ = false;
 	return true;
 }
 
 void BufferLifecycle::followOutputs() noexcept
 {
-	if (startWithOutputs_)
+	if (startWithOutputs_) {
 		running_ = outputActive();
+	}
 }
 
 } // namespace tapeloop

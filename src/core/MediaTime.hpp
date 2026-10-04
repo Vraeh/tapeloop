@@ -20,10 +20,12 @@ constexpr Nanoseconds saturatingAdd(Nanoseconds a, Nanoseconds b) noexcept
 	constexpr int64_t kMin = std::numeric_limits<int64_t>::min();
 	const int64_t x = a.count();
 	const int64_t y = b.count();
-	if (y > 0 && x > kMax - y)
+	if (y > 0 && x > kMax - y) {
 		return Nanoseconds{kMax};
-	if (y < 0 && x < kMin - y)
+	}
+	if (y < 0 && x < kMin - y) {
 		return Nanoseconds{kMin};
+	}
 	return Nanoseconds{x + y};
 }
 
@@ -33,10 +35,12 @@ constexpr Nanoseconds saturatingSub(Nanoseconds a, Nanoseconds b) noexcept
 	constexpr int64_t kMin = std::numeric_limits<int64_t>::min();
 	const int64_t x = a.count();
 	const int64_t y = b.count();
-	if (y < 0 && x > kMax + y)
+	if (y < 0 && x > kMax + y) {
 		return Nanoseconds{kMax};
-	if (y > 0 && x < kMin + y)
+	}
+	if (y > 0 && x < kMin + y) {
 		return Nanoseconds{kMin};
+	}
 	return Nanoseconds{x - y};
 }
 

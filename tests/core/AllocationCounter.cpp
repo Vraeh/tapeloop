@@ -16,8 +16,9 @@ thread_local AllocationFailure *activeFailure = nullptr;
 
 void *allocate(std::size_t size)
 {
-	if (activeCount)
+	if (activeCount) {
 		++*activeCount;
+	}
 	if (activeFailure && !activeFailure->triggered_) {
 		if (activeFailure->remaining_ == 0) {
 			activeFailure->triggered_ = true;
@@ -25,8 +26,9 @@ void *allocate(std::size_t size)
 		}
 		--activeFailure->remaining_;
 	}
-	if (void *memory = std::malloc(size == 0 ? 1 : size))
+	if (void *memory = std::malloc(size == 0 ? 1 : size)) {
 		return memory;
+	}
 	throw std::bad_alloc();
 }
 

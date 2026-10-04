@@ -209,8 +209,9 @@ TEST_CASE("every control of the dock can be reached with the keyboard")
 		const bool control = qobject_cast<QAbstractButton *>(widget) || qobject_cast<QSpinBox *>(widget) ||
 				     qobject_cast<QComboBox *>(widget) || qobject_cast<QTableWidget *>(widget);
 		// Qt's own parts, such as the table's corner button, have no name.
-		if (!control || widget->objectName().isEmpty())
+		if (!control || widget->objectName().isEmpty()) {
 			continue;
+		}
 		++controls;
 		CAPTURE(widget->objectName().toStdString());
 		CHECK((widget->focusPolicy() & Qt::TabFocus) != 0);
@@ -223,8 +224,9 @@ TEST_CASE("every string the dock asks for is in the locale file")
 	FakeBackend backend = backendWithSources();
 	backend.shown[0].state = SourceState::Running;
 	backend.shown[1].state = SourceState::Failed;
-	for (const auto &source : backend.shown)
+	for (const auto &source : backend.shown) {
 		backend.current.sources[source.uuid].selected = true;
+	}
 	backend.manualEnabled = false;
 
 	std::set<std::string> missing;

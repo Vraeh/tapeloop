@@ -63,8 +63,9 @@ std::shared_ptr<const Gop> GopBuilder::snapshot() const
 
 void GopBuilder::clear() noexcept
 {
-	if (packets_.empty())
+	if (packets_.empty()) {
 		return;
+	}
 	lastByteCount_ = bytes_.size();
 	lastPacketCount_ = packets_.size();
 	bytes_.clear();

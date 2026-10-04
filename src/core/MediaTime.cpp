@@ -75,13 +75,15 @@ int64_t rescale(int64_t value, Rational from, Rational to) noexcept
 	const int64_t saturated = negative ? std::numeric_limits<int64_t>::min() : std::numeric_limits<int64_t>::max();
 
 	const UInt128 product = multiply(magnitude, multiplier);
-	if (product.high >= divisor)
+	if (product.high >= divisor) {
 		return saturated;
+	}
 
 	const Division division = divide(product, divisor);
 	const bool roundUp = division.remainder >= divisor - division.remainder;
-	if (division.quotient > limit || (roundUp && division.quotient == limit))
+	if (division.quotient > limit || (roundUp && division.quotient == limit)) {
 		return saturated;
+	}
 
 	const uint64_t rounded = division.quotient + (roundUp ? 1u : 0u);
 	return negative ? static_cast<int64_t>(0 - rounded) : static_cast<int64_t>(rounded);

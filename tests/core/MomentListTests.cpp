@@ -36,8 +36,9 @@ public:
 		tapeloop::GopBuilder builder(encoder_.frameDuration());
 		while (gops_.size() < static_cast<size_t>(gopCount)) {
 			builder.append(encoder_.next());
-			if (encoder_.isKeyframe(encoder_.nextFrame()))
+			if (encoder_.isKeyframe(encoder_.nextFrame())) {
 				gops_.push_back(builder.seal());
+			}
 		}
 	}
 
@@ -63,16 +64,18 @@ MomentListConfig limits(size_t maxMoments, size_t maxBytes)
 Moment momentOf(std::vector<Clip> clips)
 {
 	Moment moment;
-	for (size_t i = 0; i < clips.size(); ++i)
+	for (size_t i = 0; i < clips.size(); ++i) {
 		moment.clips.push_back({"source " + std::to_string(i), std::move(clips[i])});
+	}
 	return moment;
 }
 
 std::vector<uint64_t> ids(const MomentList &list)
 {
 	std::vector<uint64_t> result;
-	for (const Moment &moment : list.moments())
+	for (const Moment &moment : list.moments()) {
 		result.push_back(moment.id);
+	}
 	return result;
 }
 
@@ -107,8 +110,9 @@ TEST_CASE("MomentList drops the oldest moments beyond its count")
 {
 	const Source source(1);
 	MomentList list(limits(3, kUnlimited));
-	for (int i = 0; i < 5; ++i)
+	for (int i = 0; i < 5; ++i) {
 		list.add(momentOf({source.clip(0, 0)}));
+	}
 
 	CHECK(list.size() == 3);
 	CHECK(ids(list) == std::vector<uint64_t>{3, 4, 5});
@@ -191,8 +195,9 @@ TEST_CASE("MomentList counts a GOP held twice by one moment once")
 
 TEST_CASE("MomentList is unchanged when adding fails")
 {
-	if (!tapeloop::test::kAllocationFailures)
+	if (!tapeloop::test::kAllocationFailures) {
 		SKIP("allocation failures cannot be injected in this configuration");
+	}
 
 	const Source source(6);
 

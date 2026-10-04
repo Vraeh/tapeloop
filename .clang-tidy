@@ -24,6 +24,7 @@ Checks: >
   cppcoreguidelines-*,
   modernize-*,
   performance-*,
+  readability-braces-around-statements,
   readability-identifier-naming,
   -bugprone-easily-swappable-parameters,
   -cppcoreguidelines-avoid-magic-numbers,

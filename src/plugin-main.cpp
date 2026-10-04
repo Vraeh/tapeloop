@@ -29,8 +29,9 @@ void addDock()
 		return QString::fromUtf8(obs_module_text(key));
 	});
 	// OBS owns the dock once it is added, and deletes it with the main window.
-	if (!obs_frontend_add_dock_by_id(kDockId, obs_module_text("Dock.Title"), dock))
+	if (!obs_frontend_add_dock_by_id(kDockId, obs_module_text("Dock.Title"), dock)) {
 		delete dock;
+	}
 }
 
 } // namespace

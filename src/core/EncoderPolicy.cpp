@@ -30,8 +30,9 @@ bool isHardware(Vendor vendor)
 
 int vendorOrder(Vendor vendor, Vendor renderVendor)
 {
-	if (vendor == renderVendor)
+	if (vendor == renderVendor) {
 		return 0;
+	}
 	switch (vendor) {
 	case Vendor::Nvidia:
 		return 1;
@@ -52,21 +53,26 @@ int vendorOrder(Vendor vendor, Vendor renderVendor)
 std::optional<std::array<int, 4>> placementOf(const EncoderInfo &encoder, Vendor renderVendor,
 					      const EncoderPreferences &preferences)
 {
-	if (encoder.deprecated || encoder.internal)
+	if (encoder.deprecated || encoder.internal) {
 		return std::nullopt;
+	}
 
 	int codec = 0;
-	if (encoder.codec == "h264")
+	if (encoder.codec == "h264") {
 		codec = 1;
-	else if (encoder.codec != "hevc" || !preferences.preferHevc)
+	} else if (encoder.codec != "hevc" || !preferences.preferHevc) {
 		return std::nullopt;
+	}
 
-	if (encoder.vendor == Vendor::Software)
+	if (encoder.vendor == Vendor::Software) {
 		return std::array<int, 4>{2, 0, 0, codec};
-	if (!isHardware(encoder.vendor))
+	}
+	if (!isHardware(encoder.vendor)) {
 		return std::nullopt;
-	if (!isHardware(renderVendor) && !encoder.passTexture && encoder.vendor != Vendor::Apple)
+	}
+	if (!isHardware(renderVendor) && !encoder.passTexture && encoder.vendor != Vendor::Apple) {
 		return std::nullopt;
+	}
 
 	// OBS 32 registers the non-texture NVENC, QuickSync and AMF encoders as internal or
 	// deprecated. Their texture ids fall back to them when the texture path cannot
@@ -79,8 +85,9 @@ std::optional<std::array<int, 4>> placementOf(const EncoderInfo &encoder, Vendor
 // A frame duration that is not positive cannot come from OBS; 60 fps stands in.
 Rational validFrameDuration(Rational frameDuration)
 {
-	if (frameDuration.num <= 0 || frameDuration.den <= 0)
+	if (frameDuration.num <= 0 || frameDuration.den <= 0) {
 		return {1, kReferenceFramesPerSecond};
+	}
 	return frameDuration;
 }
 
@@ -121,30 +128,40 @@ std::string lowercase(std::string_view text)
 
 Vendor encoderVendor(std::string_view id)
 {
-	if (startsWith(id, "obs_nvenc_") || startsWith(id, "jim_") || id == "ffmpeg_nvenc" || id == "ffmpeg_hevc_nvenc")
+	if (startsWith(id, "obs_nvenc_") || startsWith(id, "jim_") || id == "ffmpeg_nvenc" ||
+	    id == "ffmpeg_hevc_nvenc") {
 		return Vendor::Nvidia;
-	if (startsWith(id, "obs_qsv11"))
+	}
+	if (startsWith(id, "obs_qsv11")) {
 		return Vendor::Intel;
-	if (endsWith(id, "_texture_amf") || endsWith(id, "_fallback_amf"))
+	}
+	if (endsWith(id, "_texture_amf") || endsWith(id, "_fallback_amf")) {
 		return Vendor::Amd;
-	if (startsWith(id, "com.apple.videotoolbox.videoencoder."))
+	}
+	if (startsWith(id, "com.apple.videotoolbox.videoencoder.")) {
 		return Vendor::Apple;
-	if (id == "obs_x264")
+	}
+	if (id == "obs_x264") {
 		return Vendor::Software;
+	}
 	return Vendor::Unknown;
 }
 
 Vendor adapterVendor(std::string_view name)
 {
 	const std::string lower = lowercase(name);
-	if (lower.find("nvidia") != std::string::npos)
+	if (lower.find("nvidia") != std::string::npos) {
 		return Vendor::Nvidia;
-	if (lower.find("radeon") != std::string::npos || lower.find("amd") != std::string::npos)
+	}
+	if (lower.find("radeon") != std::string::npos || lower.find("amd") != std::string::npos) {
 		return Vendor::Amd;
-	if (lower.find("intel") != std::string::npos)
+	}
+	if (lower.find("intel") != std::string::npos) {
 		return Vendor::Intel;
-	if (lower.find("apple") != std::string::npos)
+	}
+	if (lower.find("apple") != std::string::npos) {
 		return Vendor::Apple;
+	}
 	return Vendor::Unknown;
 }
 
@@ -157,16 +174,19 @@ std::vector<EncoderInfo> replayEncoderCandidates(std::span<const EncoderInfo> en
 	};
 	std::vector<Candidate> candidates;
 	for (const EncoderInfo &encoder : encoders) {
-		if (const std::optional<std::array<int, 4>> placement = placementOf(encoder, renderVendor, preferences))
+		if (const std::optional<std::array<int, 4>> placement =
+			    placementOf(encoder, renderVendor, preferences)) {
 			candidates.push_back({*placement, &encoder});
+		}
 	}
 	std::stable_sort(candidates.begin(), candidates.end(),
 			 [](const Candidate &a, const Candidate &b) { return a.placement < b.placement; });
 
 	std::vector<EncoderInfo> ordered;
 	ordered.reserve(candidates.size());
-	for (const Candidate &candidate : candidates)
+	for (const Candidate &candidate : candidates) {
 		ordered.push_back(*candidate.encoder);
+	}
 	return ordered;
 }
 

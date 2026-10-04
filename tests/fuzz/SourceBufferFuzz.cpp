@@ -46,8 +46,9 @@ struct SyncModel {
 
 	void setCodecConfig(std::span<const uint8_t> bytes)
 	{
-		if (synced)
+		if (synced) {
 			++discontinuities;
+		}
 		synced = false;
 		codecConfig.assign(bytes.begin(), bytes.end());
 		configs.push_back(codecConfig);
@@ -91,8 +92,9 @@ std::vector<Nanoseconds> heldTimes(const SourceBuffer &buffer)
 size_t bytesOf(const GopList &gops)
 {
 	size_t bytes = 0;
-	for (const auto &gop : gops)
+	for (const auto &gop : gops) {
 		bytes += gop->byteSize();
+	}
 	return bytes;
 }
 
@@ -105,8 +107,9 @@ void checkClip(const Clip &clip)
 
 	const std::vector<Nanoseconds> times = clip.frameTimes();
 	require(!times.empty() && times.front() == clip.in() && times.back() == clip.out());
-	for (size_t i = 1; i < times.size(); ++i)
+	for (size_t i = 1; i < times.size(); ++i) {
 		require(times[i - 1] < times[i]);
+	}
 
 	const auto in = clip.locate(clip.in());
 	const auto out = clip.locate(clip.out());
@@ -143,10 +146,11 @@ void checkCodecConfigs(const Clip &all, const tapeloop::SourceBufferStats &stats
 			require(found != model.configOfFrame.end() && found->second == first->second);
 		}
 		const CodecConfig &expected = model.configs[first->second];
-		if (expected.empty())
+		if (expected.empty()) {
 			require(gop->codecConfig() == nullptr);
-		else
+		} else {
 			require(gop->codecConfig() && *gop->codecConfig() == expected);
+		}
 	}
 
 	std::set<const CodecConfig *> seen;
@@ -215,10 +219,11 @@ void checkKept(const SourceBuffer &buffer, const EncodedPacket &packet, const Co
 	require(record.keyframe == packet.keyframe);
 	const std::span<const uint8_t> stored = gop.packetData(at.packet);
 	require(std::equal(stored.begin(), stored.end(), packet.data.begin(), packet.data.end()));
-	if (codecConfig.empty())
+	if (codecConfig.empty()) {
 		require(gop.codecConfig() == nullptr);
-	else
+	} else {
 		require(gop.codecConfig() && *gop.codecConfig() == codecConfig);
+	}
 }
 
 // After a kept keyframe eviction has run on the sealed GOPs: neither rule would drop the
@@ -231,20 +236,23 @@ void checkEviction(const SourceBuffer &buffer, const tapeloop::SourceBufferConfi
 	sealed.pop_back();
 	const size_t bytes = bytesOf(sealed);
 
-	if (sealedOne)
+	if (sealedOne) {
 		require(!sealed.empty());
+	}
 	if (sealed.size() > 1) {
 		require(bytes <= config.maxBytes);
 		require(tapeloop::saturatingSub(sealed.back()->endTime(), sealed[1]->startTime()) < config.window);
 	}
 
 	// After a restart GOPs also leave from the back, which this check does not model.
-	if (restarted || sealed.empty())
+	if (restarted || sealed.empty()) {
 		return;
+	}
 	const auto survivor = std::find(before.begin(), before.end(), sealed.front());
 	const size_t droppedCount = static_cast<size_t>(survivor - before.begin());
-	if (droppedCount == 0)
+	if (droppedCount == 0) {
 		return;
+	}
 	const Gop &lastDropped = *before[droppedCount - 1];
 	const bool windowAllowed = tapeloop::saturatingSub(sealed.back()->endTime(), sealed.front()->startTime()) >=
 				   config.window;
@@ -289,14 +297,16 @@ extern "C" int LLVMFuzzerTestOneInput(const uint8_t *data, size_t size)
 			const bool restarted = keyframe && (!model.synced || model.breaksRun(packet));
 			const bool sealsOpenGop = keyframe && model.synced && !restarted;
 			GopList before = heldGops(buffer);
-			if (model.synced && !before.empty())
+			if (model.synced && !before.empty()) {
 				before.pop_back();
+			}
 
 			buffer.push(packet);
 			if (model.push(packet)) {
 				checkKept(buffer, packet, model.codecConfig);
-				if (keyframe)
+				if (keyframe) {
 					checkEviction(buffer, config, before, sealsOpenGop, restarted);
+				}
 			}
 			break;
 		}
@@ -304,12 +314,13 @@ extern "C" int LLVMFuzzerTestOneInput(const uint8_t *data, size_t size)
 			const Nanoseconds duration{input.i64()};
 			const std::vector<Nanoseconds> held = heldTimes(buffer);
 			const Clip clip = buffer.clip(duration);
-			if (held.empty())
+			if (held.empty()) {
 				require(clip.empty());
-			else
+			} else {
 				checkRange(clip, held,
 					   tapeloop::saturatingSub(held.back(), std::max(duration, Nanoseconds{0})),
 					   held.back());
+			}
 			break;
 		}
 		case 3: {

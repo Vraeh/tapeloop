@@ -47,8 +47,9 @@ SourceBufferConfig makeConfig(const SyntheticEncoder &encoder, Nanoseconds windo
 
 void pushFrames(SourceBuffer &buffer, SyntheticEncoder &encoder, int count)
 {
-	for (int i = 0; i < count; ++i)
+	for (int i = 0; i < count; ++i) {
 		buffer.push(encoder.next());
+	}
 }
 
 std::vector<std::shared_ptr<const Gop>> heldGops(const SourceBuffer &buffer)
@@ -65,8 +66,9 @@ EncodedPacket packetAt(Nanoseconds time, int64_t dts, bool keyframe)
 bool strictlyIncreasing(const std::vector<Nanoseconds> &times)
 {
 	for (size_t i = 1; i < times.size(); ++i) {
-		if (times[i] <= times[i - 1])
+		if (times[i] <= times[i - 1]) {
 			return false;
+		}
 	}
 	return true;
 }
@@ -78,11 +80,13 @@ bool consistent(const SourceBuffer &buffer)
 	size_t bytes = 0;
 	for (const auto &gop : heldGops(buffer)) {
 		const auto packets = gop->packets();
-		if (!packets.front().keyframe || !tapeloop::test::hasExpectedBytes(*gop))
+		if (!packets.front().keyframe || !tapeloop::test::hasExpectedBytes(*gop)) {
 			return false;
+		}
 		for (size_t i = 1; i < packets.size(); ++i) {
-			if (packets[i].keyframe || packets[i].pts != packets[i - 1].pts + 1)
+			if (packets[i].keyframe || packets[i].pts != packets[i - 1].pts + 1) {
 				return false;
+			}
 		}
 		bytes += gop->byteSize();
 	}
@@ -94,24 +98,27 @@ bool consistent(const SourceBuffer &buffer)
 CodecConfig runConfig(int64_t firstFrame)
 {
 	CodecConfig config(8);
-	for (size_t i = 0; i < config.size(); ++i)
+	for (size_t i = 0; i < config.size(); ++i) {
 		config[i] = static_cast<uint8_t>(static_cast<uint64_t>(firstFrame) >> (8 * i));
+	}
 	return config;
 }
 
 int64_t runOf(const CodecConfig &config)
 {
 	uint64_t frame = 0;
-	for (size_t i = 0; i < config.size(); ++i)
+	for (size_t i = 0; i < config.size(); ++i) {
 		frame |= uint64_t{config[i]} << (8 * i);
+	}
 	return static_cast<int64_t>(frame);
 }
 
 std::vector<const CodecConfig *> configsOf(const std::vector<std::shared_ptr<const Gop>> &gops)
 {
 	std::vector<const CodecConfig *> configs;
-	for (const auto &gop : gops)
+	for (const auto &gop : gops) {
 		configs.push_back(gop->codecConfig());
+	}
 	return configs;
 }
 
@@ -160,18 +167,21 @@ TEST_CASE("SourceBuffer evicts old GOPs but always keeps the window")
 	bool evicted = false;
 	for (int frame = 0; frame < 1200; ++frame) {
 		buffer.push(encoder.next());
-		if (!encoder.isKeyframe(encoder.nextFrame()))
+		if (!encoder.isKeyframe(encoder.nextFrame())) {
 			continue;
+		}
 
 		// The last GOP returned is the copy of the one still being encoded.
 		std::vector<std::shared_ptr<const Gop>> sealed = heldGops(buffer);
 		sealed.pop_back();
-		if (sealed.empty())
+		if (sealed.empty()) {
 			continue;
+		}
 
 		CAPTURE(frame, sealed.size());
-		if (sealed.size() > 1)
+		if (sealed.size() > 1) {
 			CHECK(sealed.back()->endTime() - sealed[1]->startTime() < window);
+		}
 		if (sealed.front()->startTime() > encoder.timeOf(0)) {
 			evicted = true;
 			CHECK(sealed.back()->endTime() - sealed.front()->startTime() >= window);
@@ -319,8 +329,9 @@ TEST_CASE("SourceBuffer accepts a repeated dts")
 
 TEST_CASE("SourceBuffer stays consistent when an allocation fails while pushing")
 {
-	if (!tapeloop::test::kAllocationFailures)
+	if (!tapeloop::test::kAllocationFailures) {
 		SKIP("allocation failures cannot be injected in this configuration");
+	}
 
 	// Fail each allocation a push makes in turn: on the keyframe that seals a GOP, and
 	// on a frame that makes the first GOP's buffers grow.
@@ -352,8 +363,9 @@ TEST_CASE("SourceBuffer stays consistent when an allocation fails while pushing"
 			pushFrames(buffer, encoder, 70);
 
 			CHECK(consistent(buffer));
-			if (failed)
+			if (failed) {
 				CHECK(buffer.stats().droppedBeforeKeyframe > 0);
+			}
 		}
 	}
 }
@@ -440,8 +452,9 @@ TEST_CASE("SourceBuffer clips stay readable after clear")
 	CHECK(buffer.clip(1h).empty());
 
 	CHECK(clip.frameTimes() == times);
-	for (const auto &gop : clip.gops())
+	for (const auto &gop : clip.gops()) {
 		CHECK(tapeloop::test::hasExpectedBytes(*gop));
+	}
 }
 
 TEST_CASE("SourceBuffer clips stay readable after their GOPs are evicted")
@@ -458,14 +471,16 @@ TEST_CASE("SourceBuffer clips stay readable after their GOPs are evicted")
 	REQUIRE(buffer.stats().oldestTime > clip.out());
 
 	CHECK(clip.frameTimes() == times);
-	for (const auto &gop : clip.gops())
+	for (const auto &gop : clip.gops()) {
 		CHECK(tapeloop::test::hasExpectedBytes(*gop));
+	}
 }
 
 TEST_CASE("SourceBuffer does not allocate per packet in steady state")
 {
-	if (!tapeloop::test::kAllocationHooks)
+	if (!tapeloop::test::kAllocationHooks) {
 		SKIP("operator new cannot be replaced under this sanitizer");
+	}
 
 	SyntheticEncoder encoder({});
 	SourceBuffer buffer(makeConfig(encoder, 2s, kUnlimited));
@@ -486,8 +501,9 @@ TEST_CASE("SourceBuffer does not allocate per packet in steady state")
 			// Sealing: the Gop, its bytes, its packet table, and now and then a new
 			// block and map for the deque of GOPs. The codec configuration is
 			// shared, not copied.
-			if (tapeloop::test::kExactAllocationCounts)
+			if (tapeloop::test::kExactAllocationCounts) {
 				CHECK(allocations <= 5);
+			}
 		} else {
 			CHECK(allocations == 0);
 		}
@@ -507,36 +523,42 @@ TEST_CASE("SourceBuffer can be read while the encoder pushes")
 	std::atomic<int> clipsRead{0};
 
 	const auto check = [&](const Clip &clip) {
-		if (clip.empty())
+		if (clip.empty()) {
 			return;
+		}
 		const std::vector<Nanoseconds> times = clip.frameTimes();
 		if (times.empty() || times.front() != clip.in() || times.back() != clip.out() ||
-		    !strictlyIncreasing(times))
+		    !strictlyIncreasing(times)) {
 			++failures;
+		}
 		for (const auto &gop : clip.gops()) {
 			const CodecConfig *config = gop->codecConfig();
 			if (!tapeloop::test::hasExpectedBytes(*gop) || !config ||
-			    runOf(*config) != gop->packets().front().pts / 600 * 600)
+			    runOf(*config) != gop->packets().front().pts / 600 * 600) {
 				++failures;
+			}
 		}
 		const auto last = clip.locate(clip.out());
-		if (clip.gops()[last.gop]->packets()[last.packet].time != clip.out())
+		if (clip.gops()[last.gop]->packets()[last.packet].time != clip.out()) {
 			++failures;
+		}
 		++clipsRead;
 	};
 
 	std::thread producer([&] {
 		// A new run every 600 frames, each starting on a keyframe.
 		for (int frame = 0; frame < 20'000; ++frame) {
-			if (frame % 600 == 0)
+			if (frame % 600 == 0) {
 				buffer.setCodecConfig(runConfig(frame));
+			}
 			buffer.push(encoder.next());
 		}
 		done = true;
 	});
 	std::thread recent([&] {
-		while (!done)
+		while (!done) {
 			check(buffer.clip(1s));
+		}
 	});
 	std::thread absolute([&] {
 		while (!done) {
@@ -725,8 +747,9 @@ TEST_CASE("SourceBuffer clips keep the codec configuration after the buffer is g
 
 TEST_CASE("SourceBuffer changes nothing when setting a codec configuration fails")
 {
-	if (!tapeloop::test::kAllocationFailures)
+	if (!tapeloop::test::kAllocationFailures) {
 		SKIP("allocation failures cannot be injected in this configuration");
+	}
 
 	for (size_t skip = 0; skip < 8; ++skip) {
 		CAPTURE(skip);

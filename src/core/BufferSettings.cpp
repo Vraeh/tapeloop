@@ -38,11 +38,13 @@ std::string resolutionName(ResolutionMode mode)
 
 ReplayResolution resolutionFrom(const std::string &name, int64_t height)
 {
-	if (name == "output")
+	if (name == "output") {
 		return {ResolutionMode::Output, ReplayResolution{}.height};
+	}
 	if (name == "fixed" && height > 0 && height <= std::numeric_limits<uint32_t>::max() &&
-	    isFixedHeight(static_cast<uint32_t>(height)))
+	    isFixedHeight(static_cast<uint32_t>(height))) {
 		return {ResolutionMode::Fixed, static_cast<uint32_t>(height)};
+	}
 	return {};
 }
 
@@ -74,8 +76,9 @@ std::vector<std::string> BufferSettings::selectedSources() const
 {
 	std::vector<std::string> selected;
 	for (const auto &[uuid, source] : sources) {
-		if (source.selected)
+		if (source.selected) {
 			selected.push_back(uuid);
+		}
 	}
 	return selected;
 }
@@ -91,8 +94,9 @@ SavedSettings saveSettings(const BufferSettings &settings)
 		SavedSource entry;
 		entry.uuid = uuid;
 		entry.selected = source.selected;
-		if (source.length)
+		if (source.length) {
 			entry.lengthSeconds = toSeconds(*source.length);
+		}
 		if (source.resolution) {
 			entry.resolution = resolutionName(source.resolution->mode);
 			entry.height = source.resolution->height;
@@ -104,22 +108,26 @@ SavedSettings saveSettings(const BufferSettings &settings)
 
 std::optional<BufferSettings> loadSettings(const SavedSettings &saved)
 {
-	if (saved.version != kSettingsVersion)
+	if (saved.version != kSettingsVersion) {
 		return std::nullopt;
+	}
 
 	BufferSettings settings;
 	settings.length = fromSeconds(saved.lengthSeconds);
 	settings.resolution = resolutionFrom(saved.resolution, saved.height);
 	settings.startWithOutputs = saved.startWithOutputs;
 	for (const SavedSource &entry : saved.sources) {
-		if (entry.uuid.empty())
+		if (entry.uuid.empty()) {
 			continue;
+		}
 		SourceSettings source;
 		source.selected = entry.selected;
-		if (entry.lengthSeconds)
+		if (entry.lengthSeconds) {
 			source.length = fromSeconds(*entry.lengthSeconds);
-		if (entry.resolution)
+		}
+		if (entry.resolution) {
 			source.resolution = resolutionFrom(*entry.resolution, entry.height.value_or(0));
+		}
 		settings.sources[entry.uuid] = source;
 	}
 	return settings;

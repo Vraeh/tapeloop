@@ -50,15 +50,17 @@ void Playhead::load(std::vector<Nanoseconds> frameTimes)
 
 void Playhead::advance(Nanoseconds elapsed)
 {
-	if (frames_.empty() || elapsed <= Nanoseconds{0})
+	if (frames_.empty() || elapsed <= Nanoseconds{0}) {
 		return;
+	}
 
 	if (scrubbing_) {
 		advanceScrub(elapsed.count());
 		return;
 	}
-	if (!playing_)
+	if (!playing_) {
 		return;
+	}
 
 	move(elapsed.count(), 2 * int64_t{rate_});
 	if (rate_ > 0 && position_ >= frames_.back()) {
@@ -72,16 +74,18 @@ void Playhead::advance(Nanoseconds elapsed)
 
 void Playhead::play() noexcept
 {
-	if (!frames_.empty())
+	if (!frames_.empty()) {
 		playing_ = rate_ > 0 ? position_ < frames_.back() : position_ > frames_.front();
+	}
 }
 
 void Playhead::togglePause() noexcept
 {
-	if (playing_)
+	if (playing_) {
 		pause();
-	else
+	} else {
 		play();
+	}
 }
 
 void Playhead::setRate(int32_t rate) noexcept
@@ -99,8 +103,9 @@ void Playhead::setRate(int32_t rate) noexcept
 void Playhead::step(int frames) noexcept
 {
 	playing_ = false;
-	if (frames_.empty())
+	if (frames_.empty()) {
 		return;
+	}
 
 	const int64_t last = static_cast<int64_t>(frames_.size()) - 1;
 	const int64_t target = std::clamp(static_cast<int64_t>(displayedFrame()) + frames, int64_t{0}, last);
@@ -109,8 +114,9 @@ void Playhead::step(int frames) noexcept
 
 void Playhead::seek(Nanoseconds time) noexcept
 {
-	if (!frames_.empty())
+	if (!frames_.empty()) {
 		moveTo(std::clamp(time, frames_.front(), frames_.back()));
+	}
 }
 
 void Playhead::beginScrub(ScrubDirection direction) noexcept
@@ -147,10 +153,12 @@ size_t Playhead::displayedFrame() const noexcept
 
 int32_t Playhead::scrubRate(Nanoseconds held) const noexcept
 {
-	if (held <= config_.scrubRampStart)
+	if (held <= config_.scrubRampStart) {
 		return config_.scrubStartRate;
-	if (held >= config_.scrubRampEnd)
+	}
+	if (held >= config_.scrubRampEnd) {
 		return config_.scrubEndRate;
+	}
 
 	int64_t offset = (held - config_.scrubRampStart).count();
 	int64_t span = (config_.scrubRampEnd - config_.scrubRampStart).count();
@@ -164,8 +172,9 @@ int32_t Playhead::scrubRate(Nanoseconds held) const noexcept
 	const int64_t product = offset * change;
 	int64_t step = product / span;
 	const int64_t rest = product % span;
-	if (2 * (rest < 0 ? -rest : rest) >= span)
+	if (2 * (rest < 0 ? -rest : rest) >= span) {
 		step += product < 0 ? -1 : 1;
+	}
 	return static_cast<int32_t>(config_.scrubStartRate + step);
 }
 
@@ -194,16 +203,18 @@ void Playhead::advanceScrub(int64_t elapsed) noexcept
 		elapsed -= piece;
 	}
 
-	if (position_ > frames_.back())
+	if (position_ > frames_.back()) {
 		moveTo(frames_.back());
-	else if (position_ < frames_.front())
+	} else if (position_ < frames_.front()) {
 		moveTo(frames_.front());
+	}
 }
 
 void Playhead::move(int64_t elapsed, int64_t doubledRate) noexcept
 {
-	if (doubledRate == 0)
+	if (doubledRate == 0) {
 		return;
+	}
 
 	// position_ * kScale + remainder_ grows by exactly elapsed * doubledRate. A long
 	// step goes in pieces small enough that whole * doubledRate + carry fits in 64 bits;
