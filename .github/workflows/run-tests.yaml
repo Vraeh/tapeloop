@@ -153,7 +153,7 @@ jobs:
             libavcodec-dev libavformat-dev libavutil-dev libswscale-dev libswresample-dev libx264-dev \
             libjansson-dev uthash-dev libsimde-dev zlib1g-dev uuid-dev libx11-dev libx11-xcb-dev \
             libxcb1-dev libxcb-xinput-dev libdrm-dev libgl-dev libegl-dev libglvnd-dev libwayland-dev \
-            libxkbcommon-dev xvfb xauth libgl1-mesa-dri libegl-mesa0
+            libxkbcommon-dev xvfb xauth libgl1-mesa-dri libegl-mesa0 nasm
 
       - name: Restore libobs
         id: restore-libobs
@@ -175,9 +175,24 @@ jobs:
           path: ${{ env.TAPELOOP_LIBOBS_PREFIX }}
           key: ${{ steps.restore-libobs.outputs.cache-primary-key }}
 
+      - name: Restore FFmpeg
+        id: restore-ffmpeg
+        uses: actions/cache/restore@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          path: ${{ github.workspace }}/.deps/ffmpeg-*
+          key: ffmpeg-ubuntu-24.04-${{ hashFiles('cmake/ffmpeg/BuildFFmpeg.cmake') }}
+
+      # Builds FFmpeg into .deps first when it was not restored.
       - name: Configure
         working-directory: tests/obs
         run: cmake --preset linux-obs-asan
+
+      - name: Save FFmpeg
+        if: steps.restore-ffmpeg.outputs.cache-hit != 'true'
+        uses: actions/cache/save@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          path: ${{ github.workspace }}/.deps/ffmpeg-*
+          key: ${{ steps.restore-ffmpeg.outputs.cache-primary-key }}
 
       - name: Build
         working-directory: tests/obs
