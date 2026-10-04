@@ -143,7 +143,9 @@ std::map<std::string, std::string> matchSourcesByName(BufferSettings &settings,
 	std::map<std::string, std::vector<std::string>> byName;
 	for (const SourceIdentity &source : sources) {
 		present.insert(source.uuid);
-		byName[source.name].push_back(source.uuid);
+		if (source.capturable) {
+			byName[source.name].push_back(source.uuid);
+		}
 	}
 
 	std::map<std::string, std::vector<std::string>> claims;

@@ -13,16 +13,16 @@
 namespace tapeloop::obs {
 namespace {
 
-bool addVideoInput(void *param, obs_source_t *source) noexcept
+bool addInput(void *param, obs_source_t *source) noexcept
 {
-	if (obs_source_get_type(source) != OBS_SOURCE_TYPE_INPUT ||
-	    (obs_source_get_output_flags(source) & OBS_SOURCE_VIDEO) == 0) {
+	if (obs_source_get_type(source) != OBS_SOURCE_TYPE_INPUT) {
 		return true;
 	}
 	try {
 		const char *name = obs_source_get_name(source);
+		const bool video = (obs_source_get_output_flags(source) & OBS_SOURCE_VIDEO) != 0;
 		static_cast<std::vector<SourceIdentity> *>(param)->push_back(
-			{obs_source_get_uuid(source), name ? name : ""});
+			{obs_source_get_uuid(source), name ? name : "", video});
 	} catch (...) {
 		return false;
 	}
@@ -190,7 +190,7 @@ void CaptureManager::load(obs_data_t *collection)
 	}
 
 	std::vector<SourceIdentity> inputs;
-	obs_enum_sources(addVideoInput, &inputs);
+	obs_enum_sources(addInput, &inputs);
 	for (const auto &move : matchSourcesByName(settings, savedNames_, inputs)) {
 		blog(LOG_INFO, "[tapeloop] Found the saved source '%s' again by its name",
 		     savedNames_.at(move.first).c_str());

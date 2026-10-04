@@ -46,6 +46,7 @@ void Playhead::load(std::vector<Nanoseconds> frameTimes)
 	remainder_ = 0;
 	playing_ = false;
 	scrubbing_ = false;
+	rate_ = rate_ < 0 ? -rate_ : rate_;
 }
 
 void Playhead::advance(Nanoseconds elapsed)
@@ -74,9 +75,15 @@ void Playhead::advance(Nanoseconds elapsed)
 
 void Playhead::play() noexcept
 {
-	if (!frames_.empty()) {
-		playing_ = rate_ > 0 ? position_ < frames_.back() : position_ > frames_.front();
+	if (frames_.empty()) {
+		return;
 	}
+	if (rate_ > 0 && position_ >= frames_.back()) {
+		moveTo(frames_.front());
+	} else if (rate_ < 0 && position_ <= frames_.front()) {
+		moveTo(frames_.back());
+	}
+	playing_ = frames_.front() < frames_.back();
 }
 
 void Playhead::togglePause() noexcept

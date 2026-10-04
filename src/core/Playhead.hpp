@@ -40,15 +40,15 @@ public:
 	explicit Playhead(PlayheadConfig config = {});
 
 	// Loads the frame times of a clip and waits paused on the first frame, with any
-	// scrub ended. Times are sorted and duplicates dropped if needed. The rate,
-	// direction included, is kept from the previous clip.
+	// scrub ended. Times are sorted and duplicates dropped if needed. The speed is kept
+	// from the previous clip, but a new clip always plays forward.
 	void load(std::vector<Nanoseconds> frameTimes);
 	bool empty() const noexcept { return frames_.empty(); }
 
 	void advance(Nanoseconds elapsed);
 
-	// Does nothing on the last frame when the rate is forward, or on the first when it
-	// is reverse: there is nowhere to go.
+	// On the last frame with a forward rate, or on the first with a reverse one, starts
+	// again from the other end. A clip of one frame has nowhere to go and stays paused.
 	void play() noexcept;
 	void pause() noexcept { playing_ = false; }
 	void togglePause() noexcept;

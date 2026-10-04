@@ -21,7 +21,11 @@ jobs:
           clang-tidy-18 -p build_tests/linux-clang-tidy --quiet src/core/**/*.cpp
 
       # The other checks are written for the core; the tests only share its brace rule.
-      - name: Check braces in the core tests
+      # The fuzz harnesses are not in the compile database, so their flags are given.
+      - name: Check braces in the core tests and fuzz harnesses
         run: |
-          clang-tidy-18 -p build_tests/linux-clang-tidy --quiet --checks='-*,readability-braces-around-statements' \
-            --header-filter='tests/core/' tests/core/*.cpp
+          shopt -s globstar
+          braces=(--quiet --checks='-*,readability-braces-around-statements' --warnings-as-errors='*')
+          clang-tidy-18 -p build_tests/linux-clang-tidy "${braces[@]}" --header-filter='tests/core/' \
+            tests/core/**/*.cpp
+          clang-tidy-18 "${braces[@]}" --header-filter='tests/fuzz/' tests/fuzz/**/*.cpp -- -std=c++20 -Isrc

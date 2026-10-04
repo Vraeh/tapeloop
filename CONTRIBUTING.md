@@ -97,14 +97,18 @@ CI builds the core tests with the `linux-clang-coverage` preset, reports the lin
 of `src/core` and fails below 90%.
 
 CI also runs clang-tidy over `src/core` with the checks in `.clang-tidy`, and over the
-core tests with only the rule that every branch has braces; any warning fails the job.
-To run it locally with Clang 18:
+core tests and the fuzz harnesses with only the rule that every branch has braces; any
+warning fails the job. To run it locally with Clang 18:
 
 ```
 cd tests
 cmake --preset linux-clang-tidy
 cd ..
 clang-tidy -p build_tests/linux-clang-tidy src/core/*.cpp
+clang-tidy -p build_tests/linux-clang-tidy --checks='-*,readability-braces-around-statements' \
+  --header-filter='tests/core/' tests/core/*.cpp
+clang-tidy --checks='-*,readability-braces-around-statements' --header-filter='tests/fuzz/' \
+  tests/fuzz/*.cpp -- -std=c++20 -Isrc
 ```
 
 ## License
