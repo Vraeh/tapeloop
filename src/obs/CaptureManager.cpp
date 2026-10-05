@@ -11,6 +11,25 @@
 #include <utility>
 
 namespace tapeloop::obs {
+namespace {
+
+bool addInput(void *param, obs_source_t *source) noexcept
+{
+	if (obs_source_get_type(source) != OBS_SOURCE_TYPE_INPUT) {
+		return true;
+	}
+	try {
+		const char *name = obs_source_get_name(source);
+		const bool video = (obs_source_get_output_flags(source) & OBS_SOURCE_VIDEO) != 0;
+		static_cast<std::vector<SourceIdentity> *>(param)->push_back(
+			{obs_source_get_uuid(source), name ? name : "", video});
+	} catch (...) {
+		return false;
+	}
+	return true;
+}
+
+} // namespace
 
 CaptureManager::CaptureManager(CaptureHost &host) : host_(host)
 {
@@ -134,14 +153,16 @@ void CaptureManager::save(obs_data_t *collection) const
 		return;
 	}
 	SavedSettings saved = saveSettings(settings_);
+	// Settings of a source the collection no longer has would only pile up.
+	std::vector<SavedSource> kept;
 	for (SavedSource &source : saved.sources) {
 		OBSSourceAutoRelease found = obs_get_source_by_uuid(source.uuid.c_str());
 		if (found) {
 			source.name = obs_source_get_name(found);
-		} else if (const auto name = savedNames_.find(source.uuid); name != savedNames_.end()) {
-			source.name = name->second;
+			kept.push_back(std::move(source));
 		}
 	}
+	saved.sources = std::move(kept);
 	OBSDataAutoRelease data = createSettingsData(saved);
 	obs_data_set_obj(collection, kSettingsKey, data);
 }
@@ -166,6 +187,13 @@ void CaptureManager::load(obs_data_t *collection)
 			     static_cast<long long>(saved.version));
 			foreignSettings_ = std::move(data);
 		}
+	}
+
+	std::vector<SourceIdentity> inputs;
+	obs_enum_sources(addInput, &inputs);
+	for (const auto &move : matchSourcesByName(settings, savedNames_, inputs)) {
+		blog(LOG_INFO, "[tapeloop] Found the saved source '%s' again by its name",
+		     savedNames_.at(move.first).c_str());
 	}
 
 	settings_ = std::move(settings);

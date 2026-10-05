@@ -4,9 +4,11 @@
 #
 #   cmake -DPREFIX=<install dir> -DWORK_DIR=<build dir> -P BuildFFmpeg.cmake
 #
-# Linux and macOS hosts use their shell and make; Windows uses MSVC from the newest
-# Visual Studio and the shell, make and nasm of MSYS2 (C:/msys64, or MSYS2_ROOT). nasm is
-# needed everywhere. The version and the options below are the build's identity:
+# Linux and macOS hosts use their shell and make; Windows uses MSVC and the shell, make
+# and nasm of MSYS2 (C:/msys64, or MSYS2_ROOT). nasm is needed everywhere. On Windows,
+# -DVISUAL_STUDIO=<installation>, -DWINDOWS_SDK=<version> and -DVC_TOOLSET=<version>
+# pick the compiler the plugin uses; without them, the newest Visual Studio and its
+# defaults. The version and the options below are the build's identity:
 # cmake/ffmpeg/ffmpeg.cmake keys the install directory on this file's hash.
 cmake_minimum_required(VERSION 3.28)
 
@@ -61,6 +63,10 @@ foreach(variable IN ITEMS PREFIX WORK_DIR)
   if(NOT ${variable})
     message(FATAL_ERROR "BuildFFmpeg.cmake needs -D${variable}=<path>")
   endif()
+  # FFmpeg's configure refuses an out-of-tree build whose paths contain whitespace.
+  if(${variable} MATCHES "[ \t]")
+    message(FATAL_ERROR "FFmpeg cannot be built under a path with spaces: ${${variable}}")
+  endif()
 endforeach()
 
 file(REMOVE_RECURSE "${WORK_DIR}" "${PREFIX}")
@@ -81,15 +87,26 @@ if(CMAKE_HOST_WIN32)
   # FFmpeg's configure needs cl, link and lib on the PATH and the Windows SDK's include
   # and library paths, which vcvars64.bat sets for the batch file that runs each step;
   # MSYS2_PATH_TYPE=inherit hands them to the MSYS2 shell.
-  execute_process(
-    COMMAND
-      "C:/Program Files (x86)/Microsoft Visual Studio/Installer/vswhere.exe" -latest -products * -requires
-      Microsoft.VisualStudio.Component.VC.Tools.x86.x64 -property installationPath
-    OUTPUT_VARIABLE visual_studio
-    OUTPUT_STRIP_TRAILING_WHITESPACE
-    COMMAND_ERROR_IS_FATAL ANY
-  )
+  if(VISUAL_STUDIO)
+    set(visual_studio "${VISUAL_STUDIO}")
+  else()
+    execute_process(
+      COMMAND
+        "C:/Program Files (x86)/Microsoft Visual Studio/Installer/vswhere.exe" -latest -products * -requires
+        Microsoft.VisualStudio.Component.VC.Tools.x86.x64 -property installationPath
+      OUTPUT_VARIABLE visual_studio
+      OUTPUT_STRIP_TRAILING_WHITESPACE
+      COMMAND_ERROR_IS_FATAL ANY
+    )
+  endif()
   file(TO_NATIVE_PATH "${visual_studio}/VC/Auxiliary/Build/vcvars64.bat" vcvars)
+  set(vcvars_arguments)
+  if(WINDOWS_SDK)
+    string(APPEND vcvars_arguments " ${WINDOWS_SDK}")
+  endif()
+  if(VC_TOOLSET)
+    string(APPEND vcvars_arguments " -vcvars_ver=${VC_TOOLSET}")
+  endif()
   set(msys "C:/msys64")
   if(DEFINED ENV{MSYS2_ROOT})
     file(TO_CMAKE_PATH "$ENV{MSYS2_ROOT}" msys)
@@ -120,7 +137,7 @@ function(run_step step command)
     file(
       WRITE
       "${batch}"
-      "@call \"${vcvars}\" >NUL || exit /b 1\r\n"
+      "@call \"${vcvars}\"${vcvars_arguments} >NUL || exit /b 1\r\n"
       "@set MSYS2_PATH_TYPE=inherit\r\n"
       "@set CHERE_INVOKING=1\r\n"
       "@\"${bash}\" -lc \"${command}\"\r\n"
@@ -143,6 +160,11 @@ function(run_step step command)
   endif()
   if(NOT result EQUAL 0)
     file(READ "${log}" text)
+    # configure says little on stdout; why it stopped is at the end of its own log.
+    if(step STREQUAL "configure" AND EXISTS "${WORK_DIR}/build/ffbuild/config.log")
+      file(READ "${WORK_DIR}/build/ffbuild/config.log" config_log)
+      string(APPEND text "\n--- ffbuild/config.log ---\n${config_log}")
+    endif()
     string(LENGTH "${text}" length)
     if(length GREATER 20000)
       math(EXPR start "${length} - 20000")
@@ -155,6 +177,30 @@ endfunction()
 list(JOIN options " " joined)
 message(STATUS "Configuring FFmpeg ${version}: ${joined}")
 run_step(configure "'${shell_source}/configure' --prefix='${shell_prefix}' ${joined}")
+
+# configure drops a requested component without a word when a dependency is missing, as
+# the HEVC hwaccel does without DXVA_PicParams_HEVC; what it kept is in config.h and
+# config_components.h.
+set(
+  required
+  CONFIG_H264_DECODER
+  CONFIG_HEVC_DECODER
+  CONFIG_H264_PARSER
+  CONFIG_HEVC_PARSER
+  HAVE_THREADS
+)
+if(CMAKE_HOST_WIN32)
+  list(APPEND required CONFIG_H264_D3D11VA2_HWACCEL CONFIG_HEVC_D3D11VA2_HWACCEL)
+endif()
+file(READ "${WORK_DIR}/build/config.h" config_h)
+file(READ "${WORK_DIR}/build/config_components.h" components_h)
+string(APPEND config_h "${components_h}")
+foreach(name IN LISTS required)
+  if(NOT config_h MATCHES "#define ${name} 1")
+    message(FATAL_ERROR "FFmpeg's configure left out ${name}")
+  endif()
+endforeach()
+
 message(STATUS "Building FFmpeg ${version} with ${jobs} jobs")
 run_step(build "make -j${jobs} && make install")
 

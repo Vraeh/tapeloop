@@ -36,7 +36,23 @@ function(tapeloop_add_ffmpeg)
   endif()
 
   set(script "${_tapeloop_ffmpeg_dir}/BuildFFmpeg.cmake")
-  file(SHA256 "${script}" key)
+  # On Windows FFmpeg is built with the plugin's own Visual Studio, SDK and toolset,
+  # which are then part of the key too: objects of a newer compiler than the linker do
+  # not link.
+  set(toolchain)
+  if(MSVC)
+    if(CMAKE_GENERATOR_INSTANCE)
+      list(APPEND toolchain "-DVISUAL_STUDIO=${CMAKE_GENERATOR_INSTANCE}")
+    endif()
+    if(CMAKE_VS_WINDOWS_TARGET_PLATFORM_VERSION)
+      list(APPEND toolchain "-DWINDOWS_SDK=${CMAKE_VS_WINDOWS_TARGET_PLATFORM_VERSION}")
+    endif()
+    if(CMAKE_VS_PLATFORM_TOOLSET_VERSION)
+      list(APPEND toolchain "-DVC_TOOLSET=${CMAKE_VS_PLATFORM_TOOLSET_VERSION}")
+    endif()
+  endif()
+  file(SHA256 "${script}" script_hash)
+  string(SHA256 key "${script_hash};${toolchain};${CMAKE_C_COMPILER_ID};${CMAKE_C_COMPILER_VERSION}")
   string(SUBSTRING "${key}" 0 16 key)
   cmake_path(ABSOLUTE_PATH _tapeloop_ffmpeg_dir NORMALIZE OUTPUT_VARIABLE repository)
   cmake_path(GET repository PARENT_PATH repository)
@@ -46,7 +62,9 @@ function(tapeloop_add_ffmpeg)
   if(NOT EXISTS "${prefix}/configure-line.txt")
     message(STATUS "Building FFmpeg into ${prefix}")
     execute_process(
-      COMMAND "${CMAKE_COMMAND}" "-DPREFIX=${prefix}" "-DWORK_DIR=${repository}/.deps/ffmpeg-${key}-work" -P "${script}"
+      COMMAND
+        "${CMAKE_COMMAND}" "-DPREFIX=${prefix}" "-DWORK_DIR=${repository}/.deps/ffmpeg-${key}-work" ${toolchain} -P
+        "${script}"
       RESULT_VARIABLE result
     )
     if(NOT result EQUAL 0)
@@ -74,7 +92,7 @@ function(tapeloop_add_ffmpeg)
       PROPERTIES
         IMPORTED_LOCATION "${location}"
         INTERFACE_INCLUDE_DIRECTORIES "${prefix}/include"
-        # FFmpeg's headers want the C99 constant macros, which C++ hides without it.
+        # FFmpeg's headers refuse to compile as C++ without it.
         INTERFACE_COMPILE_DEFINITIONS __STDC_CONSTANT_MACROS
         INTERFACE_LINK_LIBRARIES "${libraries}"
     )

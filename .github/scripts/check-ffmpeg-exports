@@ -1,0 +1,24 @@
+#!/usr/bin/env bash
+# Fails when a binary exports any global symbol of the FFmpeg it links statically: OBS
+# loads its own FFmpeg into the same process, and an exported copy would replace it.
+# Usage: check-ffmpeg-exports <binary> [<ffmpeg prefix>]
+set -euo pipefail
+binary="$1"
+prefix="${2:-$(ls -dt .deps/ffmpeg-*/ | head -1)}"
+ours="$(mktemp)"
+exported="$(mktemp)"
+trap 'rm -f "${ours}" "${exported}"' EXIT
+
+nm -g --defined-only "${prefix}"/lib/libavcodec.a "${prefix}"/lib/libavutil.a 2> /dev/null |
+  awk 'NF == 3 { print $3 }' | sort -u > "${ours}"
+# Shared libraries version their symbols (av_free@@LIBAVUTIL_60); the name is what counts.
+nm -D --defined-only "${binary}" | awk '{ sub(/@.*/, "", $3); print $3 }' | sort -u > "${exported}"
+if [[ ! -s "${ours}" ]]; then
+  echo "::error::No FFmpeg symbols found under ${prefix}"
+  exit 1
+fi
+if comm -12 "${ours}" "${exported}" | grep .; then
+  echo "::error::${binary} exports symbols of its static FFmpeg"
+  exit 1
+fi
+echo "${binary}: $(stat -L -c %s "${binary}") bytes, none of $(wc -l < "${ours}") FFmpeg symbols exported"

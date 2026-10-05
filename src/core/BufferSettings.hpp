@@ -53,7 +53,8 @@ inline constexpr int64_t kSettingsVersion = 1;
 // seconds and resolutions are "canvas", "output" or "fixed" with a height.
 struct SavedSource {
 	std::string uuid;
-	// Only for log lines about a source that is not found; empty when unknown.
+	// For finding the source again when its UUID is gone, and for log lines about it;
+	// empty when unknown.
 	std::string name;
 	bool selected = false;
 	std::optional<int64_t> lengthSeconds;
@@ -75,5 +76,20 @@ SavedSettings saveSettings(const BufferSettings &settings);
 // Empty when the version is not kSettingsVersion. Values out of range are brought
 // back into it, and a resolution this build does not know becomes the canvas.
 std::optional<BufferSettings> loadSettings(const SavedSettings &saved);
+
+struct SourceIdentity {
+	std::string uuid;
+	std::string name;
+	// Whether it can be captured, as the dock lists it: an input with video.
+	bool capturable = true;
+};
+
+// A duplicated scene collection gives every source a new UUID. The settings saved for a
+// UUID that `sources` does not have move to the capturable source with the name saved
+// alongside, when exactly one has that name, it has no settings of its own, and no other
+// missing UUID claims it too. Returns the moves, from the saved UUID to the new one.
+std::map<std::string, std::string> matchSourcesByName(BufferSettings &settings,
+						      const std::map<std::string, std::string> &savedNames,
+						      const std::vector<SourceIdentity> &sources);
 
 } // namespace tapeloop
