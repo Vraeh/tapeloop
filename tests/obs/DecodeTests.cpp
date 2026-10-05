@@ -254,6 +254,14 @@ TEST_CASE_METHOD(ObsFixture, "the FFmpeg decoder shows every frame of a capture,
 	std::printf("[decode] %zu frames of 640x360 H.264 forward in %.1f ms, %.3f ms each\n", expected.size(), elapsed,
 		    elapsed / static_cast<double>(expected.size()));
 
+	// The harness's canvas is BT.709 at limited range, as OBS's is by default.
+	const tapeloop::DecodeResult first = planner.frameAt(expected.front().time);
+	REQUIRE(first.status == DecodeStatus::Ok);
+	const std::optional<Picture> picture = decoder.picture(first.frame);
+	REQUIRE(picture);
+	CHECK(picture->matrix == ColorMatrix::Bt709);
+	CHECK_FALSE(picture->fullRange);
+
 	checkEveryWay(planner, decoder, expected);
 	planner.load(Clip{});
 	CHECK(decoder.heldFrames() == 0);

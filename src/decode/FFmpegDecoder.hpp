@@ -49,8 +49,8 @@ public:
 
 	// Unsupported when FFmpeg has no decoder for the codec or cannot open it, and
 	// InvalidData for a configuration it rejects. Not every damaged configuration is
-	// rejected: H.264's and short HEVC ones open, and the frames that need them never
-	// come out.
+	// rejected: H.264's, and HEVC's in Annex B form as OBS writes it, open, and the
+	// frames that need them never come out.
 	DecodeStatus open(VideoCodec codec, std::span<const uint8_t> config) noexcept override;
 	// InvalidData also when FFmpeg holds frames not yet received and takes no more
 	// packets until they are: receive every frame before the next send.
