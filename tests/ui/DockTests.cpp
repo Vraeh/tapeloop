@@ -462,3 +462,23 @@ TEST_CASE("every kind of edit in the dock writes the settings once")
 		dialog->accept();
 	}));
 }
+
+TEST_CASE("typing a length in the dock writes the settings once, when it is entered")
+{
+	FakeBackend backend = backendWithSources();
+	TapeloopDock dock(backend, localeText());
+	auto *length = child<QSpinBox>(dock, "length");
+	const int before = backend.settingsChanges;
+
+	// Each keystroke would otherwise write, and save the scene collection, once.
+	length->selectAll();
+	for (const char digit : {'1', '2', '0'}) {
+		QKeyEvent key(QEvent::KeyPress, Qt::Key_0 + (digit - '0'), Qt::NoModifier, QString(QChar(digit)));
+		QApplication::sendEvent(length, &key);
+	}
+	CHECK(backend.settingsChanges == before);
+	QKeyEvent enter(QEvent::KeyPress, Qt::Key_Return, Qt::NoModifier);
+	QApplication::sendEvent(length, &enter);
+	CHECK(length->value() == 120);
+	CHECK(backend.settingsChanges == before + 1);
+}
