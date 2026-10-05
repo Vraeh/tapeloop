@@ -670,3 +670,108 @@ TEST_CASE("The decoded-frame cache is 512 MiB unless set within its bounds")
 	CHECK(tapeloop::clampDecodedCacheBytes(512 * kMiB, 256 * kMiB) == 128 * kMiB);
 	CHECK(tapeloop::clampDecodedCacheBytes(512 * kMiB, 0) == 128 * kMiB);
 }
+
+TEST_CASE("DecodePlanner carries a pass on past frames it gave back instead of starting over")
+{
+	FakeDecoder decoder = makeDecoder();
+	decoder.frameBytes = 100;
+	DecodePlannerConfig config;
+	config.maxBytes = 1000;
+	DecodePlanner planner(decoder, config);
+	planner.load(makeClip({{VideoCodec::H264, {}, 1}}));
+
+	for (int64_t frame = 0; frame < kGopLength; ++frame) {
+		REQUIRE(shows(planner, decoder, frame));
+	}
+	REQUIRE(shows(planner, decoder, 10));
+	const uint64_t sent = planner.work().packetsSent;
+	const uint64_t resets = planner.work().resets;
+	for (int64_t frame = 11; frame < kGopLength; ++frame) {
+		REQUIRE(shows(planner, decoder, frame));
+	}
+	CHECK(planner.work().packetsSent == sent + 19);
+	CHECK(planner.work().resets == resets);
+}
+
+TEST_CASE("DecodePlanner plays a GOP larger than the cap in reverse with a pass per cap's worth")
+{
+	FakeDecoder decoder = makeDecoder();
+	decoder.frameBytes = 100;
+	DecodePlannerConfig config;
+	config.maxBytes = 500;
+	DecodePlanner planner(decoder, config);
+	planner.load(makeClip({{VideoCodec::H264, {}, 1}}));
+
+	for (int64_t frame = kGopLength - 1; frame >= 0; --frame) {
+		REQUIRE(shows(planner, decoder, frame));
+	}
+	// Each pass from the keyframe leaves the five frames before the one asked for:
+	// 30, then 25, 20, 15, 10 and 5 packets.
+	CHECK(planner.work().packetsSent == 105);
+	CHECK(planner.work().resets == 5);
+}
+
+TEST_CASE("DecodePlanner does not decode ahead what the cap would only give back")
+{
+	FakeDecoder decoder = makeDecoder();
+	decoder.frameBytes = 100;
+	DecodePlannerConfig config;
+	config.maxBytes = 2000;
+	DecodePlanner planner(decoder, config);
+	planner.load(makeClip({{VideoCodec::H264, {}, 3}}));
+
+	for (int64_t frame = 3 * kGopLength - 1; frame >= 0; --frame) {
+		REQUIRE(shows(planner, decoder, frame));
+		REQUIRE(planner.prefetch(PlayDirection::Backward) == DecodeStatus::Ok);
+		CHECK(planner.heldBytes() <= config.maxBytes);
+	}
+	// Without decoding ahead the same walk sends 3 * (30 + 10) packets.
+	CHECK(planner.work().packetsSent <= 3 * (kGopLength + 10) + kGopLength);
+}
+
+TEST_CASE("DecodePlanner lets go of another GOP a frame at a time, from its far end")
+{
+	FakeDecoder decoder = makeDecoder();
+	decoder.frameBytes = 100;
+	DecodePlannerConfig config;
+	config.maxBytes = 4000;
+	DecodePlanner planner(decoder, config);
+	planner.load(makeClip({{VideoCodec::H264, {}, 2}}));
+
+	for (int64_t frame = 0; frame <= kGopLength + 10; ++frame) {
+		REQUIRE(shows(planner, decoder, frame));
+	}
+	const uint64_t sent = planner.work().packetsSent;
+	for (int64_t frame = kGopLength - 1; frame >= kGopLength - 29; --frame) {
+		REQUIRE(shows(planner, decoder, frame));
+	}
+	CHECK(planner.work().packetsSent == sent);
+}
+
+TEST_CASE("DecodePlanner counts a frame the decoder gives twice once")
+{
+	FakeDecoder decoder = makeDecoder();
+	decoder.twice = 3;
+	DecodePlanner planner(decoder);
+	planner.load(makeClip({{VideoCodec::H264, {}, 1}}));
+	REQUIRE(shows(planner, decoder, kGopLength - 1));
+	REQUIRE(shows(planner, decoder, 3));
+	CHECK(decoder.outstanding.size() == planner.heldFrames());
+}
+
+TEST_CASE("DecodePlanner reports a frame the decoder never gives once, under the cap too")
+{
+	FakeDecoder decoder = makeDecoder();
+	decoder.frameBytes = 100;
+	decoder.dropped = {5};
+	DecodePlannerConfig config;
+	config.maxBytes = 300;
+	DecodePlanner planner(decoder, config);
+	planner.load(makeClip({{VideoCodec::H264, {}, 1}}));
+
+	REQUIRE(shows(planner, decoder, kGopLength - 1));
+	CHECK(planner.frameAt(timeOf(5)).status == DecodeStatus::InvalidData);
+	const uint64_t sent = planner.work().packetsSent;
+	CHECK(planner.frameAt(timeOf(5)).status == DecodeStatus::InvalidData);
+	CHECK(planner.work().packetsSent == sent);
+}

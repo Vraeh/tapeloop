@@ -105,6 +105,21 @@ DecodeStatus DecodePlanner::prefetch(PlayDirection direction)
 	if (kept && kept->complete) {
 		return DecodeStatus::Ok;
 	}
+	// With the GOP on screen filling the cap, frames decoded ahead would only be given
+	// back.
+	if (const KeptGop *shown = find(current)) {
+		size_t bytes = 0;
+		size_t frame = 0;
+		for (const std::optional<DecodedFrame> &held : shown->frames) {
+			if (held) {
+				bytes += held->bytes;
+				frame = held->bytes;
+			}
+		}
+		if (bytes > config_.maxBytes || frame > config_.maxBytes - bytes) {
+			return DecodeStatus::Ok;
+		}
+	}
 	return decode(previous, kWholeGop);
 }
 
@@ -140,7 +155,6 @@ DecodePlanner::KeptGop &DecodePlanner::keep(size_t gop)
 	// Named only once its frames are sized, so that a throw leaves a slot no GOP finds.
 	slot->gop = kNoGop;
 	slot->received = 0;
-	slot->arrived = 0;
 	slot->complete = false;
 	const size_t count = clip_.gops()[gop]->packets().size();
 	slot->frames.assign(count, std::nullopt);
@@ -167,7 +181,6 @@ void DecodePlanner::release(KeptGop &kept) noexcept
 	}
 	std::fill(kept.dropped.begin(), kept.dropped.end(), 0);
 	kept.received = 0;
-	kept.arrived = 0;
 	kept.complete = false;
 }
 
@@ -188,15 +201,21 @@ bool DecodePlanner::makeRoom(KeptGop &kept, size_t bytes, size_t wanted) noexcep
 		return heldBytes_ <= config_.maxBytes && bytes <= config_.maxBytes - heldBytes_;
 	};
 	for (KeptGop &other : kept_) {
-		if (fits()) {
-			return true;
+		if (&other == &kept || other.gop == lastGop_) {
+			continue;
 		}
-		if (&other != &kept && other.gop != lastGop_) {
-			release(other);
+		const size_t count = other.frames.size();
+		for (size_t i = 0; i < count && !fits(); ++i) {
+			drop(other, other.gop < kept.gop ? i : count - 1 - i);
 		}
 	}
-	for (size_t packet = 0; packet < kept.frames.size() && !fits(); ++packet) {
-		if (packet != wanted && kept.frames[packet]) {
+	// Reverse play keeps what it needs next: the frames just before the one asked for.
+	const size_t count = kept.frames.size();
+	for (size_t packet = count; wanted < count && packet > wanted + 1 && !fits(); --packet) {
+		drop(kept, packet - 1);
+	}
+	for (size_t packet = 0; packet < count && !fits(); ++packet) {
+		if (packet != wanted) {
 			drop(kept, packet);
 		}
 	}
@@ -216,21 +235,19 @@ DecodeStatus DecodePlanner::decode(size_t gop, size_t packet)
 	const Gop &source = *clip_.gops()[gop];
 	const size_t count = source.packets().size();
 	// Frames come out in presentation order, so within one uninterrupted pass over a GOP
-	// a frame not out yet comes after every frame already out, unless it was given back
-	// for room. The decoder is opened before a kept GOP makes room, so a run that cannot
-	// be opened costs nothing kept.
+	// a frame not out yet comes after every frame already out; one given back for room
+	// that the pass already went past needs a pass from the keyframe. The decoder is
+	// opened before a kept GOP makes room, so a run that cannot be opened costs nothing
+	// kept.
 	const KeptGop *before = find(gop);
-	const bool givenBack = before && packet < count && before->dropped[packet];
-	if (streamGop_ != gop || flushed_ || givenBack) {
+	const bool passed = streamGop_ == gop && packet < count && packet < passNext_;
+	if (streamGop_ != gop || flushed_ || (passed && before && before->dropped[packet])) {
 		const DecodeStatus status = startAt(gop);
 		if (status != DecodeStatus::Ok) {
 			return fail(status);
 		}
 	}
 	KeptGop &kept = keep(gop);
-	if (nextPacket_ == 0) {
-		kept.arrived = 0;
-	}
 
 	const auto done = [&] {
 		return packet < count ? kept.frames[packet].has_value() : kept.complete;
@@ -258,6 +275,8 @@ DecodeStatus DecodePlanner::decode(size_t gop, size_t packet)
 			return fail(status);
 		}
 		if (flushed_) {
+			// What the flush did not bring out the decoder never gives.
+			std::fill(kept.dropped.begin() + static_cast<ptrdiff_t>(passNext_), kept.dropped.end(), 0);
 			kept.complete = true;
 		}
 	}
@@ -300,6 +319,7 @@ DecodeStatus DecodePlanner::startAt(size_t gop)
 	fresh_ = true;
 	streamGop_ = gop;
 	nextPacket_ = 0;
+	passNext_ = 0;
 	flushed_ = false;
 	return DecodeStatus::Ok;
 }
@@ -317,12 +337,18 @@ DecodeStatus DecodePlanner::receiveAll(KeptGop &kept, size_t wanted)
 			return status;
 		}
 		++work_.framesReceived;
+		// A frame of no packet, or from before where the pass is, is not one to keep.
 		const std::optional<size_t> index = packetOfPts(source, frame.pts);
-		if (!index) {
+		if (!index || *index < passNext_) {
 			decoder_.release(frame);
 			continue;
 		}
-		if (++kept.arrived == kept.frames.size()) {
+		// Frames the pass went past without them the decoder never gives, so they no
+		// longer count as given back.
+		std::fill(kept.dropped.begin() + static_cast<ptrdiff_t>(passNext_),
+			  kept.dropped.begin() + static_cast<ptrdiff_t>(*index), 0);
+		passNext_ = *index + 1;
+		if (passNext_ == kept.frames.size()) {
 			kept.complete = true;
 		}
 		// A frame held already came again in a pass from the keyframe, and one that

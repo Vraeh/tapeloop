@@ -50,7 +50,8 @@ struct DecodeResult {
 
 // Decides what to feed a FrameDecoder so that the frame the playhead wants is ready:
 // decoding starts at the keyframe of its GOP and goes no further than needed, the
-// decoded frames of the last GOPs are kept so that stepping back costs nothing, a new
+// decoded frames of the last GOPs are kept, within maxBytes, so that stepping back costs
+// nothing while they fit, a new
 // run opens the decoder again, and reverse play can have the previous GOP decoded ahead.
 // Runs are told apart by their codec and configuration; two runs of one codec without a
 // configuration carry their parameter sets in the stream, so a reset is enough between
@@ -75,9 +76,10 @@ public:
 	// The frame on screen at time t, as Clip::locate picks it, decoding what is missing.
 	DecodeResult frameAt(Nanoseconds t);
 
-	// Decodes ahead what play in that direction needs next: in reverse, the whole GOP
-	// before the one last shown. Playing forward needs nothing ahead, since its next
-	// frames follow from what was decoded. Does nothing when only one GOP is kept.
+	// Decodes ahead what play in that direction needs next: in reverse, the GOP before the
+	// one last shown, keeping of it the last frames that fit. Playing forward needs
+	// nothing ahead, since its next frames follow from what was decoded. Does nothing when
+	// only one GOP is kept, or when the GOP on screen leaves no room for a frame.
 	DecodeStatus prefetch(PlayDirection direction);
 
 	const DecodeWork &work() const noexcept { return work_; }
@@ -93,9 +95,7 @@ private:
 		// Frames given back to stay within maxBytes, which a pass from the keyframe
 		// brings back; by packet index, as frames.
 		std::vector<char> dropped;
-		// Frames held, and frames that came out of the decoder in this pass.
 		size_t received = 0;
-		size_t arrived = 0;
 		// Every frame the decoder gives for this GOP came out: all of them, or what was
 		// left once it was flushed at the end of the GOP.
 		bool complete = false;
@@ -106,9 +106,10 @@ private:
 	void release(KeptGop &kept) noexcept;
 	void releaseAll() noexcept;
 	void drop(KeptGop &kept, size_t packet) noexcept;
-	// Gives back kept frames until a frame of that size fits: first whole GOPs other than
-	// the one it belongs to and the one on screen, then the earliest frames of its own GOP
-	// other than the one asked for.
+	// Gives back kept frames until a frame of that size fits: first those of GOPs other
+	// than its own and the one on screen, from their end farthest from it; then those of
+	// its own GOP past the one asked for, latest first; then its earliest. Never the one
+	// asked for.
 	// False when the frame still does not fit.
 	bool makeRoom(KeptGop &kept, size_t bytes, size_t wanted) noexcept;
 	// Decodes GOP gop until the frame of packet `packet` has come out, or the whole GOP
@@ -136,6 +137,8 @@ private:
 	// anything at all since it was opened or reset.
 	std::optional<size_t> streamGop_;
 	size_t nextPacket_ = 0;
+	// The packet after the last one whose frame came out in this pass over the GOP.
+	size_t passNext_ = 0;
 	bool flushed_ = false;
 	bool fresh_ = true;
 	std::optional<size_t> lastGop_;
