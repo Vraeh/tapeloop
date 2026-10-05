@@ -95,7 +95,9 @@ StartResult SourceCapture::start(obs_source_t *source, const CaptureSettings &se
 
 		SourceBufferConfig bufferConfig;
 		bufferConfig.window = settings.bufferLength;
-		bufferConfig.maxBytes = replayByteBudget(replayBitrateKbps(params), settings.bufferLength);
+		// For the first candidate; the one that starts sets the budget for its own codec.
+		bufferConfig.maxBytes =
+			replayByteBudget(replayBitrateKbps(params, candidates.front().codec), settings.bufferLength);
 		bufferConfig.frameDuration =
 			Nanoseconds{std::max<int64_t>(rescale(1, params.frameDuration, kNanosecondTimebase), 1)};
 		// A start that fails leaves the buffer as it was: a new one replaces it only on
@@ -139,11 +141,12 @@ StartResult SourceCapture::start(obs_source_t *source, const CaptureSettings &se
 			obs_output_set_video_encoder(output_, encoder);
 			if (obs_output_start(output_)) {
 				encoder_ = encoder;
-				if (reuse) {
-					buffer_->setByteBudget(bufferConfig.maxBytes);
-				} else {
+				if (!reuse) {
 					buffer_ = std::move(replacement);
 				}
+				bufferConfig.maxBytes = replayByteBudget(replayBitrateKbps(params, candidate.codec),
+									 settings.bufferLength);
+				buffer_->setByteBudget(bufferConfig.maxBytes);
 				bufferConfig_ = bufferConfig;
 				source_ = obs_source_get_weak_source(source);
 				sourceSize_ = sourceSize;
