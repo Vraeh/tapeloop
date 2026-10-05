@@ -193,3 +193,52 @@ TEST_CASE_METHOD(ObsFixture, "the picture renderer takes no picture it cannot dr
 	}
 	obs_leave_graphics();
 }
+
+TEST_CASE_METHOD(ObsFixture, "the picture renderer draws NV12 planes held elsewhere", "[obs][picture]")
+{
+	obs_enter_graphics();
+	{
+		const PatternPicture limited = makePattern(0x1234, PixelLayout::Nv12, false);
+		gs_texture_t *luma = gs_texture_create(kWidth, kHeight, GS_R8, 1, nullptr, GS_DYNAMIC);
+		gs_texture_t *chroma = gs_texture_create(kWidth / 2, kHeight / 2, GS_R8G8, 1, nullptr, GS_DYNAMIC);
+		REQUIRE(luma);
+		REQUIRE(chroma);
+		gs_texture_set_image(luma, limited.picture.planes[0], limited.picture.strides[0], false);
+		gs_texture_set_image(chroma, limited.picture.planes[1], limited.picture.strides[1], false);
+
+		PictureRenderer renderer;
+		const PatternPicture full = makePattern(0x0042, PixelLayout::I420, true);
+		REQUIRE(renderer.upload(full.picture));
+
+		gs_texrender_t *target = gs_texrender_create(GS_RGBA, GS_ZS_NONE);
+		REQUIRE(gs_texrender_begin(target, kWidth, kHeight));
+		gs_ortho(0.0f, static_cast<float>(kWidth), 0.0f, static_cast<float>(kHeight), -100.0f, 100.0f);
+		CHECK(renderer.drawNv12(luma, chroma, limited.picture, kWidth, kHeight));
+		gs_texrender_end(target);
+		gs_stagesurf_t *stage = gs_stagesurface_create(kWidth, kHeight, GS_RGBA);
+		gs_stage_texture(stage, gs_texrender_get_texture(target));
+		uint8_t *data = nullptr;
+		uint32_t stride = 0;
+		REQUIRE(gs_stagesurface_map(stage, &data, &stride));
+		std::vector<uint8_t> pixels(size_t{kWidth} * kHeight * 4);
+		for (uint32_t y = 0; y < kHeight; ++y) {
+			std::memcpy(pixels.data() + size_t{y} * kWidth * 4, data + size_t{y} * stride,
+				    size_t{kWidth} * 4);
+		}
+		gs_stagesurface_unmap(stage);
+		gs_stagesurface_destroy(stage);
+		gs_texrender_destroy(target);
+		CHECK(numberIn(pixels) == 0x1234u);
+		CHECK(red(pixels, 8, 10) >= 250);
+
+		// The uploaded picture keeps its own colors: full range leaves grey at 126.
+		const std::vector<uint8_t> uploaded = drawAndRead(renderer);
+		CHECK(numberIn(uploaded) == 0x0042u);
+		CHECK(red(uploaded, kWidth / 2, 10) <= 129);
+
+		CHECK_FALSE(renderer.drawNv12(nullptr, chroma, limited.picture, kWidth, kHeight));
+		gs_texture_destroy(chroma);
+		gs_texture_destroy(luma);
+	}
+	obs_leave_graphics();
+}

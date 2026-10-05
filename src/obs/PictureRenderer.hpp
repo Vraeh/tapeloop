@@ -35,6 +35,10 @@ public:
 	// Draws the last picture uploaded, scaled to width by height at the origin of the
 	// current matrix. False when there is none.
 	bool draw(uint32_t width, uint32_t height) noexcept;
+	// Draws NV12 planes held elsewhere, such as the textures of SharedPictures, with the
+	// colors of picture, whose planes are not read. False when the effect cannot be made.
+	bool drawNv12(gs_texture_t *luma, gs_texture_t *chroma, const decode::Picture &colors, uint32_t width,
+		      uint32_t height) noexcept;
 	bool hasPicture() const noexcept { return ready_; }
 	// Lets go of the picture and every texture; the next upload makes them again.
 	void clear() noexcept;
@@ -43,12 +47,15 @@ private:
 	bool makeEffect() noexcept;
 	bool makeTextures(const decode::Picture &picture) noexcept;
 	void setColors(const decode::Picture &picture) noexcept;
+	void drawPlanes(decode::PixelLayout layout, const std::array<gs_texture_t *, 3> &planes, uint32_t width,
+			uint32_t height) noexcept;
 
 	gs_effect_t *effect_ = nullptr;
 	std::array<gs_texture_t *, 3> planes_{};
 	decode::PixelLayout layout_ = decode::PixelLayout::I420;
 	uint32_t width_ = 0;
 	uint32_t height_ = 0;
+	decode::Picture colors_;
 	// The rows of the YUV to RGB matrix, and the range the YUV values are clamped to.
 	std::array<vec4, 3> toRgb_{};
 	vec3 rangeMin_{};

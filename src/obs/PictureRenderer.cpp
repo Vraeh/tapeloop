@@ -109,7 +109,9 @@ bool PictureRenderer::upload(const decode::Picture &picture) noexcept
 		const auto at = static_cast<size_t>(plane);
 		gs_texture_set_image(planes_[at], picture.planes[at], picture.strides[at], false);
 	}
-	setColors(picture);
+	colors_ = picture;
+	// Only the colors are kept; the planes are the decoder's.
+	colors_.planes = {};
 	ready_ = true;
 	return true;
 }
@@ -119,9 +121,30 @@ bool PictureRenderer::draw(uint32_t width, uint32_t height) noexcept
 	if (!ready_) {
 		return false;
 	}
-	gs_effect_set_texture(gs_effect_get_param_by_name(effect_, "luma"), planes_[0]);
-	gs_effect_set_texture(gs_effect_get_param_by_name(effect_, "chroma"), planes_[1]);
-	gs_effect_set_texture(gs_effect_get_param_by_name(effect_, "chroma_v"), planes_[2]);
+	setColors(colors_);
+	drawPlanes(layout_, planes_, width, height);
+	return true;
+}
+
+bool PictureRenderer::drawNv12(gs_texture_t *luma, gs_texture_t *chroma, const decode::Picture &colors, uint32_t width,
+			       uint32_t height) noexcept
+{
+	if (!luma || !chroma || !makeEffect()) {
+		return false;
+	}
+	decode::Picture nv12 = colors;
+	nv12.layout = decode::PixelLayout::Nv12;
+	setColors(nv12);
+	drawPlanes(decode::PixelLayout::Nv12, {luma, chroma, nullptr}, width, height);
+	return true;
+}
+
+void PictureRenderer::drawPlanes(decode::PixelLayout layout, const std::array<gs_texture_t *, 3> &planes,
+				 uint32_t width, uint32_t height) noexcept
+{
+	gs_effect_set_texture(gs_effect_get_param_by_name(effect_, "luma"), planes[0]);
+	gs_effect_set_texture(gs_effect_get_param_by_name(effect_, "chroma"), planes[1]);
+	gs_effect_set_texture(gs_effect_get_param_by_name(effect_, "chroma_v"), planes[2]);
 	gs_effect_set_vec4(gs_effect_get_param_by_name(effect_, "to_rgb_r"), &toRgb_[0]);
 	gs_effect_set_vec4(gs_effect_get_param_by_name(effect_, "to_rgb_g"), &toRgb_[1]);
 	gs_effect_set_vec4(gs_effect_get_param_by_name(effect_, "to_rgb_b"), &toRgb_[2]);
@@ -132,12 +155,11 @@ bool PictureRenderer::draw(uint32_t width, uint32_t height) noexcept
 	// sRGB would encode them twice.
 	const bool srgb = gs_framebuffer_srgb_enabled();
 	gs_enable_framebuffer_srgb(false);
-	const char *technique = layout_ == decode::PixelLayout::Nv12 ? "Nv12" : "I420";
+	const char *technique = layout == decode::PixelLayout::Nv12 ? "Nv12" : "I420";
 	while (gs_effect_loop(effect_, technique)) {
-		gs_draw_sprite(planes_[0], 0, width, height);
+		gs_draw_sprite(planes[0], 0, width, height);
 	}
 	gs_enable_framebuffer_srgb(srgb);
-	return true;
 }
 
 void PictureRenderer::clear() noexcept
