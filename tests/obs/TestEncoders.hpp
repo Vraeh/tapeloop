@@ -15,6 +15,8 @@ inline constexpr const char *kBrokenEncoderId = "tapeloop_test_broken";
 inline constexpr const char *kAv1EncoderId = "tapeloop_test_av1";
 // An HEVC video encoder that makes every frame a keyframe of a few made-up bytes.
 inline constexpr const char *kHevcEncoderId = "tapeloop_test_hevc";
+// The same, taking OBS's textures as hardware encoders do when OBS has NV12 textures.
+inline constexpr const char *kHevcTextureEncoderId = "tapeloop_test_hevc_texture";
 
 void registerTestEncoders();
 

@@ -361,6 +361,44 @@ TEST_CASE_METHOD(ObsFixture, "a capture sizes its buffer for the codec of the en
 	}
 }
 
+TEST_CASE_METHOD(ObsFixture, "a capture reports the path its encoder takes the frames by", "[obs][capture]")
+{
+	OBSSourceAutoRelease pattern = createTestPattern(640, 360);
+	SourceCapture capture;
+	CaptureSettings settings;
+	// The path of the encoder that started, not of the first one tried.
+	EncoderInfo failing = testEncoder(tapeloop::test::kFailingEncoderId);
+	failing.vendor = Vendor::Intel;
+	failing.passTexture = true;
+	settings.candidates = {failing, testEncoder("obs_x264")};
+	REQUIRE(capture.start(pattern, settings) == StartResult::Started);
+	CHECK(capture.stats().encoderPath == tapeloop::EncoderPath::Software);
+	capture.stop();
+	CHECK(capture.stats().encoderPath == tapeloop::EncoderPath::Texture);
+
+	// A texture encoder on the adapter OBS renders on: the optimal path where OBS hands it
+	// NV12 textures, as OpenGL does; WARP, the Windows CI's renderer, has none.
+	obs_enter_graphics();
+	const bool nv12 = gs_nv12_available();
+	obs_leave_graphics();
+	EncoderInfo texture = testEncoder(tapeloop::test::kHevcTextureEncoderId, "hevc");
+	texture.vendor = Vendor::Nvidia;
+	texture.passTexture = true;
+	settings.candidates = {texture};
+	REQUIRE(capture.start(pattern, settings) == StartResult::Started);
+	CHECK(capture.stats().encoderPath == (nv12 ? tapeloop::EncoderPath::Texture : tapeloop::EncoderPath::Readback));
+	REQUIRE(waitFor([&] { return hasGops(capture, 2); }, 60s));
+	capture.stop();
+
+	// As QuickSync on another adapter than the one OBS renders on.
+	EncoderInfo readback = testEncoder(tapeloop::test::kHevcEncoderId, "hevc");
+	readback.vendor = Vendor::Intel;
+	settings.candidates = {readback};
+	REQUIRE(capture.start(pattern, settings) == StartResult::Started);
+	CHECK(capture.stats().encoderPath == tapeloop::EncoderPath::Readback);
+	capture.stop();
+}
+
 TEST_CASE_METHOD(ObsFixture, "a capture reports an encoder that fails while running", "[obs][capture]")
 {
 	OBSSourceAutoRelease pattern = createTestPattern(640, 360);

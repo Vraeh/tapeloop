@@ -320,6 +320,22 @@ void TapeloopDock::updateSources(const std::vector<DockSource> &sources)
 		} else if (sources[i].selected && sources[i].state == SourceState::Waiting) {
 			note = text_("Dock.Status.Waiting.Tooltip");
 		}
+		const char *path = nullptr;
+		if (sources[i].selected && sources[i].state == SourceState::Running) {
+			switch (sources[i].encoderPath) {
+			case EncoderPath::Texture:
+				break;
+			case EncoderPath::Readback:
+				path = "Dock.Status.Readback.Tooltip";
+				break;
+			case EncoderPath::Software:
+				path = "Dock.Status.Software.Tooltip";
+				break;
+			}
+		}
+		if (path) {
+			note += (note.isEmpty() ? QString() : QStringLiteral("\n\n")) + text_(path);
+		}
 		status->setIcon(note.isEmpty() ? QIcon() : style()->standardIcon(QStyle::SP_MessageBoxInformation));
 		status->setToolTip(note);
 	}

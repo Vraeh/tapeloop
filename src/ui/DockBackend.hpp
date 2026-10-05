@@ -4,6 +4,7 @@
 #pragma once
 
 #include "core/BufferSettings.hpp"
+#include "core/EncoderPolicy.hpp"
 
 #include <cstdint>
 #include <string>
@@ -26,6 +27,8 @@ struct DockSource {
 	// Not kept active off air although the settings ask: it restarts when it becomes
 	// active.
 	bool activationLeftOut = false;
+	// How its running encoder takes the frames; anything but Texture gets a note.
+	EncoderPath encoderPath = EncoderPath::Texture;
 };
 
 // An encoder a user may choose for replays.
