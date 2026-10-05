@@ -83,6 +83,7 @@ TEST_CASE_METHOD(ObsFixture, "the dock sees the video inputs of the scene collec
 	});
 	REQUIRE(x264 != choices.end());
 	CHECK_FALSE(x264->name.empty());
+	CHECK(x264->name != x264->id);
 	CHECK(std::none_of(choices.begin(), choices.end(), [](const tapeloop::ui::EncoderChoice &choice) {
 		return choice.id == tapeloop::test::kAv1EncoderId;
 	}));

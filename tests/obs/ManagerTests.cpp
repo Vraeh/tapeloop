@@ -379,6 +379,8 @@ TEST_CASE_METHOD(ObsFixture, "settings are saved with the scene collection and l
 	settings.startWithOutputs = false;
 	settings.activateOffAir = true;
 	settings.forceH264 = true;
+	settings.replayEncoder = "obs_x264";
+	settings.allowOtherAdapters = false;
 	settings.sources[uuidOf(camera)] = {true, 30s, std::nullopt, std::nullopt};
 	settings.sources[uuidOf(wide)] =
 		SourceSettings{false, std::nullopt, ReplayResolution{ResolutionMode::Output, 1080}, false};
@@ -1070,4 +1072,13 @@ TEST_CASE_METHOD(ObsFixture, "a waiting source keeps one activation and gives it
 		CHECK(left == nullptr);
 		manager.manualStop();
 	}
+}
+
+TEST_CASE("settings saved before the other-adapter setting allow other adapters", "[obs][manager]")
+{
+	OBSDataAutoRelease data = createSettingsData(tapeloop::saveSettings(BufferSettings{}));
+	obs_data_erase(data, "allow_other_adapters");
+	CHECK(readSettingsData(data).allowOtherAdapters);
+	obs_data_set_bool(data, "allow_other_adapters", false);
+	CHECK_FALSE(readSettingsData(data).allowOtherAdapters);
 }
