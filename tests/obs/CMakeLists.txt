@@ -22,8 +22,9 @@ if(WIN32)
     endif()
   endforeach()
   list(APPEND CMAKE_PREFIX_PATH "${TAPELOOP_OBS_DEPS_DIR}")
-  # The definitions the plugin's own Windows build compiles the glue with.
-  add_compile_definitions(UNICODE _UNICODE _CRT_SECURE_NO_WARNINGS)
+  # As the plugin's own Windows build has it. Not UNICODE: with it Catch2 defines wmain,
+  # which the linker does not look for in a library.
+  add_compile_definitions(_CRT_SECURE_NO_WARNINGS)
   set(_obs_plugin_dir "${TAPELOOP_OBS_RUNDIR}/obs-plugins/64bit")
   set(_obs_plugin_data_dir "${TAPELOOP_OBS_RUNDIR}/data/obs-plugins")
   set(_obs_graphics_module "libobs-d3d11")
