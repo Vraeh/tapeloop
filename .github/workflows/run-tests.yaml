@@ -175,12 +175,16 @@ jobs:
           path: ${{ env.TAPELOOP_LIBOBS_PREFIX }}
           key: ${{ steps.restore-libobs.outputs.cache-primary-key }}
 
+      - name: Read the runner image
+        id: image
+        run: echo "version=${ImageVersion}" >> "${GITHUB_OUTPUT}"
+
       - name: Restore FFmpeg
         id: restore-ffmpeg
         uses: actions/cache/restore@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
         with:
           path: ${{ github.workspace }}/.deps/ffmpeg-*
-          key: ffmpeg-ubuntu-24.04-${{ hashFiles('cmake/ffmpeg/BuildFFmpeg.cmake') }}
+          key: ffmpeg-ubuntu-24.04-${{ steps.image.outputs.version }}-${{ hashFiles('cmake/ffmpeg/*.cmake') }}
 
       # Builds FFmpeg into .deps first when it was not restored.
       - name: Configure

@@ -211,13 +211,18 @@ jobs:
           restore-keys: |
             ${{ runner.os }}-${{ matrix.os }}-ccache-x86_64-
 
-      # FFmpeg is built at configure time into .deps, keyed on its build script.
+      # FFmpeg is built at configure time into .deps, keyed on its build script and the
+      # compiler; a new runner image may bring a new compiler.
+      - name: Read the runner image
+        id: image
+        run: echo "version=${ImageVersion}" >> "${GITHUB_OUTPUT}"
+
       - name: Restore FFmpeg
         id: ffmpeg-cache
         uses: actions/cache/restore@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
         with:
           path: ${{ github.workspace }}/.deps/ffmpeg-*
-          key: ffmpeg-${{ matrix.os }}-${{ hashFiles('cmake/ffmpeg/BuildFFmpeg.cmake') }}
+          key: ffmpeg-${{ matrix.os }}-${{ steps.image.outputs.version }}-${{ hashFiles('cmake/ffmpeg/*.cmake') }}
 
       - name: Build Plugin 🧱
         uses: ./.github/actions/build-plugin
@@ -298,17 +303,21 @@ jobs:
           "pluginName=${ProductName}" >> $env:GITHUB_OUTPUT
           "pluginVersion=${ProductVersion}" >> $env:GITHUB_OUTPUT
 
-      # FFmpeg is built at configure time into .deps, keyed on its build script, with
-      # MSVC and the shell, make and nasm of the runner's MSYS2.
+      # FFmpeg is built at configure time into .deps, keyed on its build script and the
+      # compiler, with MSVC and the shell, make and nasm of the runner's MSYS2. The tools
+      # are installed even on a cache hit: a new compiler builds FFmpeg again.
+      - name: Read the runner image
+        id: image
+        run: '"version=$env:ImageVersion" >> $env:GITHUB_OUTPUT'
+
       - name: Restore FFmpeg
         id: ffmpeg-cache
         uses: actions/cache/restore@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
         with:
           path: ${{ github.workspace }}/.deps/ffmpeg-*
-          key: ffmpeg-windows-2022-${{ hashFiles('cmake/ffmpeg/BuildFFmpeg.cmake') }}
+          key: ffmpeg-windows-2022-${{ steps.image.outputs.version }}-${{ hashFiles('cmake/ffmpeg/*.cmake') }}
 
       - name: Install MSYS2 tools
-        if: steps.ffmpeg-cache.outputs.cache-hit != 'true'
         run: C:\msys64\usr\bin\pacman.exe -S --noconfirm --needed --noprogressbar make nasm diffutils
 
       - name: Build Plugin 🧱
