@@ -260,7 +260,9 @@ TEST_CASE_METHOD(ObsFixture, "the picture renderer draws NV12 planes held elsewh
 TEST_CASE_METHOD(ObsFixture, "only Direct3D 11 names an adapter for the decoder", "[obs][picture]")
 {
 	obs_enter_graphics();
-	CHECK_FALSE(tapeloop::obs::renderAdapterLuid());
+	// On Windows the harness renders with Direct3D 11, on WARP when there is no GPU, which
+	// is an adapter with a LUID too.
+	CHECK(tapeloop::obs::renderAdapterLuid().has_value() == (gs_get_device_type() == GS_DEVICE_DIRECT3D_11));
 	obs_leave_graphics();
 }
 
