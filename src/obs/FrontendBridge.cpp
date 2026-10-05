@@ -145,7 +145,8 @@ void FrontendBridge::handleTick(void *data, float seconds) noexcept
 
 void FrontendBridge::handleCaptureHotkey(void *data, obs_hotkey_id, obs_hotkey_t *, bool pressed) noexcept
 {
-	// Hotkeys run on their own thread.
+	// libobs calls hotkeys on its own thread unless the frontend routes them to its UI
+	// thread, as OBS does; queuing is right either way.
 	if (pressed) {
 		static_cast<FrontendBridge *>(data)->onUiThread(
 			[](CaptureManager &manager) { manager.captureReplay(); });
