@@ -81,6 +81,8 @@ private:
 		void operator()(AVBufferPool *pool) const noexcept;
 	};
 
+	// Windows only: a D3D11 device of that adapter, handed to FFmpeg; null on failure.
+	static std::unique_ptr<Device> createDevice(uint64_t luid) noexcept;
 	DecodeStatus statusOf(int result) const noexcept;
 	Slot *slotOf(const DecodedFrame &frame) noexcept;
 	const Slot *slotOf(const DecodedFrame &frame) const noexcept;
