@@ -5,12 +5,15 @@
 
 #include "ui/SourceSettingsDialog.hpp"
 
+#include <QAbstractItemView>
 #include <QCheckBox>
 #include <QComboBox>
+#include <QDateTime>
 #include <QFormLayout>
 #include <QHeaderView>
 #include <QKeyEvent>
 #include <QLabel>
+#include <QListWidget>
 #include <QPushButton>
 #include <QSignalBlocker>
 #include <QSpinBox>
@@ -59,7 +62,9 @@ TapeloopDock::TapeloopDock(DockBackend &backend, TextLookup text, QWidget *paren
 	  forceH264_(new QCheckBox(text_("Dock.ForceH264"), this)),
 	  note_(new QLabel(text_("Dock.ApplyNote"), this)),
 	  startStop_(new QPushButton(this)),
-	  followsOutputs_(new QLabel(text_("Dock.FollowsOutputs"), this))
+	  followsOutputs_(new QLabel(text_("Dock.FollowsOutputs"), this)),
+	  captureReplay_(new QPushButton(text_("Dock.CaptureReplay"), this)),
+	  replays_(new QListWidget(this))
 {
 	sources_->setObjectName("sources");
 	sources_->setHorizontalHeaderLabels({text_("Dock.Source"), text_("Dock.Status")});
@@ -88,6 +93,11 @@ TapeloopDock::TapeloopDock(DockBackend &backend, TextLookup text, QWidget *paren
 	note_->setObjectName("note");
 	note_->setWordWrap(true);
 	startStop_->setObjectName("startStop");
+	captureReplay_->setObjectName("captureReplay");
+	captureReplay_->setToolTip(text_("Dock.CaptureReplay.Tooltip"));
+	replays_->setObjectName("replays");
+	replays_->setToolTip(text_("Dock.Replays.Tooltip"));
+	replays_->setSelectionMode(QAbstractItemView::SingleSelection);
 	followsOutputs_->setObjectName("followsOutputs");
 	followsOutputs_->setWordWrap(true);
 	followsOutputs_->hide();
@@ -106,6 +116,8 @@ TapeloopDock::TapeloopDock(DockBackend &backend, TextLookup text, QWidget *paren
 	layout->addWidget(note_);
 	layout->addWidget(startStop_);
 	layout->addWidget(followsOutputs_);
+	layout->addWidget(captureReplay_);
+	layout->addWidget(replays_, 1);
 
 	connect(sources_, &QTableWidget::itemChanged, this, [this](QTableWidgetItem *item) {
 		if (item->column() != kSourceColumn) {
@@ -146,6 +158,14 @@ TapeloopDock::TapeloopDock(DockBackend &backend, TextLookup text, QWidget *paren
 	});
 	connect(forceH264_, &QCheckBox::toggled, this, [this](bool checked) {
 		changeSettings([](BufferSettings &settings, int on) { settings.forceH264 = on != 0; }, checked ? 1 : 0);
+	});
+	connect(captureReplay_, &QPushButton::clicked, this, [this] {
+		guarded([this] { backend_.captureReplay(); });
+		refresh();
+	});
+	connect(replays_, &QListWidget::itemClicked, this, [this](QListWidgetItem *item) {
+		guarded([&] { backend_.pickReplay(item->data(Qt::UserRole).toULongLong()); });
+		refresh();
 	});
 	connect(startStop_, &QPushButton::clicked, this, [this] {
 		guarded([this] { backend_.toggleRunning(); });
@@ -195,6 +215,8 @@ void TapeloopDock::refresh()
 		startWithOutputs_->setChecked(settings.startWithOutputs);
 		activateOffAir_->setChecked(settings.activateOffAir);
 		forceH264_->setChecked(settings.forceH264);
+
+		updateReplays();
 
 		startStop_->setText(backend_.running() ? text_("Dock.Stop") : text_("Dock.Start"));
 		const bool enabled = backend_.manualControlEnabled();
@@ -311,6 +333,39 @@ QString TapeloopDock::statusText(const DockSource &source) const
 		break;
 	}
 	return text_("Dock.Status.Stopped");
+}
+
+void TapeloopDock::updateReplays()
+{
+	const std::vector<DockReplay> replays = backend_.replays();
+	std::vector<uint64_t> ids;
+	for (const DockReplay &replay : replays) {
+		ids.push_back(replay.id);
+	}
+	if (ids != shownReplays_) {
+		const QSignalBlocker block(replays_);
+		replays_->clear();
+		for (const DockReplay &replay : replays) {
+			const QDateTime captured =
+				QDateTime::fromMSecsSinceEpoch(std::chrono::duration_cast<std::chrono::milliseconds>(
+								       replay.capturedAt.time_since_epoch())
+								       .count());
+			QString text = text_("Dock.Replay")
+					       .arg(captured.toString(QStringLiteral("HH:mm:ss")))
+					       .arg(static_cast<qulonglong>(replay.sources));
+			for (const std::string &tag : replay.tags) {
+				text += QStringLiteral(" #") + QString::fromStdString(tag);
+			}
+			auto *item = new QListWidgetItem(text, replays_);
+			item->setData(Qt::UserRole, static_cast<qulonglong>(replay.id));
+		}
+		shownReplays_ = std::move(ids);
+	}
+	// The replay that goes on air next is the one selected.
+	const auto current = std::find(shownReplays_.begin(), shownReplays_.end(), backend_.currentReplay());
+	const QSignalBlocker block(replays_);
+	replays_->setCurrentRow(current != shownReplays_.end() ? static_cast<int>(current - shownReplays_.begin())
+							       : -1);
 }
 
 void TapeloopDock::changeSettings(void (*change)(BufferSettings &, int), int value)

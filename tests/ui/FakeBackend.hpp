@@ -18,6 +18,9 @@ public:
 	bool manualEnabled = true;
 	int toggles = 0;
 	int settingsChanges = 0;
+	uint64_t captures = 0;
+	uint64_t picked = 0;
+	std::vector<tapeloop::ui::DockReplay> captured;
 
 	std::vector<tapeloop::ui::DockSource> sources() const override
 	{
@@ -39,6 +42,17 @@ public:
 
 	bool running() const override { return isRunning; }
 	bool manualControlEnabled() const override { return manualEnabled; }
+
+	uint64_t captureReplay() override
+	{
+		const uint64_t id = ++captures;
+		captured.insert(captured.begin(), {id, std::chrono::system_clock::now(), 2, {}});
+		picked = id;
+		return id;
+	}
+	std::vector<tapeloop::ui::DockReplay> replays() const override { return captured; }
+	uint64_t currentReplay() const override { return picked; }
+	void pickReplay(uint64_t id) override { picked = id; }
 
 	bool toggleRunning() override
 	{

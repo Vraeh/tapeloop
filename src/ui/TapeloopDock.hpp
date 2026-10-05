@@ -14,6 +14,7 @@
 class QCheckBox;
 class QComboBox;
 class QLabel;
+class QListWidget;
 class QPushButton;
 class QSpinBox;
 class QTableWidget;
@@ -39,6 +40,7 @@ protected:
 private:
 	void rebuildSources(const std::vector<DockSource> &sources);
 	void updateSources(const std::vector<DockSource> &sources);
+	void updateReplays();
 	QString statusText(const DockSource &source) const;
 	void changeSettings(void (*change)(BufferSettings &, int), int value);
 	void openSourceSettings(int row);
@@ -58,6 +60,10 @@ private:
 	QLabel *note_;
 	QPushButton *startStop_;
 	QLabel *followsOutputs_;
+	QPushButton *captureReplay_;
+	QListWidget *replays_;
+	// The ids the replay list shows, newest first.
+	std::vector<uint64_t> shownReplays_;
 };
 
 } // namespace tapeloop::ui

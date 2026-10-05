@@ -70,4 +70,22 @@ void ManagerDockBackend::setSettings(const BufferSettings &settings)
 	manager_.setSettings(settings);
 }
 
+std::vector<ui::DockReplay> ManagerDockBackend::replays() const
+{
+	const ReplayLibrary &library = manager_.library();
+	std::vector<ui::DockReplay> replays;
+	for (const uint64_t id : library.list()) {
+		ui::DockReplay replay;
+		replay.id = id;
+		replay.capturedAt = library.capturedAt(id);
+		if (const Moment *moment = library.find(id)) {
+			replay.sources = moment->clips.size();
+		}
+		const std::span<const std::string> tags = library.tagsOf(id);
+		replay.tags.assign(tags.begin(), tags.end());
+		replays.push_back(std::move(replay));
+	}
+	return replays;
+}
+
 } // namespace tapeloop::obs

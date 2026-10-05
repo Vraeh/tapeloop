@@ -21,6 +21,10 @@ public:
 	bool running() const override { return manager_.running(); }
 	bool manualControlEnabled() const override { return manager_.manualControlEnabled(); }
 	bool toggleRunning() override { return manager_.running() ? manager_.manualStop() : manager_.manualStart(); }
+	uint64_t captureReplay() override { return manager_.captureReplay(); }
+	std::vector<ui::DockReplay> replays() const override;
+	uint64_t currentReplay() const override { return manager_.library().current(); }
+	void pickReplay(uint64_t id) override { manager_.library().pick(id); }
 
 private:
 	CaptureManager &manager_;

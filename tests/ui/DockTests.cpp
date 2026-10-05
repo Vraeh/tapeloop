@@ -18,6 +18,7 @@
 #include <QDialog>
 #include <QDir>
 #include <QPushButton>
+#include <QListWidget>
 #include <QSpinBox>
 #include <QTableWidget>
 
@@ -152,6 +153,33 @@ TEST_CASE("a source on an encoder path that is not the optimal one says so")
 	backend.current.sources[backend.shown[1].uuid].selected = false;
 	dock.refresh();
 	CHECK(table->item(1, 1)->toolTip().isEmpty());
+}
+
+TEST_CASE("the dock captures replays and picks the one that goes on air")
+{
+	FakeBackend backend = backendWithSources();
+	TapeloopDock dock(backend, localeText());
+	auto *capture = child<QPushButton>(dock, "captureReplay");
+	auto *list = child<QListWidget>(dock, "replays");
+	CHECK(list->count() == 0);
+
+	capture->click();
+	capture->click();
+	REQUIRE(backend.captures == 2);
+	REQUIRE(list->count() == 2);
+	// Newest first, and the newest goes on air next.
+	CHECK(list->item(0)->data(Qt::UserRole).toULongLong() == 2u);
+	CHECK(list->item(0)->text().contains("2 sources"));
+	CHECK(list->currentRow() == 0);
+
+	// Picking an older one makes it the one on air next, and selects it.
+	Q_EMIT list->itemClicked(list->item(1));
+	CHECK(backend.picked == 1u);
+	dock.refresh();
+	CHECK(list->currentRow() == 1);
+	// Buffers and settings are left alone.
+	CHECK(backend.settingsChanges == 0);
+	CHECK(backend.toggles == 0);
 }
 
 TEST_CASE("a media source left out of activation says why")
@@ -328,7 +356,7 @@ TEST_CASE("every control of the dock can be reached with the keyboard")
 		CAPTURE(widget->objectName().toStdString());
 		CHECK((widget->focusPolicy() & Qt::TabFocus) != 0);
 	}
-	CHECK(controls == 8);
+	CHECK(controls == 9);
 }
 
 TEST_CASE("every string the dock asks for is in the locale file")

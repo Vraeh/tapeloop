@@ -6,6 +6,7 @@
 #include "core/BufferSettings.hpp"
 #include "core/EncoderPolicy.hpp"
 
+#include <chrono>
 #include <cstdint>
 #include <string>
 #include <vector>
@@ -31,6 +32,14 @@ struct DockSource {
 	EncoderPath encoderPath = EncoderPath::Texture;
 };
 
+// A replay as the dock lists it.
+struct DockReplay {
+	uint64_t id = 0;
+	std::chrono::system_clock::time_point capturedAt;
+	size_t sources = 0;
+	std::vector<std::string> tags;
+};
+
 // What the dock reads and changes. The plugin implements it on top of the capture
 // manager; tests replace it, so the widgets run without OBS.
 class DockBackend {
@@ -46,6 +55,14 @@ public:
 	// Starts the buffers when they are stopped and stops them when they run. False when
 	// refused.
 	virtual bool toggleRunning() = 0;
+
+	// Keeps what every buffer holds as a replay; zero when there was nothing to keep.
+	virtual uint64_t captureReplay() = 0;
+	// Newest first.
+	virtual std::vector<DockReplay> replays() const = 0;
+	// The replay that goes on air next; zero when there is none.
+	virtual uint64_t currentReplay() const = 0;
+	virtual void pickReplay(uint64_t id) = 0;
 };
 
 } // namespace tapeloop::ui
