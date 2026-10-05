@@ -27,6 +27,10 @@ if(NOT APPLE)
   add_subdirectory(src/decode)
   target_link_libraries(${CMAKE_PROJECT_NAME} PRIVATE tapeloop-decode)
   target_compile_definitions(${CMAKE_PROJECT_NAME} PRIVATE TAPELOOP_FFMPEG)
+  get_property(ffmpeg_notices GLOBAL PROPERTY TAPELOOP_FFMPEG_NOTICES)
+  foreach(notice IN LISTS ffmpeg_notices)
+    target_add_resource(${CMAKE_PROJECT_NAME} "${notice}")
+  endforeach()
   # OBS loads its own FFmpeg into the same process; ours stays inside the plugin. Only
   # FFmpeg's archives: hiding every archive would also hide the runtimes some
   # sanitizers link statically.

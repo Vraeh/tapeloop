@@ -11,7 +11,9 @@
 
 namespace tapeloop::ui {
 
-enum class SourceState { Stopped, Running, Failed };
+// Waiting: the source has no picture yet, as display, window and game captures do until
+// something shows them.
+enum class SourceState { Stopped, Waiting, Running, Failed };
 
 // A video source of the current scene collection as the dock lists it.
 struct DockSource {
@@ -21,6 +23,9 @@ struct DockSource {
 	SourceState state = SourceState::Stopped;
 	Nanoseconds buffered{0};
 	uint64_t bytes = 0;
+	// Not kept active off air although the settings ask: it restarts when it becomes
+	// active.
+	bool activationLeftOut = false;
 };
 
 // What the dock reads and changes. The plugin implements it on top of the capture

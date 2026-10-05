@@ -5,7 +5,12 @@
 # Writes hevc-pattern.bin: 30 frames of the harness's test pattern (TestPattern.cpp)
 # at 320x180, encoded by x265 into three GOPs of ten frames without B-frames, for
 # tests that need an HEVC run and a harness that can only encode H.264.
-# Usage: make-hevc-pattern.py <x265> <output>
+# Usage: make-hevc-pattern.py <x265> <output> [x265 option ...]
+#
+# The files in this directory were made with x265 4.1 (Ubuntu's 4.1-4 package):
+#   hevc-pattern.bin           no options
+#   hevc-pattern-full-601.bin  --range full --colormatrix bt470bg
+#   hevc-pattern-main10.bin    --output-depth 10 --profile main10
 #
 # The file is a list of records, each a kind byte (0 the configuration, 1 a keyframe,
 # 2 any other frame), a 32-bit little-endian size and that many bytes. Keyframes keep
@@ -55,13 +60,14 @@ def nal_units(stream):
 
 
 def main():
-    x265, output = sys.argv[1], sys.argv[2]
+    x265, output, options = sys.argv[1], sys.argv[2], sys.argv[3:]
     raw = b"".join(frame(n) for n in range(FRAMES))
     stream = subprocess.run(
         [x265, "--input", "-", "--input-res", f"{WIDTH}x{HEIGHT}", "--input-csp", "i420",
          "--fps", "30", "--frames", str(FRAMES), "--keyint", str(GOP), "--min-keyint", str(GOP),
          "--no-scenecut", "--no-open-gop", "--bframes", "0", "--repeat-headers", "--no-info",
-         "--preset", "ultrafast", "--qp", "20", "--log-level", "error", "--no-progress", "--output", "-"],
+         "--preset", "ultrafast", "--qp", "20", "--log-level", "error", "--no-progress", "--output", "-",
+         *options],
         input=raw, stdout=subprocess.PIPE, check=True).stdout
 
     # One slice per picture, so every VCL unit ends an access unit, with the non-VCL

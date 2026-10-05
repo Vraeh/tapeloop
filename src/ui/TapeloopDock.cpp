@@ -14,6 +14,7 @@
 #include <QPushButton>
 #include <QSignalBlocker>
 #include <QSpinBox>
+#include <QStyle>
 #include <QTableWidget>
 #include <QTimer>
 #include <QVBoxLayout>
@@ -54,6 +55,8 @@ TapeloopDock::TapeloopDock(DockBackend &backend, TextLookup text, QWidget *paren
 	  length_(new QSpinBox(this)),
 	  resolution_(new QComboBox(this)),
 	  startWithOutputs_(new QCheckBox(text_("Dock.StartWithOutputs"), this)),
+	  activateOffAir_(new QCheckBox(text_("Dock.ActivateOffAir"), this)),
+	  forceH264_(new QCheckBox(text_("Dock.ForceH264"), this)),
 	  note_(new QLabel(text_("Dock.ApplyNote"), this)),
 	  startStop_(new QPushButton(this)),
 	  followsOutputs_(new QLabel(text_("Dock.FollowsOutputs"), this))
@@ -78,6 +81,10 @@ TapeloopDock::TapeloopDock(DockBackend &backend, TextLookup text, QWidget *paren
 	resolution_->setObjectName("resolution");
 	addResolutions(*resolution_, text_);
 	startWithOutputs_->setObjectName("startWithOutputs");
+	activateOffAir_->setObjectName("activateOffAir");
+	activateOffAir_->setToolTip(text_("Dock.ActivateOffAir.Tooltip"));
+	forceH264_->setObjectName("forceH264");
+	forceH264_->setToolTip(text_("Dock.ForceH264.Tooltip"));
 	note_->setObjectName("note");
 	note_->setWordWrap(true);
 	startStop_->setObjectName("startStop");
@@ -89,6 +96,8 @@ TapeloopDock::TapeloopDock(DockBackend &backend, TextLookup text, QWidget *paren
 	form->addRow(text_("Dock.Length"), length_);
 	form->addRow(text_("Dock.Resolution"), resolution_);
 	form->addRow(startWithOutputs_);
+	form->addRow(activateOffAir_);
+	form->addRow(forceH264_);
 
 	auto *layout = new QVBoxLayout(this);
 	layout->addWidget(sources_, 1);
@@ -131,6 +140,13 @@ TapeloopDock::TapeloopDock(DockBackend &backend, TextLookup text, QWidget *paren
 		changeSettings([](BufferSettings &settings, int on) { settings.startWithOutputs = on != 0; },
 			       checked ? 1 : 0);
 	});
+	connect(activateOffAir_, &QCheckBox::toggled, this, [this](bool checked) {
+		changeSettings([](BufferSettings &settings, int on) { settings.activateOffAir = on != 0; },
+			       checked ? 1 : 0);
+	});
+	connect(forceH264_, &QCheckBox::toggled, this, [this](bool checked) {
+		changeSettings([](BufferSettings &settings, int on) { settings.forceH264 = on != 0; }, checked ? 1 : 0);
+	});
 	connect(startStop_, &QPushButton::clicked, this, [this] {
 		guarded([this] { backend_.toggleRunning(); });
 		refresh();
@@ -169,12 +185,16 @@ void TapeloopDock::refresh()
 		const QSignalBlocker blockLength(length_);
 		const QSignalBlocker blockResolution(resolution_);
 		const QSignalBlocker blockStart(startWithOutputs_);
+		const QSignalBlocker blockActivate(activateOffAir_);
+		const QSignalBlocker blockForceH264(forceH264_);
 		// A value being typed is not overwritten.
 		if (!length_->hasFocus()) {
 			length_->setValue(seconds(settings.length));
 		}
 		resolution_->setCurrentIndex(indexOfResolution(settings.resolution));
 		startWithOutputs_->setChecked(settings.startWithOutputs);
+		activateOffAir_->setChecked(settings.activateOffAir);
+		forceH264_->setChecked(settings.forceH264);
 
 		startStop_->setText(backend_.running() ? text_("Dock.Stop") : text_("Dock.Start"));
 		const bool enabled = backend_.manualControlEnabled();
@@ -242,7 +262,17 @@ void TapeloopDock::updateSources(const std::vector<DockSource> &sources)
 	for (size_t i = 0; i < sources.size() && static_cast<int>(i) < sources_->rowCount(); ++i) {
 		const int row = static_cast<int>(i);
 		sources_->item(row, kSourceColumn)->setCheckState(sources[i].selected ? Qt::Checked : Qt::Unchecked);
-		sources_->item(row, kStatusColumn)->setText(statusText(sources[i]));
+		QTableWidgetItem *status = sources_->item(row, kStatusColumn);
+		status->setText(statusText(sources[i]));
+		// Left out of activation explains waiting too, so it comes first.
+		QString note;
+		if (sources[i].selected && sources[i].activationLeftOut) {
+			note = text_("Dock.Status.NotActivated.Tooltip");
+		} else if (sources[i].selected && sources[i].state == SourceState::Waiting) {
+			note = text_("Dock.Status.Waiting.Tooltip");
+		}
+		status->setIcon(note.isEmpty() ? QIcon() : style()->standardIcon(QStyle::SP_MessageBoxInformation));
+		status->setToolTip(note);
 	}
 }
 
@@ -259,6 +289,8 @@ QString TapeloopDock::statusText(const DockSource &source) const
 	}
 	case SourceState::Failed:
 		return text_("Dock.Status.Failed");
+	case SourceState::Waiting:
+		return text_("Dock.Status.Waiting");
 	case SourceState::Stopped:
 		break;
 	}
@@ -311,6 +343,7 @@ void TapeloopDock::applySourceSettings(const std::string &uuid, const SourceSett
 		SourceSettings &source = settings.sources[uuid];
 		source.length = chosen.length;
 		source.resolution = chosen.resolution;
+		source.activateOffAir = chosen.activateOffAir;
 		backend_.setSettings(settings);
 	});
 	refresh();

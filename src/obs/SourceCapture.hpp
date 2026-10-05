@@ -25,7 +25,8 @@ struct CaptureSettings {
 	std::vector<EncoderInfo> candidates;
 };
 
-enum class CaptureState { Stopped, Running, Failed };
+// Waiting: the capture's view shows a source that has no size yet.
+enum class CaptureState { Stopped, Waiting, Running, Failed };
 
 // Error stands for running out of memory.
 enum class StartResult {
@@ -62,10 +63,16 @@ public:
 	// Starts encoding source, which needs no reference beyond the call. The buffer is
 	// emptied once the encoder has started unless keepBuffer is set; a kept buffer takes
 	// the new byte budget and sees the restart as a discontinuity. A new length or frame
-	// rate needs a new buffer, kept or not. Logs why when it does not start, and stays
-	// stopped; a start that fails before an encoder has initialized leaves the buffer as
-	// it was.
+	// rate needs a new buffer, kept or not. Logs why when it does not start. A source
+	// without a size stays shown on the capture's view (see hold), waiting, and gives
+	// NoSourceSize; a later start uses that view. Any other failure leaves the capture
+	// stopped, and one before an encoder has initialized leaves the buffer as it was.
 	StartResult start(obs_source_t *source, const CaptureSettings &settings, bool keepBuffer = false);
+
+	// Shows the source on the capture's view, without encoding. Display, window and game
+	// captures have no size until something shows them, so this is what lets them get
+	// one. Does nothing while running; stop() lets go of the source.
+	void hold(obs_source_t *source);
 
 	// Stops encoding and tears the view down, waiting as long as libobs takes. The buffer
 	// keeps its content.
@@ -73,6 +80,7 @@ public:
 
 	// Running, or failed and still to be stopped.
 	bool active() const noexcept { return output_ != nullptr; }
+	bool waiting() const noexcept { return view_ && !output_; }
 
 	// False when the source no longer has the size the capture started with; the view
 	// does not follow it until a restart.

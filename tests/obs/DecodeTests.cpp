@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: GPL-2.0-or-later
 // Copyright (C) 2026 Vicente Aedo <ryde1337@gmail.com>
 
+#include "AllocationCounter.hpp"
 #include "ClipDecoder.hpp"
 #include "ObsFixture.hpp"
 #include "TestPattern.hpp"
@@ -43,6 +44,7 @@ using tapeloop::PlayDirection;
 using tapeloop::SourceBuffer;
 using tapeloop::VideoCodec;
 using tapeloop::decode::FFmpegDecoder;
+using tapeloop::decode::ColorMatrix;
 using tapeloop::decode::Picture;
 using tapeloop::obs::SourceCapture;
 using tapeloop::obs::StartResult;
@@ -54,6 +56,8 @@ namespace {
 
 constexpr Nanoseconds kFrameInterval{33'333'333};
 const std::string kHevcPattern = std::string(TAPELOOP_TEST_DATA_DIR) + "/hevc-pattern.bin";
+const std::string kHevcFullRange601 = std::string(TAPELOOP_TEST_DATA_DIR) + "/hevc-pattern-full-601.bin";
+const std::string kHevcMain10 = std::string(TAPELOOP_TEST_DATA_DIR) + "/hevc-pattern-main10.bin";
 
 // A frame of a clip: when it shows, and the number the test pattern drew into it.
 struct Expected {
@@ -239,7 +243,7 @@ TEST_CASE_METHOD(ObsFixture, "the FFmpeg decoder shows every frame of a capture,
 	DecodePlanner planner(decoder);
 	planner.load(clip);
 
-	// The baseline of D-056 on the CPU; the real numbers come from the PC.
+	// A baseline of what decoding costs on the CPU; the real numbers come from the PC.
 	const auto started = std::chrono::steady_clock::now();
 	for (const Expected &frame : expected) {
 		checkFrame(planner, decoder, frame);
@@ -249,6 +253,14 @@ TEST_CASE_METHOD(ObsFixture, "the FFmpeg decoder shows every frame of a capture,
 	CHECK(planner.work().framesReceived == expected.size());
 	std::printf("[decode] %zu frames of 640x360 H.264 forward in %.1f ms, %.3f ms each\n", expected.size(), elapsed,
 		    elapsed / static_cast<double>(expected.size()));
+
+	// The harness's canvas is BT.709 at limited range, as OBS's is by default.
+	const tapeloop::DecodeResult first = planner.frameAt(expected.front().time);
+	REQUIRE(first.status == DecodeStatus::Ok);
+	const std::optional<Picture> picture = decoder.picture(first.frame);
+	REQUIRE(picture);
+	CHECK(picture->matrix == ColorMatrix::Bt709);
+	CHECK_FALSE(picture->fullRange);
 
 	checkEveryWay(planner, decoder, expected);
 	planner.load(Clip{});
@@ -330,9 +342,11 @@ TEST_CASE("the FFmpeg decoder hands out each frame once and takes it back", "[de
 		}
 		return status;
 	};
+	// One frame out for each packet in, with no delay: a frame thread would hold one back.
 	for (int64_t i = 0; i < 10; ++i) {
 		REQUIRE(decoder.send(hevc.packets[static_cast<size_t>(i)].data, i, i) == DecodeStatus::Ok);
 		REQUIRE(receiveAll() == DecodeStatus::NeedMore);
+		CHECK(frames.size() == static_cast<size_t>(i + 1));
 	}
 	REQUIRE(decoder.flush() == DecodeStatus::Ok);
 	REQUIRE(receiveAll() == DecodeStatus::Drained);
@@ -343,6 +357,12 @@ TEST_CASE("the FFmpeg decoder hands out each frame once and takes it back", "[de
 	}
 	CHECK(decoder.heldFrames() == 10);
 	CHECK_FALSE(decoder.picture(DecodedFrame{}));
+	// An id past every slot names nothing either.
+	DecodedFrame stranger;
+	stranger.id = (uint64_t{1} << 32) | 1000;
+	CHECK_FALSE(decoder.picture(stranger));
+	decoder.release(stranger);
+	CHECK(decoder.heldFrames() == 10);
 
 	decoder.release(frames[3]);
 	CHECK_FALSE(decoder.picture(frames[3]));
@@ -370,6 +390,69 @@ TEST_CASE("the FFmpeg decoder hands out each frame once and takes it back", "[de
 	CHECK(decoder.receive(frame) == DecodeStatus::InvalidData);
 }
 
+TEST_CASE("the FFmpeg decoder takes frames back without allocating", "[decode]")
+{
+	if (!tapeloop::test::kExactAllocationCounts) {
+		SKIP("allocations cannot be counted exactly in this configuration");
+	}
+	const RecordedRun hevc = loadRecordedRun(kHevcPattern);
+	FFmpegDecoder decoder;
+	REQUIRE(decoder.open(VideoCodec::Hevc, hevc.config) == DecodeStatus::Ok);
+	std::vector<DecodedFrame> frames;
+	for (int64_t i = 0; i < 10; ++i) {
+		REQUIRE(decoder.send(hevc.packets[static_cast<size_t>(i)].data, i, i) == DecodeStatus::Ok);
+		DecodedFrame frame;
+		while (decoder.receive(frame) == DecodeStatus::Ok) {
+			frames.push_back(frame);
+		}
+	}
+	REQUIRE(frames.size() == 10);
+	tapeloop::test::AllocationCounter counter;
+	for (const DecodedFrame &frame : frames) {
+		decoder.release(frame);
+	}
+	CHECK(counter.count() == 0);
+	CHECK(decoder.heldFrames() == 0);
+}
+
+TEST_CASE("the FFmpeg decoder reports the range and matrix of the stream", "[decode]")
+{
+	struct Case {
+		const std::string *path;
+		bool fullRange;
+		ColorMatrix matrix;
+	};
+	for (const Case &each : {Case{&kHevcPattern, false, ColorMatrix::Unspecified},
+				 Case{&kHevcFullRange601, true, ColorMatrix::Bt601}}) {
+		CAPTURE(*each.path);
+		const RecordedRun run = loadRecordedRun(*each.path);
+		FFmpegDecoder decoder;
+		REQUIRE(decoder.open(VideoCodec::Hevc, run.config) == DecodeStatus::Ok);
+		REQUIRE(decoder.send(run.packets[0].data, 0, 0) == DecodeStatus::Ok);
+		DecodedFrame frame;
+		REQUIRE(decoder.receive(frame) == DecodeStatus::Ok);
+		const std::optional<Picture> picture = decoder.picture(frame);
+		REQUIRE(picture);
+		CHECK(picture->fullRange == each.fullRange);
+		CHECK(picture->matrix == each.matrix);
+		CHECK(numberOf(decoder, frame) == 0u);
+	}
+}
+
+TEST_CASE("the FFmpeg decoder refuses pictures of another format and keeps nothing of them", "[decode]")
+{
+	const RecordedRun main10 = loadRecordedRun(kHevcMain10);
+	FFmpegDecoder decoder;
+	REQUIRE(decoder.open(VideoCodec::Hevc, main10.config) == DecodeStatus::Ok);
+	for (int64_t i = 0; i < 3; ++i) {
+		REQUIRE(decoder.send(main10.packets[static_cast<size_t>(i)].data, i, i) == DecodeStatus::Ok);
+		DecodedFrame frame;
+		CHECK(decoder.receive(frame) == DecodeStatus::Unsupported);
+		CHECK(decoder.receive(frame) == DecodeStatus::NeedMore);
+		CHECK(decoder.heldFrames() == 0);
+	}
+}
+
 TEST_CASE("a damaged configuration fails the frames that need it, not the decoder", "[decode]")
 {
 	const RecordedRun hevc = loadRecordedRun(kHevcPattern);
@@ -385,6 +468,25 @@ TEST_CASE("a damaged configuration fails the frames that need it, not the decode
 	planner.load(damaged.clip(Nanoseconds::min(), Nanoseconds::max()));
 	CHECK(planner.frameAt(expected.front().time).status == DecodeStatus::InvalidData);
 	CHECK(planner.frameAt(expected.back().time).status == DecodeStatus::InvalidData);
+
+	// An hvcC long enough to be read as one, whose first parameter set runs past its end:
+	// FFmpeg refuses to open on it.
+	std::vector<uint8_t> truncated(32, 0);
+	truncated[0] = 1;
+	truncated[21] = 3;
+	truncated[22] = 1;
+	truncated[23] = 32;
+	truncated[25] = 1;
+	truncated[26] = 0xff;
+	truncated[27] = 0xff;
+	FFmpegDecoder refusing;
+	CHECK(refusing.open(VideoCodec::Hevc, truncated) == DecodeStatus::InvalidData);
+	SourceBuffer rejected = makeBuffer();
+	rejected.setCodecConfig(VideoCodec::Hevc, truncated);
+	expected.clear();
+	pushRecorded(rejected, hevc, 1s, 0, false, expected);
+	planner.load(rejected.clip(Nanoseconds::min(), Nanoseconds::max()));
+	CHECK(planner.frameAt(expected.front().time).status == DecodeStatus::InvalidData);
 
 	SourceBuffer intact = makeBuffer();
 	intact.setCodecConfig(VideoCodec::Hevc, hevc.config);

@@ -231,8 +231,14 @@ DecodeStatus FFmpegDecoder::open(VideoCodec codec, std::span<const uint8_t> conf
 #endif
 
 	const int result = avcodec_open2(context.get(), decoder, nullptr);
+	if (result == AVERROR(ENOMEM)) {
+		return DecodeStatus::OutOfMemory;
+	}
+	if (result == AVERROR_INVALIDDATA) {
+		return DecodeStatus::InvalidData;
+	}
 	if (result < 0) {
-		return result == AVERROR(ENOMEM) ? DecodeStatus::OutOfMemory : DecodeStatus::Unsupported;
+		return DecodeStatus::Unsupported;
 	}
 	context_ = std::move(context);
 	return DecodeStatus::Ok;
@@ -433,6 +439,14 @@ DecodeStatus FFmpegDecoder::keepPicture(Slot &slot) noexcept
 
 #ifdef _WIN32
 	if (frame.format == AV_PIX_FMT_D3D11) {
+		// A 10-bit stream decodes into P010 surfaces, which an NV12 copy cannot take.
+		const auto *surfaces = frame.hw_frames_ctx
+					       ? reinterpret_cast<const AVHWFramesContext *>(frame.hw_frames_ctx->data)
+					       : nullptr;
+		if (!surfaces || surfaces->sw_format != AV_PIX_FMT_NV12) {
+			av_frame_unref(received_.get());
+			return DecodeStatus::Unsupported;
+		}
 		auto *surface = reinterpret_cast<ID3D11Texture2D *>(frame.data[0]);
 		const auto surfaceIndex = static_cast<UINT>(reinterpret_cast<intptr_t>(frame.data[1]));
 		// NV12 sizes are even; the surfaces FFmpeg decodes into are larger still.

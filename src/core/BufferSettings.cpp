@@ -74,6 +74,12 @@ ReplayResolution BufferSettings::resolutionFor(const std::string &uuid) const
 	return found != sources.end() ? found->second.resolution.value_or(resolution) : resolution;
 }
 
+bool BufferSettings::activateFor(const std::string &uuid) const
+{
+	const auto found = sources.find(uuid);
+	return found != sources.end() ? found->second.activateOffAir.value_or(activateOffAir) : activateOffAir;
+}
+
 std::vector<std::string> BufferSettings::selectedSources() const
 {
 	std::vector<std::string> selected;
@@ -85,6 +91,13 @@ std::vector<std::string> BufferSettings::selectedSources() const
 	return selected;
 }
 
+EncoderPreferences BufferSettings::encoderPreferences() const
+{
+	EncoderPreferences preferences;
+	preferences.preferHevc = !forceH264;
+	return preferences;
+}
+
 SavedSettings saveSettings(const BufferSettings &settings)
 {
 	SavedSettings saved;
@@ -92,10 +105,13 @@ SavedSettings saveSettings(const BufferSettings &settings)
 	saved.resolution = resolutionName(settings.resolution.mode);
 	saved.height = settings.resolution.height;
 	saved.startWithOutputs = settings.startWithOutputs;
+	saved.activateOffAir = settings.activateOffAir;
+	saved.forceH264 = settings.forceH264;
 	for (const auto &[uuid, source] : settings.sources) {
 		SavedSource entry;
 		entry.uuid = uuid;
 		entry.selected = source.selected;
+		entry.activateOffAir = source.activateOffAir;
 		if (source.length) {
 			entry.lengthSeconds = toSeconds(*source.length);
 		}
@@ -118,12 +134,15 @@ std::optional<BufferSettings> loadSettings(const SavedSettings &saved)
 	settings.length = fromSeconds(saved.lengthSeconds);
 	settings.resolution = resolutionFrom(saved.resolution, saved.height);
 	settings.startWithOutputs = saved.startWithOutputs;
+	settings.activateOffAir = saved.activateOffAir;
+	settings.forceH264 = saved.forceH264;
 	for (const SavedSource &entry : saved.sources) {
 		if (entry.uuid.empty()) {
 			continue;
 		}
 		SourceSettings source;
 		source.selected = entry.selected;
+		source.activateOffAir = entry.activateOffAir;
 		if (entry.lengthSeconds) {
 			source.length = fromSeconds(*entry.lengthSeconds);
 		}

@@ -52,6 +52,13 @@ else()
   list(APPEND options --enable-pthreads --enable-pic)
 endif()
 
+# -DPRINT_SOURCE=ON prints the version and the source URL, for the release notes, and
+# builds nothing.
+if(PRINT_SOURCE)
+  message("${version} ${url}")
+  return()
+endif()
+
 foreach(variable IN ITEMS PREFIX WORK_DIR)
   if(NOT ${variable})
     message(FATAL_ERROR "BuildFFmpeg.cmake needs -D${variable}=<path>")
@@ -197,5 +204,21 @@ endforeach()
 message(STATUS "Building FFmpeg ${version} with ${jobs} jobs")
 run_step(build "make -j${jobs} && make install")
 
+# What a package that links FFmpeg statically carries next to it.
+file(COPY_FILE "${source}/COPYING.LGPLv2.1" "${PREFIX}/FFmpeg-LICENSE.txt")
+file(
+  WRITE
+  "${PREFIX}/FFmpeg-NOTICE.txt"
+  "Tapeloop includes FFmpeg ${version}, linked statically, under the GNU Lesser General\n"
+  "Public License version 2.1 or later. The license is in FFmpeg-LICENSE.txt.\n"
+  "\n"
+  "Source: ${url}\n"
+  "SHA-256: ${sha256}\n"
+  "\n"
+  "Built from that source without changes, configured with:\n"
+  "${joined}\n"
+)
+
+# Written last: ffmpeg.cmake takes the prefix as complete only once this file is there.
 file(WRITE "${PREFIX}/configure-line.txt" "${joined}\n")
 file(REMOVE_RECURSE "${WORK_DIR}")

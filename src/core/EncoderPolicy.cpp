@@ -199,7 +199,7 @@ EncoderSettings buildReplaySettings(const EncoderInfo &encoder, const ReplayEnco
 	const int64_t keyintSeconds = std::chrono::ceil<std::chrono::seconds>(fallbackGop).count();
 	const std::string gopLength = std::to_string(gopFrames(gop, frameDuration));
 
-	int64_t bitrate = replayBitrateKbps(params);
+	int64_t bitrate = replayBitrateKbps(params, encoder.codec);
 
 	// Key names and values are those read by the OBS 32.0.4 encoder plugins. The
 	// free-form option strings are the only way to get a GOP shorter than a second.
@@ -273,12 +273,16 @@ EncoderSettings buildReplaySettings(const EncoderInfo &encoder, const ReplayEnco
 	return settings;
 }
 
-int64_t replayBitrateKbps(const ReplayEncoderParams &params)
+int64_t replayBitrateKbps(const ReplayEncoderParams &params, std::string_view codec)
 {
 	const Rational frameDuration = validFrameDuration(params.frameDuration);
 	const int64_t pixels = std::clamp<int64_t>(params.width, 0, kMaxDimension) *
 			       std::clamp<int64_t>(params.height, 0, kMaxDimension);
-	const int32_t reference = std::max(params.referenceBitrateKbps, 1);
+	int32_t reference = std::max(params.referenceBitrateKbps, 1);
+	if (codec == "hevc") {
+		const int32_t percent = std::clamp(params.hevcBitratePercent, 1, 100);
+		reference = static_cast<int32_t>(std::max<int64_t>(int64_t{reference} * percent / 100, 1));
+	}
 	const int64_t atReferenceRate = rescale(pixels, {reference, kReferencePixels}, {1, 1});
 	const int64_t scaled =
 		rescale(atReferenceRate, {frameDuration.den, kReferenceFramesPerSecond}, {frameDuration.num, 1});

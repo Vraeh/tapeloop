@@ -309,6 +309,58 @@ TEST_CASE_METHOD(ObsFixture, "the capture output refuses another codec before it
 	obs_output_set_video_encoder(output, nullptr);
 }
 
+TEST_CASE_METHOD(ObsFixture, "a capture sizes its buffer for the codec of the encoder that starts", "[obs][capture]")
+{
+	OBSSourceAutoRelease pattern = createTestPattern(640, 360);
+	tapeloop::ReplayEncoderParams params;
+	params.width = 640;
+	params.height = 360;
+	params.frameDuration = {1, 30};
+	const auto budgetFor = [&params](const char *codec) {
+		return tapeloop::replayByteBudget(tapeloop::replayBitrateKbps(params, codec), 30s);
+	};
+	REQUIRE(budgetFor("hevc") < budgetFor("h264"));
+
+	CaptureSettings hevc;
+	hevc.bufferLength = 30s;
+	hevc.candidates = {testEncoder(tapeloop::test::kHevcEncoderId, "hevc")};
+	CaptureSettings h264 = hevc;
+	h264.candidates = {testEncoder("obs_x264")};
+
+	SECTION("the encoder that starts sets it")
+	{
+		SourceCapture capture;
+		REQUIRE(capture.start(pattern, hevc) == StartResult::Started);
+		CHECK(capture.buffer()->byteBudget() == budgetFor("hevc"));
+		capture.stop();
+	}
+	SECTION("not the first candidate, when it does not start")
+	{
+		SourceCapture capture;
+		CaptureSettings settings = hevc;
+		settings.candidates = {testEncoder(tapeloop::test::kAv1EncoderId, "hevc"), testEncoder("obs_x264")};
+		REQUIRE(capture.start(pattern, settings) == StartResult::Started);
+		CHECK(capture.stats().encoderId == "obs_x264");
+		CHECK(capture.buffer()->byteBudget() == budgetFor("h264"));
+		capture.stop();
+	}
+	SECTION("a kept buffer keeps the larger budget until it is emptied")
+	{
+		SourceCapture capture;
+		REQUIRE(capture.start(pattern, h264) == StartResult::Started);
+		capture.stop();
+		REQUIRE(capture.start(pattern, hevc, true) == StartResult::Started);
+		CHECK(capture.buffer()->byteBudget() == budgetFor("h264"));
+		capture.stop();
+		REQUIRE(capture.start(pattern, hevc) == StartResult::Started);
+		CHECK(capture.buffer()->byteBudget() == budgetFor("hevc"));
+		capture.stop();
+		REQUIRE(capture.start(pattern, h264, true) == StartResult::Started);
+		CHECK(capture.buffer()->byteBudget() == budgetFor("h264"));
+		capture.stop();
+	}
+}
+
 TEST_CASE_METHOD(ObsFixture, "a capture reports an encoder that fails while running", "[obs][capture]")
 {
 	OBSSourceAutoRelease pattern = createTestPattern(640, 360);
@@ -339,13 +391,56 @@ TEST_CASE_METHOD(ObsFixture, "a capture notices when its source changes size", "
 	CHECK(capture.sourceSizeMatches());
 }
 
-TEST_CASE_METHOD(ObsFixture, "a source without a size is not captured", "[obs][capture]")
+TEST_CASE_METHOD(ObsFixture, "a source without a size is shown and waited for", "[obs][capture]")
 {
 	OBSSourceAutoRelease pattern = createTestPattern(0, 0);
 	SourceCapture capture;
 	CHECK(capture.start(pattern, {}) == StartResult::NoSourceSize);
 	CHECK_FALSE(capture.active());
+	CHECK(capture.waiting());
+	CHECK(capture.stats().state == CaptureState::Waiting);
+	CHECK(obs_source_showing(pattern));
 	CHECK(capture.buffer() == nullptr);
+
+	// A second try while waiting holds the source once, not twice.
+	CHECK(capture.start(pattern, {}) == StartResult::NoSourceSize);
+	capture.stop();
+	CHECK_FALSE(obs_source_showing(pattern));
+	CHECK(capture.stats().state == CaptureState::Stopped);
+}
+
+TEST_CASE_METHOD(ObsFixture, "a capture waiting for a size starts on the view it already has", "[obs][capture]")
+{
+	OBSSourceAutoRelease pattern = createTestPattern(0, 0);
+	SourceCapture capture;
+	REQUIRE(capture.start(pattern, {}) == StartResult::NoSourceSize);
+
+	OBSDataAutoRelease sized = obs_data_create();
+	obs_data_set_int(sized, "width", 640);
+	obs_data_set_int(sized, "height", 360);
+	obs_source_update(pattern, sized);
+	REQUIRE(waitFor([&] { return obs_source_get_width(pattern) == 640; }, 5s));
+	REQUIRE(capture.start(pattern, {}) == StartResult::Started);
+	CHECK_FALSE(capture.waiting());
+	CHECK(waitFor([&] { return hasGops(capture, 1); }, 60s));
+	capture.stop();
+	CHECK_FALSE(obs_source_showing(pattern));
+}
+
+TEST_CASE_METHOD(ObsFixture, "a waiting capture lets go of its source when it cannot start", "[obs][capture]")
+{
+	OBSSourceAutoRelease pattern = createTestPattern(0, 0);
+	SourceCapture capture;
+	REQUIRE(capture.start(pattern, {}) == StartResult::NoSourceSize);
+
+	OBSDataAutoRelease huge = obs_data_create();
+	obs_data_set_int(huge, "width", 20000);
+	obs_data_set_int(huge, "height", 360);
+	obs_source_update(pattern, huge);
+	REQUIRE(waitFor([&] { return obs_source_get_width(pattern) == 20000; }, 5s));
+	CHECK(capture.start(pattern, {}) == StartResult::SourceTooLarge);
+	CHECK_FALSE(capture.waiting());
+	CHECK_FALSE(obs_source_showing(pattern));
 }
 
 TEST_CASE_METHOD(ObsFixture, "a restart keeps the buffer only when asked", "[obs][capture]")
@@ -452,4 +547,20 @@ TEST_CASE_METHOD(ObsFixture, "a capture outlives the reference to a removed sour
 	REQUIRE(waitFor([&] { return obs_weak_source_expired(weak); }, 5s));
 	CHECK(capture.sourceSizeMatches());
 	capture.stop();
+}
+
+TEST_CASE_METHOD(ObsFixture, "a waiting capture lets go of its source when it is too small to encode", "[obs][capture]")
+{
+	OBSSourceAutoRelease pattern = createTestPattern(0, 0);
+	SourceCapture capture;
+	REQUIRE(capture.start(pattern, {}) == StartResult::NoSourceSize);
+
+	OBSDataAutoRelease tiny = obs_data_create();
+	obs_data_set_int(tiny, "width", 1);
+	obs_data_set_int(tiny, "height", 1);
+	obs_source_update(pattern, tiny);
+	REQUIRE(waitFor([&] { return obs_source_get_width(pattern) == 1; }, 5s));
+	CHECK(capture.start(pattern, {}) == StartResult::NoOutputSize);
+	CHECK_FALSE(capture.waiting());
+	CHECK_FALSE(obs_source_showing(pattern));
 }
