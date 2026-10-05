@@ -614,3 +614,58 @@ TEST_CASE_METHOD(ObsFixture, "a scene or an input without video never takes a sa
 	obs_source_remove(group);
 	obs_source_remove(obs_scene_get_source(scene));
 }
+
+TEST_CASE_METHOD(ObsFixture, "a sizeless source that appears later is shown on the next poll", "[obs][manager]")
+{
+	const std::string uuid = "4f8beeda-0000-4000-8000-000000000009";
+	FakeHost host;
+	CaptureManager manager(host);
+	BufferSettings settings = selecting(uuid);
+	settings.startWithOutputs = false;
+	manager.setSettings(settings);
+	REQUIRE(manager.manualStart());
+	CHECK(manager.status(uuid).stats.state == CaptureState::Stopped);
+
+	// As a source of a collection loads, with the UUID the settings name.
+	OBSDataAutoRelease patternSettings = obs_data_create();
+	obs_data_set_int(patternSettings, "width", 640);
+	obs_data_set_int(patternSettings, "height", 360);
+	obs_data_set_bool(patternSettings, "size_only_when_shown", true);
+	OBSDataAutoRelease saved = obs_data_create();
+	obs_data_set_string(saved, "id", tapeloop::test::kTestPatternId);
+	obs_data_set_string(saved, "name", "Display");
+	obs_data_set_string(saved, "uuid", uuid.c_str());
+	obs_data_set_obj(saved, "settings", patternSettings);
+	OBSSourceAutoRelease display = obs_load_source(saved);
+	REQUIRE(uuidOf(display) == uuid);
+	REQUIRE(obs_source_get_width(display) == 0);
+
+	manager.poll();
+	CHECK(manager.status(uuid).stats.state == CaptureState::Waiting);
+	CHECK(obs_source_showing(display));
+	manager.poll();
+	CHECK(manager.status(uuid).stats.state == CaptureState::Running);
+	manager.manualStop();
+}
+
+TEST_CASE_METHOD(ObsFixture, "a removed source that was waiting for its size is let go of", "[obs][manager]")
+{
+	OBSSourceAutoRelease display = createHiddenPattern("Display");
+	const std::string uuid = uuidOf(display);
+	OBSWeakSourceAutoRelease weak = obs_source_get_weak_source(display);
+	FakeHost host;
+	CaptureManager manager(host);
+	BufferSettings settings = selecting(uuid);
+	settings.startWithOutputs = false;
+	manager.setSettings(settings);
+	REQUIRE(manager.manualStart());
+	REQUIRE(manager.status(uuid).stats.state == CaptureState::Waiting);
+
+	obs_source_remove(display);
+	display = nullptr;
+	manager.poll();
+	CHECK(manager.status(uuid).stats.state == CaptureState::Stopped);
+	OBSSourceAutoRelease left = obs_weak_source_get_source(weak);
+	CHECK(left == nullptr);
+	manager.manualStop();
+}

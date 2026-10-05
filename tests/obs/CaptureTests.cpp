@@ -451,3 +451,19 @@ TEST_CASE_METHOD(ObsFixture, "a capture outlives the reference to a removed sour
 	CHECK(capture.sourceSizeMatches());
 	capture.stop();
 }
+
+TEST_CASE_METHOD(ObsFixture, "a waiting capture lets go of its source when it is too small to encode", "[obs][capture]")
+{
+	OBSSourceAutoRelease pattern = createTestPattern(0, 0);
+	SourceCapture capture;
+	REQUIRE(capture.start(pattern, {}) == StartResult::NoSourceSize);
+
+	OBSDataAutoRelease tiny = obs_data_create();
+	obs_data_set_int(tiny, "width", 1);
+	obs_data_set_int(tiny, "height", 1);
+	obs_source_update(pattern, tiny);
+	REQUIRE(waitFor([&] { return obs_source_get_width(pattern) == 1; }, 5s));
+	CHECK(capture.start(pattern, {}) == StartResult::NoOutputSize);
+	CHECK_FALSE(capture.waiting());
+	CHECK_FALSE(obs_source_showing(pattern));
+}
