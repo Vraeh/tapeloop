@@ -54,6 +54,7 @@ target_sources(
     core/MomentListTests.cpp
     core/PlayheadTests.cpp
     core/ReplayLibraryTests.cpp
+    core/ReplayPlayerStateTests.cpp
     core/ReplaySizeTests.cpp
     core/SourceBufferTests.cpp
     core/SyntheticEncoder.hpp
