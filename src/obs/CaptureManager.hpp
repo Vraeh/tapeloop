@@ -131,6 +131,9 @@ private:
 	StartOutcome start(const std::string &uuid, Entry &entry, bool keepBuffer, bool quiet,
 			   std::optional<std::vector<EncoderInfo>> &candidates);
 	void stop(Entry &entry);
+	// Holds the source active or lets go of it, as the settings and the source's own
+	// restart setting now say.
+	void updateActivation(const std::string &uuid, Entry &entry, obs_source_t *source);
 	void releaseAll();
 	void followOutputs();
 	static void handleRemove(void *data, calldata_t *) noexcept;

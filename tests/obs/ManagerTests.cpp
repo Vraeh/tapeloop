@@ -14,6 +14,7 @@
 #include <atomic>
 #include <chrono>
 #include <cmath>
+#include <initializer_list>
 #include <string>
 #include <vector>
 
@@ -903,6 +904,102 @@ TEST_CASE_METHOD(ObsFixture, "a media source that restarts when activated is not
 	CHECK(obs_source_active(media));
 	REQUIRE(manager.manualStop());
 	CHECK_FALSE(obs_source_active(media));
+}
+
+TEST_CASE_METHOD(ObsFixture, "a VLC source or slideshow is kept active only when it does not restart",
+		 "[obs][manager]")
+{
+	struct Case {
+		const char *behavior;
+		bool held;
+	};
+	for (const char *id : {tapeloop::test::kVlcStandInId, tapeloop::test::kSlideshowStandInId}) {
+		for (const Case &each : {Case{"stop_restart", false}, Case{"pause_unpause", true},
+					 Case{"always_play", true}, Case{"", false}}) {
+			CAPTURE(id, each.behavior);
+			OBSSourceAutoRelease media = patternWith(id, "Clip", 640, 360, false);
+			OBSDataAutoRelease setting = obs_data_create();
+			obs_data_set_string(setting, "playback_behavior", each.behavior);
+			obs_source_update(media, setting);
+			const std::string uuid = uuidOf(media);
+			FakeHost host;
+			CaptureManager manager(host);
+			manager.setSettings(activating(uuid));
+			REQUIRE(manager.manualStart());
+			CHECK(manager.status(uuid).stats.state == CaptureState::Running);
+			CHECK(obs_source_active(media) == each.held);
+			CHECK(manager.status(uuid).activationLeftOut == !each.held);
+			REQUIRE(manager.manualStop());
+		}
+	}
+}
+
+TEST_CASE_METHOD(ObsFixture, "a change of the restart setting applies while the buffers run", "[obs][manager]")
+{
+	OBSDataAutoRelease noRestart = obs_data_create();
+	obs_data_set_bool(noRestart, "restart_on_activate", false);
+	OBSDataAutoRelease restart = obs_data_create();
+	obs_data_set_bool(restart, "restart_on_activate", true);
+	OBSSourceAutoRelease media = patternWith(tapeloop::test::kMediaStandInId, "Clip", 640, 360, false);
+	obs_source_update(media, noRestart);
+	const std::string uuid = uuidOf(media);
+	FakeHost host;
+	CaptureManager manager(host);
+	manager.setSettings(activating(uuid));
+	REQUIRE(manager.manualStart());
+	REQUIRE(obs_source_active(media));
+
+	obs_source_update(media, restart);
+	manager.poll();
+	CHECK_FALSE(obs_source_active(media));
+	CHECK(manager.status(uuid).activationLeftOut);
+	CHECK(manager.status(uuid).stats.state == CaptureState::Running);
+
+	obs_source_update(media, noRestart);
+	manager.poll();
+	CHECK(obs_source_active(media));
+	CHECK_FALSE(manager.status(uuid).activationLeftOut);
+
+	// Polling again takes no second activation.
+	manager.poll();
+	REQUIRE(manager.manualStop());
+	CHECK_FALSE(obs_source_active(media));
+}
+
+TEST_CASE_METHOD(ObsFixture, "a running source follows the activation setting at once", "[obs][manager]")
+{
+	OBSSourceAutoRelease camera = patternWith(tapeloop::test::kTestPatternId, "Camera", 640, 360, false);
+	OBSSourceAutoRelease media = patternWith(tapeloop::test::kMediaStandInId, "Clip", 640, 360, false);
+	const std::string cameraUuid = uuidOf(camera);
+	const std::string mediaUuid = uuidOf(media);
+	FakeHost host;
+	CaptureManager manager(host);
+	BufferSettings settings = activating(cameraUuid);
+	settings.sources[mediaUuid].selected = true;
+	manager.setSettings(settings);
+	REQUIRE(manager.manualStart());
+	REQUIRE(obs_source_active(camera));
+	REQUIRE(manager.status(mediaUuid).activationLeftOut);
+
+	SECTION("turning it off lets go of the source and the note")
+	{
+		settings.activateOffAir = false;
+		manager.setSettings(settings);
+		CHECK_FALSE(obs_source_active(camera));
+		CHECK_FALSE(manager.status(mediaUuid).activationLeftOut);
+		settings.activateOffAir = true;
+		manager.setSettings(settings);
+		CHECK(obs_source_active(camera));
+		CHECK(manager.status(mediaUuid).activationLeftOut);
+		REQUIRE(manager.manualStop());
+	}
+	SECTION("stopping the buffers clears the note")
+	{
+		REQUIRE(manager.manualStop());
+		CHECK_FALSE(obs_source_active(camera));
+		CHECK(manager.status(mediaUuid).stats.state == CaptureState::Stopped);
+		CHECK_FALSE(manager.status(mediaUuid).activationLeftOut);
+	}
 }
 
 TEST_CASE_METHOD(ObsFixture, "a source with a size only while active starts once activated", "[obs][manager]")

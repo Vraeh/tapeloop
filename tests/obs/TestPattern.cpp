@@ -9,6 +9,7 @@
 #include <algorithm>
 #include <atomic>
 #include <cmath>
+#include <initializer_list>
 #include <new>
 #include <vector>
 
@@ -248,6 +249,13 @@ void registerTestPattern()
 	media.get_name = mediaName;
 	media.get_defaults = mediaDefaults;
 	obs_register_source(&media);
+
+	for (const char *id : {kVlcStandInId, kSlideshowStandInId}) {
+		obs_source_info other = info;
+		other.id = id;
+		other.get_name = mediaName;
+		obs_register_source(&other);
+	}
 }
 
 void registerTone()

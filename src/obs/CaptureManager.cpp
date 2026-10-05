@@ -164,6 +164,9 @@ void CaptureManager::poll()
 			blog(LOG_INFO, "[tapeloop] A captured source changed size, restarting its capture");
 			stop(entry);
 			outcome = start(uuid, entry, true, false, candidates);
+		} else {
+			// The restart setting of a media source can change while it is captured.
+			updateActivation(uuid, entry, entry.source);
 		}
 		// A failed entry stays, so that only what poll is meant to retry is tried again.
 		if (outcome == StartOutcome::SourceRemoved) {
@@ -243,7 +246,7 @@ SourceStatus CaptureManager::status(const std::string &uuid) const
 	const auto found = entries_.find(uuid);
 	if (found != entries_.end()) {
 		status.stats = found->second->capture.stats();
-		status.activationLeftOut = found->second->activationLeftOut;
+		status.activationLeftOut = settings_.activateFor(uuid) && found->second->activationLeftOut;
 	}
 	return status;
 }
@@ -282,8 +285,10 @@ void CaptureManager::reconcile()
 		if (found == entries_.end()) {
 			found = entries_.emplace(uuid, std::make_unique<Entry>()).first;
 		}
-		if (!found->second->capture.active() &&
-		    start(uuid, *found->second, false, false, candidates) == StartOutcome::SourceRemoved) {
+		Entry &entry = *found->second;
+		if (entry.capture.active()) {
+			updateActivation(uuid, entry, entry.source);
+		} else if (start(uuid, entry, false, false, candidates) == StartOutcome::SourceRemoved) {
 			entries_.erase(found);
 		}
 	}
@@ -304,13 +309,8 @@ CaptureManager::StartOutcome CaptureManager::start(const std::string &uuid, Entr
 		return StartOutcome::Failed;
 	}
 	// Before the size: a media source that plays only while active has no size until it
-	// is. A retry also lets go of a hold the settings no longer ask for.
-	entry.activationLeftOut = settings_.activateFor(uuid) && restartsWhenActivated(source);
-	if (settings_.activateFor(uuid) && !entry.activationLeftOut) {
-		entry.activation.hold(source);
-	} else {
-		entry.activation.reset();
-	}
+	// is.
+	updateActivation(uuid, entry, source);
 	if (quiet && (obs_source_get_width(source) == 0 || obs_source_get_height(source) == 0)) {
 		entry.capture.hold(source);
 		entry.retry = true;
@@ -348,6 +348,21 @@ void CaptureManager::stop(Entry &entry)
 	}
 	entry.capture.stop();
 	entry.activation.reset();
+	entry.activationLeftOut = false;
+}
+
+void CaptureManager::updateActivation(const std::string &uuid, Entry &entry, obs_source_t *source)
+{
+	if (!source) {
+		return;
+	}
+	const bool wanted = settings_.activateFor(uuid);
+	entry.activationLeftOut = wanted && restartsWhenActivated(source);
+	if (wanted && !entry.activationLeftOut) {
+		entry.activation.hold(source);
+	} else {
+		entry.activation.reset();
+	}
 }
 
 void CaptureManager::Activation::hold(obs_source_t *source)
