@@ -70,14 +70,16 @@ set(
   "libavutil/uuid.c|BSD-3-Clause|Redistribution and use"
   "libavutil/x86/x86inc.asm|ISC|Permission to use"
 )
-# Files whose permissive text asks for nothing in a binary: code after Boost's
-# algorithms, whose license covers object code without its notice, and credits to
-# public-domain code.
-set(reviewed_licenses "libavutil/libm.h" "libavutil/mathematics.c" "libavutil/sha.c")
-# What marks a notice other than the LGPL's.
+# Files whose permissive text FFmpeg carries without a notice to ship: code after
+# Boost's algorithms, whose license covers object code without its notice, and SHA code
+# that credits public-domain and BSD-licensed code it is based on, whose notices
+# FFmpeg's source does not hold.
+set(reviewed_licenses "libavutil/libm.h" "libavutil/mathematics.c" "libavutil/sha.c" "libavutil/sha512.c")
+# What marks a notice other than the LGPL's, matched in lower case with line breaks and
+# comment leaders taken out.
 set(
   other_license_marks
-  "Redistribution and use in source and binary forms|Permission is hereby granted|Permission to use, copy, modify|provided 'as-is'|Independent JPEG Group|Boost Software License|[Pp]ublic domain|Apache License"
+  "redistribution and use in source and binary forms|permission is hereby granted|permission to use, copy, modify|provided .as-is.|independent jpeg group|boost software license|public domain|apache license|bsd-licensed|bsd license"
 )
 
 # -DPRINT_SOURCE=ON prints the version and the source URL, for the release notes, and
@@ -258,18 +260,17 @@ run_step(build "make -j${jobs} && make install")
 # Every file the build compiled or included, from the dependency files the compiler
 # and the assembler wrote, has its license checked: one with a notice other than the
 # LGPL's that the lists above do not name stops the build. Paths are compared from the
-# source directory down, without case, as Windows writes them.
+# source directory down, and on Windows without case, as it writes them.
 set(listed)
 foreach(entry IN LISTS other_licenses)
   string(REPLACE "|" ";" entry "${entry}")
   list(GET entry 0 path)
-  string(TOLOWER "${path}" path)
   list(APPEND listed "${path}")
 endforeach()
-foreach(path IN LISTS reviewed_licenses)
-  string(TOLOWER "${path}" path)
-  list(APPEND listed "${path}")
-endforeach()
+list(APPEND listed ${reviewed_licenses})
+if(CMAKE_HOST_WIN32)
+  string(TOLOWER "${listed}" listed)
+endif()
 file(GLOB_RECURSE dependency_files "${WORK_DIR}/build/*.d")
 if(NOT dependency_files)
   message(FATAL_ERROR "FFmpeg's build left no dependency files to check the licenses of")
@@ -293,6 +294,24 @@ foreach(dependency_file IN LISTS dependency_files)
     endif()
   endforeach()
 endforeach()
+# MSVC's dependency files name only what a file includes, never the file itself, so each
+# object adds its own source. Sources the build generates hold no license of their own.
+file(GLOB_RECURSE objects RELATIVE "${WORK_DIR}/build" "${WORK_DIR}/build/*.o")
+foreach(object IN LISTS objects)
+  string(REGEX REPLACE "\\.o$" "" stem "${object}")
+  set(found)
+  foreach(extension IN ITEMS c asm S)
+    if(EXISTS "${source}/${stem}.${extension}")
+      set(found "${stem}.${extension}")
+      break()
+    endif()
+  endforeach()
+  if(found)
+    list(APPEND used "${found}")
+  elseif(NOT EXISTS "${WORK_DIR}/build/${stem}.c")
+    message(FATAL_ERROR "No source found for FFmpeg's ${object}")
+  endif()
+endforeach()
 list(REMOVE_DUPLICATES used)
 if(NOT "libavcodec/h264dec.c" IN_LIST used)
   message(FATAL_ERROR "FFmpeg's dependency files do not name its sources the way this script reads them")
@@ -303,7 +322,12 @@ foreach(path IN LISTS used)
     continue()
   endif()
   file(READ "${source}/${path}" text)
-  string(TOLOWER "${path}" key)
+  string(TOLOWER "${text}" text)
+  string(REGEX REPLACE "[\r\n]+[ \t]*[*;/]*[ \t]*" " " text "${text}")
+  set(key "${path}")
+  if(CMAKE_HOST_WIN32)
+    string(TOLOWER "${key}" key)
+  endif()
   if(text MATCHES "${other_license_marks}" AND NOT key IN_LIST listed)
     list(APPEND unlisted "${path}")
   endif()
@@ -333,8 +357,8 @@ file(
   "Every release of Tapeloop carries that FFmpeg source and Tapeloop's own source. With\n"
   "them you can build Tapeloop again against a modified FFmpeg and use it in place of\n"
   "this one, as the LGPL allows: point url and sha256 in cmake/ffmpeg/BuildFFmpeg.cmake\n"
-  "at your FFmpeg's tarball (a file:// URL will do) and build Tapeloop as its README\n"
-  "says.\n"
+  "at your FFmpeg's tarball (a file:// URL will do), which has to unpack into\n"
+  "ffmpeg-${version}/ as FFmpeg's own do, and build Tapeloop as its README says.\n"
 )
 string(
   CONCAT
