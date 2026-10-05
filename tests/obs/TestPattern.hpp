@@ -14,7 +14,9 @@ namespace tapeloop::test {
 // A video source drawn on the GPU: a white bar that moves one step per frame over a
 // grey background, and under it the number of the frame in binary, one black or white
 // cell per bit, most significant first, so a decoded frame can be traced back to the
-// frame rendered. Settings: "width" and "height", which may change while it runs.
+// frame rendered. Settings: "width" and "height", which may change while it runs, and
+// "size_only_when_shown", which makes it report 0x0 while nothing shows it, as display,
+// window and game captures do.
 inline constexpr const char *kTestPatternId = "tapeloop_test_pattern";
 inline constexpr int kFrameNumberBits = 16;
 

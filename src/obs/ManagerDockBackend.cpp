@@ -33,6 +33,8 @@ ui::SourceState stateOf(CaptureState state)
 		return ui::SourceState::Running;
 	case CaptureState::Failed:
 		return ui::SourceState::Failed;
+	case CaptureState::Waiting:
+		return ui::SourceState::Waiting;
 	case CaptureState::Stopped:
 		break;
 	}
