@@ -26,6 +26,7 @@ extern "C" {
 #include <cstdint>
 #include <cstdio>
 #include <fstream>
+#include <initializer_list>
 #include <iterator>
 #include <optional>
 #include <span>
@@ -231,6 +232,25 @@ TEST_CASE("decoding uses the FFmpeg built for the plugin", "[decode]")
 	CHECK(avcodec_find_decoder(AV_CODEC_ID_HEVC) != nullptr);
 	CHECK(avcodec_find_decoder(AV_CODEC_ID_MPEG2VIDEO) == nullptr);
 }
+
+#ifdef _WIN32
+TEST_CASE("the FFmpeg built for the plugin decodes H.264 and HEVC on a D3D11 device", "[decode]")
+{
+	// FFmpeg's configure can keep a hwaccel whose code its Makefile then leaves out, and
+	// the decoders offer AV_PIX_FMT_D3D11 only when the older d3d11va hwaccels are in.
+	for (const AVCodecID id : {AV_CODEC_ID_H264, AV_CODEC_ID_HEVC}) {
+		const AVCodec *codec = avcodec_find_decoder(id);
+		REQUIRE(codec);
+		bool onDevice = false;
+		for (int i = 0; const AVCodecHWConfig *config = avcodec_get_hw_config(codec, i); ++i) {
+			onDevice = onDevice || (config->pix_fmt == AV_PIX_FMT_D3D11 &&
+						(config->methods & AV_CODEC_HW_CONFIG_METHOD_HW_DEVICE_CTX) != 0);
+		}
+		CAPTURE(codec->name);
+		CHECK(onDevice);
+	}
+}
+#endif
 
 TEST_CASE_METHOD(ObsFixture, "the FFmpeg decoder shows every frame of a capture, either way and after seeks",
 		 "[decode]")
