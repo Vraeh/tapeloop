@@ -23,7 +23,8 @@ namespace tapeloop::decode {
 struct FFmpegDecoderConfig {
 	// Windows: decode on a D3D11 device of the adapter with this LUID, and keep the
 	// pictures on the GPU. Without it, elsewhere, or for a stream that adapter cannot
-	// decode, FFmpeg decodes on the CPU.
+	// decode, FFmpeg decodes on the CPU. The LUID's HighPart goes in the upper 32 bits
+	// and its LowPart in the lower ones.
 	std::optional<uint64_t> adapterLuid;
 	// Slice threads. Frame threads are never used: each one delays output by a frame.
 	// One by default, since every replay has a decoder of its own.
@@ -46,12 +47,17 @@ public:
 	FFmpegDecoder(FFmpegDecoder &&) = delete;
 	FFmpegDecoder &operator=(FFmpegDecoder &&) = delete;
 
-	// Unsupported only when FFmpeg has no decoder for the codec. A damaged configuration
-	// opens, and the frames that need it never come out.
+	// Unsupported when FFmpeg has no decoder for the codec or cannot open it, and
+	// InvalidData for a configuration it rejects. Not every damaged configuration is
+	// rejected: H.264's and short HEVC ones open, and the frames that need them never
+	// come out.
 	DecodeStatus open(VideoCodec codec, std::span<const uint8_t> config) noexcept override;
-	// InvalidData also when the frames of the previous packet were not all received.
+	// InvalidData also when FFmpeg holds frames not yet received and takes no more
+	// packets until they are: receive every frame before the next send.
 	DecodeStatus send(std::span<const uint8_t> data, int64_t pts, int64_t dts) noexcept override;
-	// Unsupported for a picture in a format other than 8-bit 4:2:0.
+	// Unsupported for a picture in a format other than 8-bit 4:2:0. A picture decoded on
+	// the GPU is cropped at the right and the bottom only, which is all the encoders of
+	// a capture crop.
 	DecodeStatus receive(DecodedFrame &frame) noexcept override;
 	DecodeStatus flush() noexcept override;
 	void reset() noexcept override;

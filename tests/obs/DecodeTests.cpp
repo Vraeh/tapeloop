@@ -386,6 +386,25 @@ TEST_CASE("a damaged configuration fails the frames that need it, not the decode
 	CHECK(planner.frameAt(expected.front().time).status == DecodeStatus::InvalidData);
 	CHECK(planner.frameAt(expected.back().time).status == DecodeStatus::InvalidData);
 
+	// An hvcC long enough to be read as one, whose first parameter set runs past its end:
+	// FFmpeg refuses to open on it.
+	std::vector<uint8_t> truncated(32, 0);
+	truncated[0] = 1;
+	truncated[21] = 3;
+	truncated[22] = 1;
+	truncated[23] = 32;
+	truncated[25] = 1;
+	truncated[26] = 0xff;
+	truncated[27] = 0xff;
+	FFmpegDecoder refusing;
+	CHECK(refusing.open(VideoCodec::Hevc, truncated) == DecodeStatus::InvalidData);
+	SourceBuffer rejected = makeBuffer();
+	rejected.setCodecConfig(VideoCodec::Hevc, truncated);
+	expected.clear();
+	pushRecorded(rejected, hevc, 1s, 0, false, expected);
+	planner.load(rejected.clip(Nanoseconds::min(), Nanoseconds::max()));
+	CHECK(planner.frameAt(expected.front().time).status == DecodeStatus::InvalidData);
+
 	SourceBuffer intact = makeBuffer();
 	intact.setCodecConfig(VideoCodec::Hevc, hevc.config);
 	expected.clear();

@@ -231,8 +231,14 @@ DecodeStatus FFmpegDecoder::open(VideoCodec codec, std::span<const uint8_t> conf
 #endif
 
 	const int result = avcodec_open2(context.get(), decoder, nullptr);
+	if (result == AVERROR(ENOMEM)) {
+		return DecodeStatus::OutOfMemory;
+	}
+	if (result == AVERROR_INVALIDDATA) {
+		return DecodeStatus::InvalidData;
+	}
 	if (result < 0) {
-		return result == AVERROR(ENOMEM) ? DecodeStatus::OutOfMemory : DecodeStatus::Unsupported;
+		return DecodeStatus::Unsupported;
 	}
 	context_ = std::move(context);
 	return DecodeStatus::Ok;
