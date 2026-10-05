@@ -11,17 +11,33 @@ namespace tapeloop {
 
 void ReplayPlayerState::setEntries(std::vector<SequenceEntry> entries)
 {
-	const std::optional<size_t> playing = phase_ == AirPhase::Source ? sequence_.indexOf(source_)
-									 : std::optional<size_t>();
-	sequence_.setEntries(std::move(entries));
-	if (!playing) {
+	if (phase_ != AirPhase::Source) {
+		sequence_.setEntries(std::move(entries));
 		return;
 	}
-	const std::optional<size_t> now = sequence_.indexOf(source_);
-	if (!now || !sequence_.entries()[*now].shown) {
-		// Gone or hidden: the next one from the place it had.
-		advance(*playing);
+	// What followed the source on air, in case the new list drops it.
+	std::vector<std::string> following;
+	const std::span<const SequenceEntry> old = sequence_.entries();
+	for (size_t i = sequence_.indexOf(source_).value_or(old.size()) + 1; i < old.size(); ++i) {
+		following.push_back(old[i].sourceKey);
 	}
+	sequence_.setEntries(std::move(entries));
+
+	if (const std::optional<size_t> now = sequence_.indexOf(source_)) {
+		if (!sequence_.entries()[*now].shown) {
+			advance(*now + 1);
+		}
+		return;
+	}
+	// Gone: the next one counts from the first source that followed it and is still
+	// listed.
+	for (const std::string &key : following) {
+		if (const std::optional<size_t> index = sequence_.indexOf(key)) {
+			advance(*index);
+			return;
+		}
+	}
+	advance(sequence_.entries().size());
 }
 
 bool ReplayPlayerState::move(size_t from, size_t to) noexcept
@@ -86,7 +102,7 @@ void ReplayPlayerState::ended(uint64_t token)
 	}
 }
 
-void ReplayPlayerState::cutShort()
+void ReplayPlayerState::cutShort() noexcept
 {
 	if (phase_ == AirPhase::Live) {
 		return;
@@ -100,7 +116,7 @@ void ReplayPlayerState::cutShort()
 
 bool ReplayPlayerState::setSpeed(double speed) noexcept
 {
-	if (!(speed > 0.0)) {
+	if (!(speed >= kMinSpeed && speed <= kMaxSpeed)) {
 		return false;
 	}
 	speed_ = speed;

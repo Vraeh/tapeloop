@@ -23,7 +23,7 @@ struct SequenceEntry {
 class ReplaySequence {
 public:
 	std::span<const SequenceEntry> entries() const noexcept { return entries_; }
-	// A key listed twice keeps its first place.
+	// A key listed twice keeps its first place and flag; an empty key is left out.
 	void setEntries(std::vector<SequenceEntry> entries);
 	std::optional<size_t> indexOf(std::string_view sourceKey) const noexcept;
 	// Moves an entry so that it ends up at index `to`. False for an index out of range.

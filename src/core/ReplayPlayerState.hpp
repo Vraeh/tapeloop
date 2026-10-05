@@ -7,6 +7,7 @@
 
 #include <cstddef>
 #include <cstdint>
+#include <span>
 #include <string>
 #include <string_view>
 #include <vector>
@@ -27,8 +28,9 @@ struct AirConfig {
 //
 // Reordering, showing and hiding while a replay plays act on what has not played yet:
 // the source after the one playing is the next shown one below it in the list when it
-// ends. Hiding or removing the source playing ends it at once. A source shown above the
-// one playing waits for the next replay.
+// ends. Hiding or removing the source playing ends it at once, and the next one counts
+// from where it is, or, when it is gone, from the first source that followed it. A source
+// shown above the one playing waits for the next replay.
 class ReplayPlayerState {
 public:
 	explicit ReplayPlayerState(AirConfig config = {}) : config_(config) {}
@@ -48,7 +50,7 @@ public:
 	void ended(uint64_t token);
 	// Takes the replay off air early: through the outro when there is one and it is not
 	// on air yet, otherwise straight back to live.
-	void cutShort();
+	void cutShort() noexcept;
 
 	AirPhase phase() const noexcept { return phase_; }
 	// The source on air during the Source phase, empty otherwise.
@@ -58,8 +60,10 @@ public:
 	// The speed the sources play at. Each replay starts at 1x, and the speed chosen
 	// stays for the next source.
 	double speed() const noexcept { return speed_; }
-	// False, changing nothing, for a speed that is not positive.
+	// False, changing nothing, for a speed outside the bounds below, NaN included.
 	bool setSpeed(double speed) noexcept;
+	static constexpr double kMinSpeed = 1.0 / 16;
+	static constexpr double kMaxSpeed = 16;
 
 private:
 	// Puts on air the first shown source at or after `from`, or else what follows the

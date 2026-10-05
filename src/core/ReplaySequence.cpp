@@ -14,6 +14,9 @@ void ReplaySequence::setEntries(std::vector<SequenceEntry> entries)
 	std::vector<SequenceEntry> unique;
 	unique.reserve(entries.size());
 	for (SequenceEntry &entry : entries) {
+		if (entry.sourceKey.empty()) {
+			continue;
+		}
 		const bool seen = std::any_of(unique.begin(), unique.end(), [&entry](const SequenceEntry &kept) {
 			return kept.sourceKey == entry.sourceKey;
 		});

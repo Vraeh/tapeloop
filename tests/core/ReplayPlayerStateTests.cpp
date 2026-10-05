@@ -7,6 +7,7 @@
 #include <catch2/catch_test_macros.hpp>
 
 #include <cstdint>
+#include <limits>
 #include <string>
 #include <string_view>
 #include <vector>
@@ -48,8 +49,15 @@ void endPart(ReplayPlayerState &player)
 TEST_CASE("ReplaySequence keeps an order that can change")
 {
 	ReplaySequence sequence;
-	sequence.setEntries(entries({"a", "b", "c", "a"}));
+	sequence.setEntries(entries({"a", "b", "c", "a", ""}));
 	CHECK(keysOf(sequence) == std::vector<std::string>{"a", "b", "c"});
+	// The first of two entries for one source keeps its flag too.
+	std::vector<SequenceEntry> twice = entries({"a", "a"});
+	twice[1].shown = false;
+	ReplaySequence first;
+	first.setEntries(twice);
+	REQUIRE(first.entries().size() == 1);
+	CHECK(first.entries()[0].shown);
 	CHECK(sequence.move(0, 2));
 	CHECK(keysOf(sequence) == std::vector<std::string>{"b", "c", "a"});
 	CHECK(sequence.move(2, 0));
@@ -156,6 +164,21 @@ TEST_CASE("ReplayPlayerState follows changes to the list while it plays")
 		CHECK(player.source() == "b");
 		CHECK(player.token() != token);
 	}
+	SECTION("hiding the source playing goes on below it, never back to the top")
+	{
+		endPart(player);
+		endPart(player);
+		REQUIRE(player.source() == "c");
+		REQUIRE(player.setShown("c", false));
+		CHECK(player.source() == "d");
+	}
+	SECTION("showing the source playing again changes nothing")
+	{
+		const uint64_t token = player.token();
+		REQUIRE(player.setShown("a", true));
+		CHECK(player.source() == "a");
+		CHECK(player.token() == token);
+	}
 	SECTION("a source shown above the one playing waits for the next replay")
 	{
 		endPart(player);
@@ -169,6 +192,23 @@ TEST_CASE("ReplayPlayerState follows changes to the list while it plays")
 	{
 		player.setEntries(entries({"b", "c", "d"}));
 		CHECK(player.source() == "b");
+	}
+	SECTION("a new list without the source playing goes on from what followed it")
+	{
+		endPart(player);
+		endPart(player);
+		REQUIRE(player.source() == "c");
+		player.setEntries(entries({"d", "a", "b"}));
+		CHECK(player.source() == "d");
+	}
+	SECTION("a new list that hides the source playing goes on below its new place")
+	{
+		endPart(player);
+		REQUIRE(player.source() == "b");
+		std::vector<SequenceEntry> reordered = entries({"c", "a", "b"});
+		reordered[2].shown = false;
+		player.setEntries(reordered);
+		CHECK(player.phase() == AirPhase::Live);
 	}
 	SECTION("a new list that keeps the source playing changes nothing")
 	{
@@ -209,6 +249,11 @@ TEST_CASE("ReplayPlayerState keeps the speed from one source to the next, not to
 	CHECK(player.setSpeed(0.5));
 	CHECK_FALSE(player.setSpeed(0.0));
 	CHECK_FALSE(player.setSpeed(-1.0));
+	CHECK_FALSE(player.setSpeed(std::numeric_limits<double>::infinity()));
+	CHECK_FALSE(player.setSpeed(std::numeric_limits<double>::quiet_NaN()));
+	CHECK_FALSE(player.setSpeed(1e-300));
+	CHECK(player.setSpeed(ReplayPlayerState::kMaxSpeed));
+	CHECK(player.setSpeed(0.5));
 	endPart(player);
 	CHECK(player.source() == "b");
 	CHECK(player.speed() == 0.5);
