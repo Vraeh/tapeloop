@@ -73,6 +73,9 @@ std::optional<std::array<int, 4>> placementOf(const EncoderInfo &encoder, Vendor
 	if (!isHardware(renderVendor) && !encoder.passTexture && encoder.vendor != Vendor::Apple) {
 		return std::nullopt;
 	}
+	if (!preferences.otherAdapters && isHardware(renderVendor) && encoder.vendor != renderVendor) {
+		return std::nullopt;
+	}
 
 	// OBS 32 registers the non-texture NVENC, QuickSync and AMF encoders as internal or
 	// deprecated. Their texture ids fall back to them when the texture path cannot
@@ -200,11 +203,34 @@ std::vector<EncoderInfo> replayEncoderCandidates(std::span<const EncoderInfo> en
 			 [](const Candidate &a, const Candidate &b) { return a.placement < b.placement; });
 
 	std::vector<EncoderInfo> ordered;
-	ordered.reserve(candidates.size());
+	ordered.reserve(candidates.size() + 1);
+	// A choice the user made goes first, even one the automatic order leaves out, as long
+	// as a replay can hold what it encodes.
+	if (!preferences.chosen.empty()) {
+		for (const EncoderInfo &choice : replayEncoderChoices(encoders)) {
+			if (choice.id == preferences.chosen) {
+				ordered.push_back(choice);
+				break;
+			}
+		}
+	}
 	for (const Candidate &candidate : candidates) {
-		ordered.push_back(*candidate.encoder);
+		if (candidate.encoder->id != preferences.chosen) {
+			ordered.push_back(*candidate.encoder);
+		}
 	}
 	return ordered;
+}
+
+std::vector<EncoderInfo> replayEncoderChoices(std::span<const EncoderInfo> encoders)
+{
+	std::vector<EncoderInfo> choices;
+	for (const EncoderInfo &encoder : encoders) {
+		if (!encoder.deprecated && !encoder.internal && (encoder.codec == "h264" || encoder.codec == "hevc")) {
+			choices.push_back(encoder);
+		}
+	}
+	return choices;
 }
 
 EncoderSettings buildReplaySettings(const EncoderInfo &encoder, const ReplayEncoderParams &params)

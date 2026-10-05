@@ -7,6 +7,9 @@
 #include "decode/Picture.hpp"
 #include "obs/PictureRenderer.hpp"
 #include "obs/RenderAdapter.hpp"
+#ifdef _WIN32
+#include "obs/SharedPictures.hpp"
+#endif
 
 #include <catch2/catch_test_macros.hpp>
 #include <obs.h>
@@ -14,6 +17,7 @@
 #include <algorithm>
 #include <array>
 #include <cmath>
+#include <cstdarg>
 #include <cstddef>
 #include <cstdint>
 #include <cstring>
@@ -522,3 +526,61 @@ TEST_CASE_METHOD(ObsFixture, "the picture renderer sites chroma left of its luma
 	}
 	obs_leave_graphics();
 }
+
+#ifdef _WIN32
+namespace {
+
+// Counts the log lines whose format holds `text`, and passes every line on.
+struct LogCounter {
+	const char *text;
+	int lines = 0;
+	log_handler_t previous = nullptr;
+	void *previousParam = nullptr;
+
+	explicit LogCounter(const char *counted) : text(counted)
+	{
+		base_get_log_handler(&previous, &previousParam);
+		base_set_log_handler(count, this);
+	}
+	~LogCounter() { base_set_log_handler(previous, previousParam); }
+
+	static void count(int level, const char *format, va_list args, void *param)
+	{
+		auto *counter = static_cast<LogCounter *>(param);
+		if (std::strstr(format, counter->text)) {
+			++counter->lines;
+		}
+		counter->previous(level, format, args, counter->previousParam);
+	}
+};
+
+} // namespace
+
+TEST_CASE_METHOD(ObsFixture, "shared pictures say when pictures have to go through memory", "[obs][picture]")
+{
+	obs_enter_graphics();
+	{
+		LogCounter said("no shared NV12 textures");
+
+		// An odd size is the caller's mistake, not the adapter's.
+		tapeloop::obs::SharedPictures odd;
+		CHECK_FALSE(odd.prepare(63, 36));
+		CHECK_FALSE(odd.copiesThroughMemory());
+
+		// WARP, which the CI runs on, has no NV12 textures; a real adapter usually has.
+		tapeloop::obs::SharedPictures shared;
+		const bool prepared = shared.prepare(64, 36);
+		CHECK(shared.copiesThroughMemory() == !prepared);
+		if (!gs_nv12_available()) {
+			CHECK_FALSE(prepared);
+			// Said once, however many replays and attempts.
+			tapeloop::obs::SharedPictures another;
+			CHECK_FALSE(another.prepare(64, 36));
+			CHECK_FALSE(shared.prepare(64, 36));
+			CHECK(another.copiesThroughMemory());
+			CHECK(said.lines == 1);
+		}
+	}
+	obs_leave_graphics();
+}
+#endif

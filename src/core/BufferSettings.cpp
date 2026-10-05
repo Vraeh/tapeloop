@@ -95,6 +95,8 @@ EncoderPreferences BufferSettings::encoderPreferences() const
 {
 	EncoderPreferences preferences;
 	preferences.preferHevc = !forceH264;
+	preferences.chosen = replayEncoder;
+	preferences.otherAdapters = allowOtherAdapters;
 	return preferences;
 }
 
@@ -107,6 +109,8 @@ SavedSettings saveSettings(const BufferSettings &settings)
 	saved.startWithOutputs = settings.startWithOutputs;
 	saved.activateOffAir = settings.activateOffAir;
 	saved.forceH264 = settings.forceH264;
+	saved.replayEncoder = settings.replayEncoder;
+	saved.allowOtherAdapters = settings.allowOtherAdapters;
 	for (const auto &[uuid, source] : settings.sources) {
 		SavedSource entry;
 		entry.uuid = uuid;
@@ -136,6 +140,8 @@ std::optional<BufferSettings> loadSettings(const SavedSettings &saved)
 	settings.startWithOutputs = saved.startWithOutputs;
 	settings.activateOffAir = saved.activateOffAir;
 	settings.forceH264 = saved.forceH264;
+	settings.replayEncoder = saved.replayEncoder;
+	settings.allowOtherAdapters = saved.allowOtherAdapters;
 	for (const SavedSource &entry : saved.sources) {
 		if (entry.uuid.empty()) {
 			continue;

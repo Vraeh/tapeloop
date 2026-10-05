@@ -45,6 +45,10 @@ struct BufferSettings {
 	bool activateOffAir = false;
 	// Encode replays in H.264 even where the hardware encodes HEVC.
 	bool forceH264 = false;
+	// The encoder chosen for replays, empty for the automatic order, and whether that
+	// order may use encoders on another adapter than the one OBS renders on.
+	std::string replayEncoder;
+	bool allowOtherAdapters = true;
 	std::map<std::string, SourceSettings> sources;
 
 	Nanoseconds lengthFor(const std::string &uuid) const;
@@ -83,6 +87,8 @@ struct SavedSettings {
 	bool startWithOutputs = true;
 	bool activateOffAir = false;
 	bool forceH264 = false;
+	std::string replayEncoder;
+	bool allowOtherAdapters = true;
 	std::vector<SavedSource> sources;
 };
 

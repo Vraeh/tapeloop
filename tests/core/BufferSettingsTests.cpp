@@ -55,6 +55,17 @@ TEST_CASE("encoders prefer HEVC unless the settings keep replays in H.264")
 	CHECK_FALSE(settings.encoderPreferences().preferHevc);
 }
 
+TEST_CASE("the settings pass the chosen encoder and the other-adapter choice on")
+{
+	BufferSettings settings;
+	CHECK(settings.encoderPreferences().chosen.empty());
+	CHECK(settings.encoderPreferences().otherAdapters);
+	settings.replayEncoder = "obs_qsv11_v2";
+	settings.allowOtherAdapters = false;
+	CHECK(settings.encoderPreferences().chosen == "obs_qsv11_v2");
+	CHECK_FALSE(settings.encoderPreferences().otherAdapters);
+}
+
 TEST_CASE("buffer settings survive a save and a load")
 {
 	BufferSettings settings;
@@ -62,6 +73,8 @@ TEST_CASE("buffer settings survive a save and a load")
 	settings.resolution = {ResolutionMode::Output, 1080};
 	settings.startWithOutputs = false;
 	settings.forceH264 = true;
+	settings.replayEncoder = "obs_nvenc_hevc_tex";
+	settings.allowOtherAdapters = false;
 	settings.sources["a"] = {true, 120s, ReplayResolution{ResolutionMode::Fixed, 2160}, std::nullopt};
 	settings.sources["b"] = {false, std::nullopt, ReplayResolution{ResolutionMode::Canvas, 1080}, std::nullopt};
 	settings.sources["c"] = {true, std::nullopt, std::nullopt, std::nullopt};

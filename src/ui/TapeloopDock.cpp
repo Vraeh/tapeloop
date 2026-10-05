@@ -62,6 +62,10 @@ TapeloopDock::TapeloopDock(DockBackend &backend, TextLookup text, QWidget *paren
 	  startWithOutputs_(new QCheckBox(text_("Dock.StartWithOutputs"), this)),
 	  activateOffAir_(new QCheckBox(text_("Dock.ActivateOffAir"), this)),
 	  forceH264_(new QCheckBox(text_("Dock.ForceH264"), this)),
+	  advanced_(new QCheckBox(text_("Dock.Advanced"), this)),
+	  advancedSettings_(new QWidget(this)),
+	  replayEncoder_(new QComboBox(this)),
+	  otherAdapters_(new QCheckBox(text_("Dock.OtherAdapters"), this)),
 	  note_(new QLabel(text_("Dock.ApplyNote"), this)),
 	  startStop_(new QPushButton(this)),
 	  followsOutputs_(new QLabel(text_("Dock.FollowsOutputs"), this)),
@@ -95,6 +99,14 @@ TapeloopDock::TapeloopDock(DockBackend &backend, TextLookup text, QWidget *paren
 	activateOffAir_->setToolTip(text_("Dock.ActivateOffAir.Tooltip"));
 	forceH264_->setObjectName("forceH264");
 	forceH264_->setToolTip(text_("Dock.ForceH264.Tooltip"));
+	advanced_->setObjectName("advanced");
+	advanced_->setToolTip(text_("Dock.Advanced.Tooltip"));
+	advancedSettings_->setObjectName("advancedSettings");
+	advancedSettings_->hide();
+	replayEncoder_->setObjectName("replayEncoder");
+	replayEncoder_->setToolTip(text_("Dock.ReplayEncoder.Tooltip"));
+	otherAdapters_->setObjectName("otherAdapters");
+	otherAdapters_->setToolTip(text_("Dock.OtherAdapters.Tooltip"));
 	note_->setObjectName("note");
 	note_->setWordWrap(true);
 	startStop_->setObjectName("startStop");
@@ -119,12 +131,20 @@ TapeloopDock::TapeloopDock(DockBackend &backend, TextLookup text, QWidget *paren
 	form->addRow(text_("Dock.Resolution"), resolution_);
 	form->addRow(startWithOutputs_);
 	form->addRow(activateOffAir_);
-	form->addRow(forceH264_);
+	form->addRow(advanced_);
+
+	// The settings few need, shown by the switch above.
+	auto *advanced = new QFormLayout(advancedSettings_);
+	advanced->setContentsMargins(0, 0, 0, 0);
+	advanced->addRow(text_("Dock.ReplayEncoder"), replayEncoder_);
+	advanced->addRow(otherAdapters_);
+	advanced->addRow(forceH264_);
 
 	auto *layout = new QVBoxLayout(this);
 	layout->addWidget(sources_, 1);
 	layout->addWidget(sourceSettings_);
 	layout->addLayout(form);
+	layout->addWidget(advancedSettings_);
 	layout->addWidget(note_);
 	layout->addWidget(startStop_);
 	layout->addWidget(followsOutputs_);
@@ -171,6 +191,27 @@ TapeloopDock::TapeloopDock(DockBackend &backend, TextLookup text, QWidget *paren
 	});
 	connect(activateOffAir_, &QCheckBox::toggled, this, [this](bool checked) {
 		changeSettings([](BufferSettings &settings, int on) { settings.activateOffAir = on != 0; },
+			       checked ? 1 : 0);
+	});
+	connect(advanced_, &QCheckBox::toggled, this, [this](bool checked) {
+		advancedSettings_->setVisible(checked);
+		refresh();
+	});
+	connect(replayEncoder_, &QComboBox::currentIndexChanged, this, [this](int index) {
+		guarded([&] {
+			BufferSettings settings = backend_.settings();
+			settings.replayEncoder = replayEncoder_->itemData(index).toString().toStdString();
+			backend_.setSettings(settings);
+		});
+		refresh();
+	});
+	// The advanced settings follow the switch, before the controls after them.
+	setTabOrder(advanced_, replayEncoder_);
+	setTabOrder(replayEncoder_, otherAdapters_);
+	setTabOrder(otherAdapters_, forceH264_);
+	setTabOrder(forceH264_, startStop_);
+	connect(otherAdapters_, &QCheckBox::toggled, this, [this](bool checked) {
+		changeSettings([](BufferSettings &settings, int on) { settings.allowOtherAdapters = on != 0; },
 			       checked ? 1 : 0);
 	});
 	connect(forceH264_, &QCheckBox::toggled, this, [this](bool checked) {
@@ -236,6 +277,8 @@ void TapeloopDock::refresh()
 		const QSignalBlocker blockStart(startWithOutputs_);
 		const QSignalBlocker blockActivate(activateOffAir_);
 		const QSignalBlocker blockForceH264(forceH264_);
+		const QSignalBlocker blockEncoder(replayEncoder_);
+		const QSignalBlocker blockOtherAdapters(otherAdapters_);
 		// A value being typed is not overwritten.
 		if (!length_->hasFocus()) {
 			length_->setValue(seconds(settings.length));
@@ -244,6 +287,13 @@ void TapeloopDock::refresh()
 		startWithOutputs_->setChecked(settings.startWithOutputs);
 		activateOffAir_->setChecked(settings.activateOffAir);
 		forceH264_->setChecked(settings.forceH264);
+		// A chosen encoder decides the codec itself.
+		forceH264_->setEnabled(settings.replayEncoder.empty());
+		otherAdapters_->setChecked(settings.allowOtherAdapters);
+		// The encoders are looked up only while the advanced settings show them.
+		if (advanced_->isChecked()) {
+			updateEncoders(settings.replayEncoder);
+		}
 
 		updateReplays();
 
@@ -413,6 +463,35 @@ void TapeloopDock::updateReplays()
 	replays_->setCurrentRow(shown != shownReplays_.end() ? static_cast<int>(shown - shownReplays_.begin()) : -1);
 	addTag_->setEnabled(current != 0);
 	tagName_->setEnabled(current != 0);
+}
+
+void TapeloopDock::updateEncoders(const std::string &chosen)
+{
+	// Not while its list is open, which would move the user off the row they are on.
+	if (replayEncoder_->view()->isVisible()) {
+		return;
+	}
+	// OBS may load more encoders, so the list is checked each time and rebuilt when it
+	// changes; a choice no longer offered stays, under its id, until another is picked.
+	std::vector<std::pair<std::string, std::string>> encoders;
+	for (EncoderChoice &choice : backend_.encoderChoices()) {
+		encoders.emplace_back(std::move(choice.id), std::move(choice.name));
+	}
+	const bool offered = chosen.empty() || std::any_of(encoders.begin(), encoders.end(), [&](const auto &encoder) {
+				     return encoder.first == chosen;
+			     });
+	if (!offered) {
+		encoders.emplace_back(chosen, chosen);
+	}
+	if (encoders != shownEncoders_) {
+		replayEncoder_->clear();
+		replayEncoder_->addItem(text_("Dock.ReplayEncoder.Automatic"), QString());
+		for (const auto &[id, name] : encoders) {
+			replayEncoder_->addItem(QString::fromStdString(name), QString::fromStdString(id));
+		}
+		shownEncoders_ = std::move(encoders);
+	}
+	replayEncoder_->setCurrentIndex(replayEncoder_->findData(QString::fromStdString(chosen)));
 }
 
 void TapeloopDock::changeSettings(void (*change)(BufferSettings &, int), int value)

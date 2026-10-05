@@ -3,6 +3,8 @@
 
 #include "obs/ManagerDockBackend.hpp"
 
+#include "obs/ObsEncoders.hpp"
+
 #include <algorithm>
 #include <cctype>
 #include <span>
@@ -93,6 +95,16 @@ std::vector<std::string> ManagerDockBackend::replayTags() const
 {
 	const std::span<const std::string> tags = manager_.library().tags();
 	return {tags.begin(), tags.end()};
+}
+
+std::vector<ui::EncoderChoice> ManagerDockBackend::encoderChoices() const
+{
+	std::vector<ui::EncoderChoice> choices;
+	for (const EncoderInfo &encoder : replayEncoderChoices(registeredVideoEncoders())) {
+		const char *name = obs_encoder_get_display_name(encoder.id.c_str());
+		choices.push_back({encoder.id, name ? name : encoder.id});
+	}
+	return choices;
 }
 
 } // namespace tapeloop::obs

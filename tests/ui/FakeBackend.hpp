@@ -24,6 +24,8 @@ public:
 	uint64_t picked = 0;
 	std::vector<tapeloop::ui::DockReplay> captured;
 	std::vector<std::string> tags;
+	std::vector<tapeloop::ui::EncoderChoice> choices = {{"obs_nvenc_hevc_tex", "NVIDIA NVENC HEVC"},
+							    {"obs_x264", "x264"}};
 
 	std::vector<tapeloop::ui::DockSource> sources() const override
 	{
@@ -42,6 +44,8 @@ public:
 		current = settings;
 		++settingsChanges;
 	}
+
+	std::vector<tapeloop::ui::EncoderChoice> encoderChoices() const override { return choices; }
 
 	bool running() const override { return isRunning; }
 	bool manualControlEnabled() const override { return manualEnabled; }

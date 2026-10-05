@@ -9,6 +9,7 @@
 #include <obs.h>
 
 #include <array>
+#include <atomic>
 #include <cstdint>
 #include <memory>
 #include <mutex>
@@ -44,6 +45,11 @@ public:
 	// Switches to the newest picture published, if any, and draws the one on screen.
 	// False when nothing was published yet.
 	bool draw(PictureRenderer &renderer, uint32_t width, uint32_t height) noexcept;
+	// Whether the last prepare() could not give shared textures, so that pictures have
+	// to be copied through memory: the adapter or renderer has no shared NV12 textures,
+	// said once in the log for all, or making them failed, said when it starts. A
+	// prepare() that succeeds clears it. Read from any thread.
+	bool copiesThroughMemory() const noexcept { return copiesThroughMemory_.load(std::memory_order_relaxed); }
 
 private:
 	struct Opened;
@@ -71,6 +77,7 @@ private:
 
 	// Decoder thread only: the textures as its device opened them.
 	std::unique_ptr<Opened> opened_;
+	std::atomic<bool> copiesThroughMemory_{false};
 };
 
 } // namespace tapeloop::obs
