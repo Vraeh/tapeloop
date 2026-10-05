@@ -26,6 +26,7 @@ TEST_CASE("buffer settings start from the defaults")
 	CHECK(settings.length == 60s);
 	CHECK(settings.resolution.mode == ResolutionMode::Canvas);
 	CHECK(settings.startWithOutputs);
+	CHECK_FALSE(settings.forceH264);
 	CHECK(settings.selectedSources().empty());
 }
 
@@ -52,6 +53,7 @@ TEST_CASE("buffer settings survive a save and a load")
 	settings.length = 45s;
 	settings.resolution = {ResolutionMode::Output, 1080};
 	settings.startWithOutputs = false;
+	settings.forceH264 = true;
 	settings.sources["a"] = {true, 120s, ReplayResolution{ResolutionMode::Fixed, 2160}};
 	settings.sources["b"] = {false, std::nullopt, ReplayResolution{ResolutionMode::Canvas, 1080}};
 	settings.sources["c"] = {true, std::nullopt, std::nullopt};

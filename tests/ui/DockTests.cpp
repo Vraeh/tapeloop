@@ -188,6 +188,12 @@ TEST_CASE("the global settings in the dock reach the backend")
 	CHECK(startWithOutputs->isChecked());
 	startWithOutputs->setChecked(false);
 	CHECK_FALSE(backend.current.startWithOutputs);
+
+	auto *forceH264 = child<QCheckBox>(dock, "forceH264");
+	CHECK_FALSE(forceH264->isChecked());
+	CHECK_FALSE(forceH264->toolTip().isEmpty());
+	forceH264->setChecked(true);
+	CHECK(backend.current.forceH264);
 }
 
 TEST_CASE("the source settings dialog sets and clears a source's own settings")
@@ -235,7 +241,7 @@ TEST_CASE("every control of the dock can be reached with the keyboard")
 		CAPTURE(widget->objectName().toStdString());
 		CHECK((widget->focusPolicy() & Qt::TabFocus) != 0);
 	}
-	CHECK(controls == 6);
+	CHECK(controls == 7);
 }
 
 TEST_CASE("every string the dock asks for is in the locale file")
@@ -270,10 +276,12 @@ TEST_CASE("refreshing the dock changes nothing")
 	backend.current.length = 120s;
 	backend.current.resolution = {ResolutionMode::Fixed, 480};
 	backend.current.startWithOutputs = false;
+	backend.current.forceH264 = true;
 	TapeloopDock dock(backend, localeText());
 	dock.refresh();
 	dock.refresh();
 	CHECK(backend.settingsChanges == 0);
+	CHECK(child<QCheckBox>(dock, "forceH264")->isChecked());
 	CHECK(child<QSpinBox>(dock, "length")->value() == 120);
 	CHECK(child<QComboBox>(dock, "resolution")->currentIndex() == 3);
 }

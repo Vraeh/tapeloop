@@ -38,6 +38,8 @@ struct BufferSettings {
 	Nanoseconds length = kDefaultBufferLength;
 	ReplayResolution resolution;
 	bool startWithOutputs = true;
+	// Encode replays in H.264 even where the hardware encodes HEVC.
+	bool forceH264 = false;
 	std::map<std::string, SourceSettings> sources;
 
 	Nanoseconds lengthFor(const std::string &uuid) const;
@@ -68,6 +70,7 @@ struct SavedSettings {
 	std::string resolution;
 	int64_t height = 0;
 	bool startWithOutputs = true;
+	bool forceH264 = false;
 	std::vector<SavedSource> sources;
 };
 
