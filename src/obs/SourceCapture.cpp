@@ -17,6 +17,28 @@
 namespace tapeloop::obs {
 namespace {
 
+// Paths that are not the optimal one work, and say so in the log in plain words.
+void warnAboutPath(const char *name, const char *encoder, EncoderPath path) noexcept
+{
+	switch (path) {
+	case EncoderPath::Texture:
+		break;
+	case EncoderPath::Readback:
+		blog(LOG_WARNING,
+		     "[tapeloop] '%s' is encoded by %s, which reads every frame back through memory because "
+		     "the encoder of the adapter OBS renders on could not take it. Replays work, but this "
+		     "costs CPU time and memory bandwidth: it is not the optimal path",
+		     name, encoder);
+		break;
+	case EncoderPath::Software:
+		blog(LOG_WARNING,
+		     "[tapeloop] '%s' is encoded by %s on the CPU because no hardware encoder could take it. "
+		     "Replays work, but this costs CPU time: it is not the optimal path",
+		     name, encoder);
+		break;
+	}
+}
+
 int32_t toInt32(uint32_t value)
 {
 	return static_cast<int32_t>(std::clamp<uint32_t>(value, 1, std::numeric_limits<int32_t>::max()));
@@ -158,8 +180,10 @@ StartResult SourceCapture::start(obs_source_t *source, const CaptureSettings &se
 				sourceSize_ = sourceSize;
 				outputSize_ = *outputSize;
 				encoderId_ = candidate.id;
+				encoderPath_ = encoderPathOf(candidate);
 				blog(LOG_INFO, "[tapeloop] Capturing '%s' at %ux%u with %s", name, outputSize->width,
 				     outputSize->height, candidate.id.c_str());
+				warnAboutPath(name, candidate.id.c_str(), encoderPath_);
 				return StartResult::Started;
 			}
 
@@ -236,6 +260,7 @@ void SourceCapture::tearDown()
 	}
 	source_ = nullptr;
 	encoderId_.clear();
+	encoderPath_ = EncoderPath::Texture;
 	outputSize_ = {};
 }
 
@@ -258,6 +283,7 @@ CaptureStats SourceCapture::stats() const
 		stats.state = CaptureState::Waiting;
 	}
 	stats.encoderId = encoderId_;
+	stats.encoderPath = encoderPath_;
 	stats.outputSize = outputSize_;
 	if (buffer_) {
 		stats.buffer = buffer_->stats();

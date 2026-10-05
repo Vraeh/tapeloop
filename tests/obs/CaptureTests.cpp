@@ -361,6 +361,26 @@ TEST_CASE_METHOD(ObsFixture, "a capture sizes its buffer for the codec of the en
 	}
 }
 
+TEST_CASE_METHOD(ObsFixture, "a capture reports the path its encoder takes the frames by", "[obs][capture]")
+{
+	OBSSourceAutoRelease pattern = createTestPattern(640, 360);
+	SourceCapture capture;
+	CaptureSettings settings;
+	settings.candidates = {testEncoder("obs_x264")};
+	REQUIRE(capture.start(pattern, settings) == StartResult::Started);
+	CHECK(capture.stats().encoderPath == tapeloop::EncoderPath::Software);
+	capture.stop();
+	CHECK(capture.stats().encoderPath == tapeloop::EncoderPath::Texture);
+
+	// As QuickSync on another adapter than the one OBS renders on.
+	EncoderInfo readback = testEncoder(tapeloop::test::kHevcEncoderId, "hevc");
+	readback.vendor = Vendor::Intel;
+	settings.candidates = {readback};
+	REQUIRE(capture.start(pattern, settings) == StartResult::Started);
+	CHECK(capture.stats().encoderPath == tapeloop::EncoderPath::Readback);
+	capture.stop();
+}
+
 TEST_CASE_METHOD(ObsFixture, "a capture reports an encoder that fails while running", "[obs][capture]")
 {
 	OBSSourceAutoRelease pattern = createTestPattern(640, 360);
