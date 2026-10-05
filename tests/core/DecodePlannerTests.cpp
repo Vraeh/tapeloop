@@ -573,3 +573,100 @@ TEST_CASE("DecodePlanner recovers from running out of memory for a longer GOP")
 	}
 	CHECK(decoder.violations == 0);
 }
+
+TEST_CASE("DecodePlanner keeps its frames within the byte cap and decodes again what it gave back")
+{
+	FakeDecoder decoder = makeDecoder(2);
+	decoder.frameBytes = 100;
+	DecodePlannerConfig config;
+	config.maxBytes = 350;
+	DecodePlanner planner(decoder, config);
+	planner.load(makeClip({{VideoCodec::H264, {}, 2}}));
+
+	for (int64_t frame = 0; frame < 2 * kGopLength; ++frame) {
+		REQUIRE(shows(planner, decoder, frame));
+		CHECK(planner.heldBytes() <= 300);
+		CHECK(planner.heldBytes() == planner.heldFrames() * 100);
+		CHECK(decoder.outstanding.size() == planner.heldFrames());
+	}
+	// Each packet went once, forward.
+	CHECK(planner.work().packetsSent == 2 * kGopLength);
+
+	// Three frames are kept: the last ones show without decoding, an earlier one decodes
+	// its GOP again from the keyframe.
+	const uint64_t sent = planner.work().packetsSent;
+	REQUIRE(shows(planner, decoder, 2 * kGopLength - 2));
+	CHECK(planner.work().packetsSent == sent);
+	REQUIRE(shows(planner, decoder, kGopLength + 5));
+	CHECK(planner.work().packetsSent > sent);
+	CHECK(planner.heldBytes() <= 300);
+	for (int64_t frame = kGopLength + 4; frame >= 0; --frame) {
+		REQUIRE(shows(planner, decoder, frame));
+		CHECK(planner.heldBytes() <= 300);
+	}
+}
+
+TEST_CASE("DecodePlanner shows a frame larger than the byte cap and keeps only it")
+{
+	FakeDecoder decoder = makeDecoder();
+	decoder.frameBytes = 100;
+	DecodePlannerConfig config;
+	config.maxBytes = 50;
+	DecodePlanner planner(decoder, config);
+	planner.load(makeClip({{VideoCodec::H264, {}, 2}}));
+
+	REQUIRE(shows(planner, decoder, 10));
+	CHECK(planner.heldFrames() == 1);
+	REQUIRE(shows(planner, decoder, 9));
+	CHECK(planner.heldFrames() == 1);
+	REQUIRE(planner.prefetch(PlayDirection::Backward) == DecodeStatus::Ok);
+	REQUIRE(shows(planner, decoder, kGopLength + 3));
+	REQUIRE(planner.prefetch(PlayDirection::Backward) == DecodeStatus::Ok);
+	CHECK(planner.heldFrames() == 1);
+	REQUIRE(shows(planner, decoder, kGopLength - 1));
+	CHECK(decoder.outstanding.size() == 1);
+}
+
+TEST_CASE("DecodePlanner decodes ahead within the byte cap without letting go of the GOP on screen")
+{
+	FakeDecoder decoder = makeDecoder(1);
+	decoder.frameBytes = 10;
+	DecodePlannerConfig config;
+	config.maxBytes = 10 * (kGopLength + 5);
+	DecodePlanner planner(decoder, config);
+	planner.load(makeClip({{VideoCodec::H264, {}, 3}}));
+
+	REQUIRE(shows(planner, decoder, 3 * kGopLength - 1));
+	for (int64_t frame = 3 * kGopLength - 2; frame >= 2 * kGopLength; --frame) {
+		REQUIRE(shows(planner, decoder, frame));
+	}
+	// The GOP on screen stays whole; of the one before, its last frames fit.
+	REQUIRE(planner.prefetch(PlayDirection::Backward) == DecodeStatus::Ok);
+	CHECK(planner.heldBytes() <= config.maxBytes);
+	CHECK(planner.heldFrames() == kGopLength + 5);
+	const uint64_t sent = planner.work().packetsSent;
+	REQUIRE(shows(planner, decoder, 2 * kGopLength + 7));
+	for (int64_t frame = 2 * kGopLength - 1; frame >= 2 * kGopLength - 5; --frame) {
+		REQUIRE(shows(planner, decoder, frame));
+	}
+	CHECK(planner.work().packetsSent == sent);
+	// Further back than what fit, the GOP is decoded again.
+	REQUIRE(shows(planner, decoder, kGopLength + 2));
+	CHECK(planner.work().packetsSent > sent);
+	CHECK(planner.heldBytes() <= config.maxBytes);
+}
+
+TEST_CASE("The decoded-frame cache is 512 MiB unless set within its bounds")
+{
+	constexpr size_t kMiB = size_t{1} << 20;
+	CHECK(DecodePlannerConfig{}.maxBytes == 512 * kMiB);
+	CHECK(tapeloop::kDefaultDecodedCacheBytes == 512 * kMiB);
+	// 128 MiB to a quarter of the dedicated video memory, at most 4 GiB.
+	CHECK(tapeloop::clampDecodedCacheBytes(512 * kMiB, 8192 * kMiB) == 512 * kMiB);
+	CHECK(tapeloop::clampDecodedCacheBytes(64 * kMiB, 8192 * kMiB) == 128 * kMiB);
+	CHECK(tapeloop::clampDecodedCacheBytes(4096 * kMiB, 8192 * kMiB) == 2048 * kMiB);
+	CHECK(tapeloop::clampDecodedCacheBytes(8192 * kMiB, 32768 * kMiB) == 4096 * kMiB);
+	// An adapter with little or no memory of its own still allows the least.
+	CHECK(tapeloop::clampDecodedCacheBytes(512 * kMiB, 256 * kMiB) == 128 * kMiB);
+	CHECK(tapeloop::clampDecodedCacheBytes(512 * kMiB, 0) == 128 * kMiB);
+}

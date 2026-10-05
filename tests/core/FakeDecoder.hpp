@@ -52,6 +52,8 @@ public:
 	std::set<int64_t> dropped;
 	// After this packet, a frame of a pts no packet has comes out too.
 	std::optional<int64_t> strayAfter;
+	// The memory each frame reports holding.
+	size_t frameBytes = 0;
 	int closes = 0;
 	std::vector<Session> sessions;
 	std::map<uint64_t, Made> made;
@@ -108,7 +110,7 @@ public:
 		const uint64_t id = inside_.front();
 		inside_.pop_front();
 		outstanding.insert(id);
-		frame = {id, made[id].pts, Nanoseconds{0}};
+		frame = {id, made[id].pts, Nanoseconds{0}, frameBytes};
 		return DecodeStatus::Ok;
 	}
 

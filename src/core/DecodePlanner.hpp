@@ -16,12 +16,22 @@ namespace tapeloop {
 
 enum class PlayDirection { Forward, Backward };
 
+inline constexpr size_t kDefaultDecodedCacheBytes = size_t{512} << 20;
+
 struct DecodePlannerConfig {
 	// GOPs whose decoded frames are kept, for stepping back and playing in reverse; at
 	// least one. Two let reverse play decode the GOP before the one on screen ahead of
 	// time.
 	size_t keptGops = 2;
+	// The most memory the kept frames may hold. What does not fit is not kept, and
+	// stepping back or playing in reverse decode it again when they need it; the frame
+	// asked for is kept whatever its size.
+	size_t maxBytes = kDefaultDecodedCacheBytes;
 };
+
+// The bounds of the decoded-frame cache a user may set: 128 MiB to a quarter of the
+// adapter's dedicated video memory, at most 4 GiB, and never below the 128 MiB.
+size_t clampDecodedCacheBytes(size_t bytes, size_t dedicatedVideoMemory) noexcept;
 
 // What the planner asked of its decoder, for tests and measurements.
 struct DecodeWork {
@@ -73,15 +83,21 @@ public:
 	const DecodeWork &work() const noexcept { return work_; }
 	size_t keptGopCount() const noexcept { return kept_.size(); }
 	size_t heldFrames() const noexcept;
+	size_t heldBytes() const noexcept { return heldBytes_; }
 
 private:
 	struct KeptGop {
 		size_t gop = 0;
 		// By packet index within the GOP, in decode order.
 		std::vector<std::optional<DecodedFrame>> frames;
+		// Frames given back to stay within maxBytes, which a pass from the keyframe
+		// brings back; by packet index, as frames.
+		std::vector<char> dropped;
+		// Frames held, and frames that came out of the decoder in this pass.
 		size_t received = 0;
-		// Every frame the decoder gives for this GOP is in: all of them, or what was left
-		// once it was flushed at the end of the GOP.
+		size_t arrived = 0;
+		// Every frame the decoder gives for this GOP came out: all of them, or what was
+		// left once it was flushed at the end of the GOP.
 		bool complete = false;
 	};
 
@@ -89,11 +105,17 @@ private:
 	KeptGop *find(size_t gop) noexcept;
 	void release(KeptGop &kept) noexcept;
 	void releaseAll() noexcept;
+	void drop(KeptGop &kept, size_t packet) noexcept;
+	// Gives back kept frames until a frame of that size fits: first whole GOPs other than
+	// the one it belongs to and the one on screen, then the earliest frames of its own GOP
+	// other than the one asked for.
+	// False when the frame still does not fit.
+	bool makeRoom(KeptGop &kept, size_t bytes, size_t wanted) noexcept;
 	// Decodes GOP gop until the frame of packet `packet` has come out, or the whole GOP
 	// when packet is past its end.
 	DecodeStatus decode(size_t gop, size_t packet);
 	DecodeStatus startAt(size_t gop);
-	DecodeStatus receiveAll(KeptGop &kept);
+	DecodeStatus receiveAll(KeptGop &kept, size_t wanted);
 	// Ends a pass that failed. A lost device also lets go of every kept frame and of
 	// the decoder, which the next pass opens again.
 	DecodeStatus fail(DecodeStatus status) noexcept;
@@ -102,6 +124,7 @@ private:
 	DecodePlannerConfig config_;
 	Clip clip_;
 	std::vector<KeptGop> kept_;
+	size_t heldBytes_ = 0;
 	DecodeWork work_;
 	// The run the decoder is open for: the configuration object its GOPs share, which
 	// may be null, and the codec.
