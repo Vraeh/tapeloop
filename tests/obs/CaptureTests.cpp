@@ -376,14 +376,17 @@ TEST_CASE_METHOD(ObsFixture, "a capture reports the path its encoder takes the f
 	capture.stop();
 	CHECK(capture.stats().encoderPath == tapeloop::EncoderPath::Texture);
 
-	// A texture encoder on the adapter OBS renders on: the optimal path, as OBS hands it
-	// NV12 textures.
+	// A texture encoder on the adapter OBS renders on: the optimal path where OBS hands it
+	// NV12 textures, as OpenGL does; WARP, the Windows CI's renderer, has none.
+	obs_enter_graphics();
+	const bool nv12 = gs_nv12_available();
+	obs_leave_graphics();
 	EncoderInfo texture = testEncoder(tapeloop::test::kHevcTextureEncoderId, "hevc");
 	texture.vendor = Vendor::Nvidia;
 	texture.passTexture = true;
 	settings.candidates = {texture};
 	REQUIRE(capture.start(pattern, settings) == StartResult::Started);
-	CHECK(capture.stats().encoderPath == tapeloop::EncoderPath::Texture);
+	CHECK(capture.stats().encoderPath == (nv12 ? tapeloop::EncoderPath::Texture : tapeloop::EncoderPath::Readback));
 	REQUIRE(waitFor([&] { return hasGops(capture, 2); }, 60s));
 	capture.stop();
 
