@@ -1,7 +1,9 @@
 # The FFmpeg Tapeloop decodes with, linked statically: built once by BuildFFmpeg.cmake
 # into .deps at the top of the repository, in a directory keyed on that script's hash,
 # so a new version or configure line builds again and anything else reuses it.
-# tapeloop_add_ffmpeg() defines the imported targets FFmpeg::avcodec and FFmpeg::avutil.
+# tapeloop_add_ffmpeg() defines the imported targets FFmpeg::avcodec and FFmpeg::avutil,
+# and the global property TAPELOOP_FFMPEG_NOTICES: the notice and license files a
+# package that links them carries.
 include_guard(GLOBAL)
 
 set(_tapeloop_ffmpeg_dir "${CMAKE_CURRENT_LIST_DIR}")
@@ -51,6 +53,7 @@ function(tapeloop_add_ffmpeg)
       message(FATAL_ERROR "Building FFmpeg failed")
     endif()
   endif()
+  set_property(GLOBAL PROPERTY TAPELOOP_FFMPEG_NOTICES "${prefix}/FFmpeg-NOTICE.txt" "${prefix}/FFmpeg-LICENSE.txt")
   file(READ "${prefix}/configure-line.txt" configure_line)
   string(STRIP "${configure_line}" configure_line)
   message(STATUS "FFmpeg from ${prefix}: ${configure_line}")

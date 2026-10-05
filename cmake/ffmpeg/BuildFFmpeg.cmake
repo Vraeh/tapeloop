@@ -151,5 +151,21 @@ run_step(configure "'${shell_source}/configure' --prefix='${shell_prefix}' ${joi
 message(STATUS "Building FFmpeg ${version} with ${jobs} jobs")
 run_step(build "make -j${jobs} && make install")
 
+# What a package that links FFmpeg statically carries next to it.
+file(COPY_FILE "${source}/COPYING.LGPLv2.1" "${PREFIX}/FFmpeg-LICENSE.txt")
+file(
+  WRITE
+  "${PREFIX}/FFmpeg-NOTICE.txt"
+  "Tapeloop includes FFmpeg ${version}, linked statically, under the GNU Lesser General\n"
+  "Public License version 2.1 or later. The license is in FFmpeg-LICENSE.txt.\n"
+  "\n"
+  "Source: ${url}\n"
+  "SHA-256: ${sha256}\n"
+  "\n"
+  "Built from that source without changes, configured with:\n"
+  "${joined}\n"
+)
+
+# Written last: ffmpeg.cmake takes the prefix as complete only once this file is there.
 file(WRITE "${PREFIX}/configure-line.txt" "${joined}\n")
 file(REMOVE_RECURSE "${WORK_DIR}")
