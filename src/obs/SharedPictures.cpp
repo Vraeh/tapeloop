@@ -49,7 +49,11 @@ SharedPictures::~SharedPictures()
 
 bool SharedPictures::prepare(uint32_t width, uint32_t height) noexcept
 {
-	if (!opened_ || !gs_nv12_available() || width == 0 || height == 0 || (width & 1) != 0 || (height & 1) != 0) {
+	if (!opened_ || width == 0 || height == 0 || (width & 1) != 0 || (height & 1) != 0) {
+		return false;
+	}
+	if (!gs_nv12_available()) {
+		noteCopyThroughMemory();
 		return false;
 	}
 	// Only this thread writes the size, so reading it here needs no lock.
@@ -66,6 +70,7 @@ bool SharedPictures::prepare(uint32_t width, uint32_t height) noexcept
 		    gs_texture_get_obj(luma_[i]) != gs_texture_get_obj(chroma_[i]) ||
 		    (handles[i] = gs_texture_get_shared_handle(luma_[i])) == GS_INVALID_HANDLE) {
 			destroyTextures();
+			noteCopyThroughMemory();
 			return false;
 		}
 	}
@@ -203,6 +208,17 @@ void SharedPictures::rebuildDevice(void *, void *data) noexcept
 		self.keys_[i] = kFree;
 	}
 	++self.generation_;
+}
+
+void SharedPictures::noteCopyThroughMemory() noexcept
+{
+	if (copiesThroughMemory_) {
+		return;
+	}
+	copiesThroughMemory_ = true;
+	blog(LOG_WARNING, "[tapeloop] This graphics card cannot share NV12 textures with OBS, so replay pictures are "
+			  "copied through memory. Replays work, but this costs CPU time and memory bandwidth: it "
+			  "is not the optimal path");
 }
 
 void SharedPictures::destroyTextures() noexcept

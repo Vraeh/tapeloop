@@ -7,6 +7,9 @@
 #include "decode/Picture.hpp"
 #include "obs/PictureRenderer.hpp"
 #include "obs/RenderAdapter.hpp"
+#ifdef _WIN32
+#include "obs/SharedPictures.hpp"
+#endif
 
 #include <catch2/catch_test_macros.hpp>
 #include <obs.h>
@@ -466,3 +469,26 @@ TEST_CASE_METHOD(ObsFixture, "the picture renderer sites chroma left of its luma
 	}
 	obs_leave_graphics();
 }
+
+#ifdef _WIN32
+TEST_CASE_METHOD(ObsFixture, "shared pictures say when pictures have to go through memory", "[obs][picture]")
+{
+	obs_enter_graphics();
+	{
+		// An odd size is the caller's mistake, not the adapter's.
+		tapeloop::obs::SharedPictures odd;
+		CHECK_FALSE(odd.prepare(63, 36));
+		CHECK_FALSE(odd.copiesThroughMemory());
+
+		// WARP, which the CI runs on, has no NV12 textures; a real adapter usually has.
+		tapeloop::obs::SharedPictures shared;
+		const bool prepared = shared.prepare(64, 36);
+		CHECK(shared.copiesThroughMemory() == !prepared);
+		if (!gs_nv12_available()) {
+			CHECK_FALSE(prepared);
+		}
+		CHECK(shared.prepare(64, 36) == prepared);
+	}
+	obs_leave_graphics();
+}
+#endif
