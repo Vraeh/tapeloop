@@ -51,8 +51,9 @@ public:
 	const BufferSettings &settings() const noexcept { return settings_; }
 	// An edit of the settings, which the host is asked to save unless the collection
 	// holds settings of another version, kept as they came. Sources selected while the
-	// buffers run start at once and unselected ones stop and free their buffer; any other
-	// change reaches a capture at its next start.
+	// buffers run start at once and unselected ones stop and free their buffer, and
+	// activation off air reaches running captures at once; any other change reaches a
+	// capture at its next start.
 	void setSettings(BufferSettings settings);
 
 	bool running() const noexcept { return lifecycle_.running(); }

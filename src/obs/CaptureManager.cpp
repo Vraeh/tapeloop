@@ -252,7 +252,7 @@ SourceStatus CaptureManager::status(const std::string &uuid) const
 	const auto found = entries_.find(uuid);
 	if (found != entries_.end()) {
 		status.stats = found->second->capture.stats();
-		status.activationLeftOut = settings_.activateFor(uuid) && found->second->activationLeftOut;
+		status.activationLeftOut = found->second->activationLeftOut;
 	}
 	return status;
 }
