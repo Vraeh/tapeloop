@@ -27,6 +27,22 @@ if(NOT APPLE)
   add_subdirectory(src/decode)
   target_link_libraries(${CMAKE_PROJECT_NAME} PRIVATE tapeloop-decode)
   target_compile_definitions(${CMAKE_PROJECT_NAME} PRIVATE TAPELOOP_FFMPEG)
+  # obs-deps' FFmpeg headers are on every target that links libobs, so every file that
+  # includes FFmpeg includes decode/FFmpegHeaders.hpp first, which stops the build on
+  # them.
+  file(
+    GLOB_RECURSE ffmpeg_users
+    "${CMAKE_CURRENT_SOURCE_DIR}/src/*.[ch]pp"
+    "${CMAKE_CURRENT_SOURCE_DIR}/tests/*.[ch]pp"
+  )
+  foreach(file IN LISTS ffmpeg_users)
+    file(READ "${file}" text)
+    string(FIND "${text}" "#include <libav" ffmpeg)
+    string(FIND "${text}" "#include \"decode/FFmpegHeaders.hpp\"" guard)
+    if(NOT ffmpeg EQUAL -1 AND NOT file MATCHES "FFmpegHeaders\\.hpp$" AND (guard EQUAL -1 OR guard GREATER ffmpeg))
+      message(FATAL_ERROR "${file} includes FFmpeg without decode/FFmpegHeaders.hpp before it")
+    endif()
+  endforeach()
   get_property(ffmpeg_notices GLOBAL PROPERTY TAPELOOP_FFMPEG_NOTICES)
   foreach(notice IN LISTS ffmpeg_notices)
     target_add_resource(${CMAKE_PROJECT_NAME} "${notice}")

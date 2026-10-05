@@ -24,8 +24,6 @@
 namespace tapeloop::test {
 namespace {
 
-const std::string kPrefix = TAPELOOP_LIBOBS_PREFIX;
-
 // libobs only logs the objects and views it frees at shutdown because nobody else did.
 // The format strings are matched, not the messages, so that names in a message cannot
 // match.
@@ -43,8 +41,8 @@ void logHandler(int level, const char *format, va_list args, void *) noexcept
 
 void loadModule(const std::string &name)
 {
-	const std::string binary = kPrefix + "/lib/obs-plugins/" + name + ".so";
-	const std::string data = kPrefix + "/share/obs/obs-plugins/" + name;
+	const std::string binary = std::string(TAPELOOP_OBS_PLUGIN_DIR) + "/" + name + TAPELOOP_OBS_MODULE_SUFFIX;
+	const std::string data = std::string(TAPELOOP_OBS_PLUGIN_DATA_DIR) + "/" + name;
 	obs_module_t *module = nullptr;
 	if (obs_open_module(&module, binary.c_str(), data.c_str()) != MODULE_SUCCESS || !obs_init_module(module)) {
 		throw std::runtime_error("Could not load " + binary);
@@ -105,11 +103,8 @@ bool waitFor(const std::function<bool()> &condition, std::chrono::milliseconds t
 
 int ObsFixture::resetCanvas(CanvasFormat format)
 {
-	// libobs keeps the pointer to the module name.
-	static const std::string kGraphicsModule = kPrefix + "/lib/libobs-opengl";
-
 	obs_video_info video = {};
-	video.graphics_module = kGraphicsModule.c_str();
+	video.graphics_module = TAPELOOP_OBS_GRAPHICS_MODULE;
 	video.fps_num = format.fps;
 	video.fps_den = 1;
 	video.base_width = format.width;

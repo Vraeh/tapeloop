@@ -37,14 +37,17 @@ set(
   --disable-shared
 )
 if(CMAKE_HOST_WIN32)
-  # -MD: the C runtime OBS and the plugin use.
+  # -MD: the C runtime OBS and the plugin use. The d3d11va2 hwaccels, which decode into
+  # AV_PIX_FMT_D3D11, live in the objects FFmpeg's Makefile builds only for the older
+  # d3d11va ones, and the H.264 and HEVC decoders offer AV_PIX_FMT_D3D11 at all only when
+  # those are enabled (h264_slice.c, hevcdec.c), so they are enabled too.
   list(
     APPEND
     options
     --toolchain=msvc
     --enable-w32threads
     --enable-d3d11va
-    --enable-hwaccel=h264_d3d11va2,hevc_d3d11va2
+    --enable-hwaccel=h264_d3d11va,h264_d3d11va2,hevc_d3d11va,hevc_d3d11va2
     --extra-cflags=-MD
   )
 else()
@@ -246,7 +249,14 @@ set(
   HAVE_THREADS
 )
 if(CMAKE_HOST_WIN32)
-  list(APPEND required CONFIG_H264_D3D11VA2_HWACCEL CONFIG_HEVC_D3D11VA2_HWACCEL)
+  list(
+    APPEND
+    required
+    CONFIG_H264_D3D11VA_HWACCEL
+    CONFIG_H264_D3D11VA2_HWACCEL
+    CONFIG_HEVC_D3D11VA_HWACCEL
+    CONFIG_HEVC_D3D11VA2_HWACCEL
+  )
 endif()
 file(READ "${WORK_DIR}/build/config.h" config_h)
 file(READ "${WORK_DIR}/build/config_components.h" components_h)

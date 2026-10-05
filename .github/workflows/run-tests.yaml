@@ -249,3 +249,49 @@ jobs:
 
       - name: Test
         run: ctest --preset linux-ui
+
+  windows-obs:
+    name: windows-obs
+    runs-on: windows-2022
+    # A run takes five to ten minutes. ctest stops each test after five, which across
+    # some fifty tests could hold the runner for hours.
+    timeout-minutes: 30
+    defaults:
+      run:
+        shell: pwsh
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      # The plugin's configure below builds FFmpeg as the Windows build does, and shares
+      # its cache.
+      - name: Read the runner image
+        id: image
+        run: '"version=$env:ImageVersion" >> $env:GITHUB_OUTPUT'
+
+      - name: Restore FFmpeg
+        uses: actions/cache/restore@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          path: ${{ github.workspace }}/.deps/ffmpeg-*
+          key: ffmpeg-windows-2022-${{ steps.image.outputs.version }}-${{ hashFiles('cmake/ffmpeg/*.cmake') }}
+
+      - name: Install MSYS2 tools
+        run: C:\msys64\usr\bin\pacman.exe -S --noconfirm --needed --noprogressbar make nasm diffutils
+
+      # The runner has no GPU: libobs renders on WARP, which has no NV12 textures, and
+      # no hardware encoder registers.
+      - name: Build libobs with its Direct3D 11 renderer and obs-x264
+        run: cmake --preset windows-ci-x64 -DTAPELOOP_OBS_TEST_RUNTIME=ON
+
+      - name: Configure
+        working-directory: tests/obs
+        run: cmake --preset windows-obs
+
+      - name: Build
+        working-directory: tests/obs
+        run: cmake --build --preset windows-obs
+
+      - name: Test
+        working-directory: tests/obs
+        run: ctest --preset windows-obs

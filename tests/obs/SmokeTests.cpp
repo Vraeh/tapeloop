@@ -9,6 +9,12 @@
 #include "core/EncoderPolicy.hpp"
 #include "core/SourceBuffer.hpp"
 
+#ifdef _WIN32
+#define WIN32_LEAN_AND_MEAN
+#define NOMINMAX
+#include <windows.h>
+#endif
+
 #include <catch2/catch_test_macros.hpp>
 #include <obs.hpp>
 
@@ -99,6 +105,15 @@ TEST_CASE_METHOD(ObsFixture, "libobs starts and shuts down headless", "[obs]")
 	CHECK(video.fps_num == 30);
 	CHECK(obs_get_encoder_codec("obs_x264") != nullptr);
 }
+
+#ifdef _WIN32
+TEST_CASE_METHOD(ObsFixture, "libobs sets up WinRT on its video thread as OBS does", "[obs]")
+{
+	// The video thread loads it as it starts; without it libobs runs in a state OBS
+	// itself never runs in.
+	CHECK(waitFor([] { return GetModuleHandleW(L"libobs-winrt.dll") != nullptr; }, 10s));
+}
+#endif
 
 TEST_CASE_METHOD(ObsFixture, "x264 encodes a view of a source into a buffer of decodable GOPs", "[obs]")
 {

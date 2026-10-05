@@ -15,11 +15,12 @@ struct CanvasFormat {
 	uint32_t fps = 30;
 };
 
-// Starts libobs for one test case, on the OpenGL renderer of whatever X display
-// DISPLAY names, with the obs-x264 plugin, the test pattern source, the test
-// encoders, the buffer output and the capture output loaded, and shuts it down when the
-// test case ends. The test case fails if libobs still counts allocations of its own
-// after the shutdown, or reports objects or views it had to free itself.
+// Starts libobs for one test case, on Linux with the OpenGL renderer of whatever X
+// display DISPLAY names and on Windows with the Direct3D 11 one, with the obs-x264
+// plugin, the test pattern source, the test encoders, the buffer output and the capture
+// output loaded, and shuts it down when the test case ends. The test case fails if
+// libobs still counts allocations of its own after the shutdown, or reports objects or
+// views it had to free itself.
 class ObsFixture {
 public:
 	ObsFixture();
