@@ -3,6 +3,8 @@
 
 #include "obs/ManagerDockBackend.hpp"
 
+#include "obs/ObsEncoders.hpp"
+
 #include <algorithm>
 #include <cctype>
 
@@ -68,6 +70,16 @@ std::vector<ui::DockSource> ManagerDockBackend::sources() const
 void ManagerDockBackend::setSettings(const BufferSettings &settings)
 {
 	manager_.setSettings(settings);
+}
+
+std::vector<ui::EncoderChoice> ManagerDockBackend::encoderChoices() const
+{
+	std::vector<ui::EncoderChoice> choices;
+	for (const EncoderInfo &encoder : replayEncoderChoices(registeredVideoEncoders())) {
+		const char *name = obs_encoder_get_display_name(encoder.id.c_str());
+		choices.push_back({encoder.id, name ? name : encoder.id});
+	}
+	return choices;
 }
 
 } // namespace tapeloop::obs

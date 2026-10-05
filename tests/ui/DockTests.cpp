@@ -10,6 +10,7 @@
 #include <catch2/catch_test_macros.hpp>
 
 #include <QAbstractButton>
+#include <QAbstractItemView>
 #include <QApplication>
 #include <QKeyEvent>
 #include <QLabel>
@@ -112,6 +113,90 @@ TEST_CASE("selected sources show the state of their buffer")
 	backend.current.sources["uuid-scoreboard"].selected = false;
 	dock.refresh();
 	CHECK(table->item(2, 1)->text().isEmpty());
+}
+
+TEST_CASE("the advanced settings choose the replay encoder and whether other cards may encode")
+{
+	FakeBackend backend = backendWithSources();
+	TapeloopDock dock(backend, localeText());
+	dock.show();
+	auto *advanced = child<QCheckBox>(dock, "advanced");
+	auto *settings = child<QWidget>(dock, "advancedSettings");
+	CHECK_FALSE(advanced->isChecked());
+	CHECK_FALSE(settings->isVisible());
+	advanced->setChecked(true);
+	CHECK(settings->isVisible());
+	// Showing them is not a change of the settings.
+	CHECK(backend.settingsChanges == 0);
+
+	auto *encoder = child<QComboBox>(dock, "replayEncoder");
+	REQUIRE(encoder->count() == 3);
+	CHECK(encoder->currentIndex() == 0);
+	CHECK(encoder->itemData(0).toString().isEmpty());
+	CHECK(encoder->itemText(1) == "NVIDIA NVENC HEVC");
+	encoder->setCurrentIndex(2);
+	CHECK(backend.current.replayEncoder == "obs_x264");
+	CHECK_FALSE(child<QCheckBox>(dock, "forceH264")->isEnabled());
+	// Another offered encoder in the settings, as after a scene collection switch.
+	backend.current.replayEncoder = "obs_nvenc_hevc_tex";
+	dock.refresh();
+	CHECK(encoder->currentData().toString() == "obs_nvenc_hevc_tex");
+	encoder->setCurrentIndex(0);
+	CHECK(backend.current.replayEncoder.empty());
+
+	auto *otherAdapters = child<QCheckBox>(dock, "otherAdapters");
+	CHECK(otherAdapters->isChecked());
+	otherAdapters->setChecked(false);
+	CHECK_FALSE(backend.current.allowOtherAdapters);
+
+	// A choice that is no longer offered stays shown until another is picked, and keeping
+	// replays in H.264 waits while an encoder is chosen.
+	auto *forceH264 = child<QCheckBox>(dock, "forceH264");
+	CHECK(forceH264->isEnabled());
+	backend.current.replayEncoder = "obs_qsv11_v2";
+	dock.refresh();
+	CHECK(encoder->currentData().toString() == "obs_qsv11_v2");
+	CHECK(encoder->count() == 4);
+	CHECK(forceH264->parentWidget() == settings);
+	CHECK_FALSE(forceH264->isEnabled());
+
+	// The list follows what OBS offers.
+	backend.choices.push_back({"obs_qsv11_v2", "QuickSync H.264"});
+	dock.refresh();
+	CHECK(encoder->count() == 4);
+	CHECK(encoder->currentText() == "QuickSync H.264");
+
+	// Tab goes through the advanced settings in the order they show.
+	const auto nextFocus = [](QWidget *from) {
+		QWidget *next = from->nextInFocusChain();
+		while (next != from && (!(next->focusPolicy() & Qt::TabFocus) || next->objectName().isEmpty())) {
+			next = next->nextInFocusChain();
+		}
+		return next->objectName();
+	};
+	CHECK(nextFocus(advanced) == "replayEncoder");
+	CHECK(nextFocus(encoder) == "otherAdapters");
+	CHECK(nextFocus(otherAdapters) == "forceH264");
+	CHECK(nextFocus(forceH264) == "startStop");
+}
+
+TEST_CASE("the encoder list holds still while it is open")
+{
+	FakeBackend backend = backendWithSources();
+	TapeloopDock dock(backend, localeText());
+	dock.show();
+	child<QCheckBox>(dock, "advanced")->setChecked(true);
+	auto *encoder = child<QComboBox>(dock, "replayEncoder");
+	encoder->showPopup();
+	REQUIRE(encoder->view()->isVisible());
+	encoder->view()->setCurrentIndex(encoder->model()->index(2, 0));
+	backend.choices.push_back({"obs_qsv11_v2", "QuickSync H.264"});
+	dock.refresh();
+	CHECK(encoder->view()->currentIndex().row() == 2);
+	CHECK(encoder->count() == 3);
+	encoder->hidePopup();
+	dock.refresh();
+	CHECK(encoder->count() == 4);
 }
 
 TEST_CASE("a source on an encoder path that is not the optimal one says so")
@@ -328,7 +413,7 @@ TEST_CASE("every control of the dock can be reached with the keyboard")
 		CAPTURE(widget->objectName().toStdString());
 		CHECK((widget->focusPolicy() & Qt::TabFocus) != 0);
 	}
-	CHECK(controls == 8);
+	CHECK(controls == 11);
 }
 
 TEST_CASE("every string the dock asks for is in the locale file")
@@ -554,6 +639,9 @@ TEST_CASE("every kind of edit in the dock writes the settings once")
 	CHECK(writesOnce([&] { child<QCheckBox>(dock, "startWithOutputs")->setChecked(false); }));
 	CHECK(writesOnce([&] { child<QCheckBox>(dock, "activateOffAir")->setChecked(true); }));
 	CHECK(writesOnce([&] { child<QCheckBox>(dock, "forceH264")->setChecked(true); }));
+	child<QCheckBox>(dock, "advanced")->setChecked(true);
+	CHECK(writesOnce([&] { child<QComboBox>(dock, "replayEncoder")->setCurrentIndex(1); }));
+	CHECK(writesOnce([&] { child<QCheckBox>(dock, "otherAdapters")->setChecked(false); }));
 	CHECK(writesOnce([&] {
 		table->setCurrentCell(0, 0);
 		child<QPushButton>(dock, "sourceSettings")->click();

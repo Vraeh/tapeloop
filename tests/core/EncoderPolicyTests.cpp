@@ -132,6 +132,63 @@ TEST_CASE("replay candidates keep the fixed vendor order when the render vendor 
 	CHECK(candidates(encoders, Vendor::Software) == expected);
 }
 
+TEST_CASE("a chosen encoder goes first, and other adapters can be left out")
+{
+	const std::vector<EncoderInfo> encoders = combined({x264(), intel(), nvidia()});
+	const auto order = [&](const EncoderPreferences &preferences) {
+		Ids ids;
+		for (const EncoderInfo &info :
+		     tapeloop::replayEncoderCandidates(encoders, Vendor::Nvidia, preferences)) {
+			ids.push_back(info.id);
+		}
+		return ids;
+	};
+	EncoderPreferences preferences;
+	preferences.preferHevc = false;
+	// The choice comes first, and the automatic order follows it without it.
+	preferences.chosen = "obs_qsv11_v2";
+	CHECK(order(preferences) == Ids{"obs_qsv11_v2", "obs_nvenc_h264_tex", "obs_x264"});
+	preferences.chosen = "obs_x264";
+	CHECK(order(preferences) == Ids{"obs_x264", "obs_nvenc_h264_tex", "obs_qsv11_v2"});
+	// Even an HEVC encoder the H.264 setting would leave out, since the user chose it.
+	preferences.chosen = "obs_nvenc_hevc_tex";
+	CHECK(order(preferences) == Ids{"obs_nvenc_hevc_tex", "obs_nvenc_h264_tex", "obs_qsv11_v2", "obs_x264"});
+	// A choice that is not there, or that a replay cannot hold, changes nothing.
+	preferences.chosen = "obs_qsv11_av1";
+	CHECK(order(preferences) == Ids{"obs_nvenc_h264_tex", "obs_qsv11_v2", "obs_x264"});
+	preferences.chosen = "obs_nvenc_av1_tex";
+	CHECK(order(preferences) == Ids{"obs_nvenc_h264_tex", "obs_qsv11_v2", "obs_x264"});
+
+	// Without other adapters, the render adapter's encoders go straight to x264.
+	preferences.chosen.clear();
+	preferences.otherAdapters = false;
+	CHECK(order(preferences) == Ids{"obs_nvenc_h264_tex", "obs_x264"});
+	// A choice on another adapter is still the user's.
+	preferences.chosen = "obs_qsv11_v2";
+	CHECK(order(preferences) == Ids{"obs_qsv11_v2", "obs_nvenc_h264_tex", "obs_x264"});
+
+	// With the render adapter's vendor unknown, nothing counts as another adapter.
+	preferences.chosen.clear();
+	Ids unknown;
+	for (const EncoderInfo &info : tapeloop::replayEncoderCandidates(encoders, Vendor::Unknown, preferences)) {
+		unknown.push_back(info.id);
+	}
+	CHECK(unknown == Ids{"obs_nvenc_h264_tex", "obs_qsv11_v2", "obs_x264"});
+}
+
+TEST_CASE("the encoders to choose from are those whose replays the buffer can hold")
+{
+	std::vector<EncoderInfo> encoders = combined({x264(), intel(), nvidia()});
+	encoders.push_back(encoder("obs_qsv11_av1", "av1", Vendor::Intel, true));
+	encoders.push_back(encoder("obs_nvenc_h264_soft", "h264", Vendor::Nvidia, false, true));
+	encoders.push_back(encoder("obs_qsv11", "h264", Vendor::Intel, false, false, true));
+	Ids ids;
+	for (const EncoderInfo &info : tapeloop::replayEncoderChoices(encoders)) {
+		ids.push_back(info.id);
+	}
+	CHECK(ids == Ids{"obs_x264", "obs_qsv11_v2", "obs_qsv11_hevc", "obs_nvenc_h264_tex", "obs_nvenc_hevc_tex"});
+}
+
 TEST_CASE("replay candidates fall back to H.264 on a vendor without HEVC")
 {
 	std::vector<EncoderInfo> h264Only = nvidia();

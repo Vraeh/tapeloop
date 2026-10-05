@@ -2,6 +2,7 @@
 // Copyright (C) 2026 Vicente Aedo <ryde1337@gmail.com>
 
 #include "ObsFixture.hpp"
+#include "TestEncoders.hpp"
 #include "TestPattern.hpp"
 
 #include "obs/CaptureManager.hpp"
@@ -10,6 +11,7 @@
 #include <catch2/catch_test_macros.hpp>
 #include <obs.hpp>
 
+#include <algorithm>
 #include <chrono>
 #include <string>
 
@@ -72,6 +74,19 @@ TEST_CASE_METHOD(ObsFixture, "the dock sees the video inputs of the scene collec
 	REQUIRE(backend.toggleRunning());
 	CHECK_FALSE(backend.running());
 	CHECK(backend.sources()[1].state == SourceState::Stopped);
+
+	// The encoders a replay can use, as OBS names them, and none that encodes what a
+	// replay cannot hold.
+	const auto choices = backend.encoderChoices();
+	const auto x264 = std::find_if(choices.begin(), choices.end(), [](const tapeloop::ui::EncoderChoice &choice) {
+		return choice.id == "obs_x264";
+	});
+	REQUIRE(x264 != choices.end());
+	CHECK_FALSE(x264->name.empty());
+	CHECK(x264->name != x264->id);
+	CHECK(std::none_of(choices.begin(), choices.end(), [](const tapeloop::ui::EncoderChoice &choice) {
+		return choice.id == tapeloop::test::kAv1EncoderId;
+	}));
 
 	// The main canvas keeps its scenes until they are removed, as the frontend does
 	// before shutting down; libobs frees source types before canvases.
