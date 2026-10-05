@@ -15,35 +15,50 @@ if(WIN32)
   string(JSON _obs_deps_version GET "${_buildspec}" dependencies prebuilt version)
   set(
     TAPELOOP_OBS_RUNDIR
-    "${TAPELOOP_LIBOBS_PREFIX}/obs-studio-${_obs_version}/build_x64/rundir/Release"
+    ""
     CACHE PATH
-    "Release rundir of the OBS build, with obs-x264"
+    "Release rundir of the OBS build, with obs-x264; empty for the one of buildspec.json"
   )
   set(
     TAPELOOP_OBS_DEPS_DIR
-    "${TAPELOOP_LIBOBS_PREFIX}/obs-deps-${_obs_deps_version}-x64"
+    ""
     CACHE PATH
-    "obs-deps, whose x264 DLL obs-x264 loads"
+    "obs-deps, whose x264 DLL obs-x264 loads; empty for the one of buildspec.json"
   )
+  # Worked out again on every configure, so that a version bump moves them too.
+  set(_obs_rundir "${TAPELOOP_OBS_RUNDIR}")
+  if(NOT _obs_rundir)
+    set(_obs_rundir "${TAPELOOP_LIBOBS_PREFIX}/obs-studio-${_obs_version}/build_x64/rundir/Release")
+  endif()
+  set(_obs_deps_dir "${TAPELOOP_OBS_DEPS_DIR}")
+  if(NOT _obs_deps_dir)
+    set(_obs_deps_dir "${TAPELOOP_LIBOBS_PREFIX}/obs-deps-${_obs_deps_version}-x64")
+  endif()
   # OBS installs its package files on Windows straight into cmake/.
   foreach(
     required
     IN
     ITEMS
       "${TAPELOOP_LIBOBS_PREFIX}/cmake/libobsConfig.cmake"
-      "${TAPELOOP_OBS_RUNDIR}/obs-plugins/64bit/obs-x264.dll"
-      "${TAPELOOP_OBS_DEPS_DIR}/bin"
+      "${_obs_rundir}/obs-plugins/64bit/obs-x264.dll"
+      "${_obs_deps_dir}/bin"
   )
     if(NOT EXISTS "${required}")
       message(FATAL_ERROR "${required} is missing: configure the plugin with -DTAPELOOP_OBS_TEST_RUNTIME=ON first")
     endif()
   endforeach()
-  list(APPEND CMAKE_PREFIX_PATH "${TAPELOOP_OBS_DEPS_DIR}")
+  list(APPEND CMAKE_PREFIX_PATH "${_obs_deps_dir}")
   # As the plugin's own Windows build has them (cmake/windows/compilerconfig.cmake).
   add_compile_definitions(UNICODE _UNICODE _CRT_SECURE_NO_WARNINGS _CRT_NONSTDC_NO_WARNINGS)
-  add_compile_options(/utf-8 /Zc:preprocessor /MP)
-  set(_obs_plugin_dir "${TAPELOOP_OBS_RUNDIR}/obs-plugins/64bit")
-  set(_obs_plugin_data_dir "${TAPELOOP_OBS_RUNDIR}/data/obs-plugins")
+  add_compile_options(
+    /utf-8
+    /Zc:__cplusplus
+    /Zc:preprocessor
+    /MP
+    $<$<COMPILE_LANGUAGE:CXX>:/Zc:char8_t->
+  )
+  set(_obs_plugin_dir "${_obs_rundir}/obs-plugins/64bit")
+  set(_obs_plugin_data_dir "${_obs_rundir}/data/obs-plugins")
   set(_obs_graphics_module "libobs-d3d11")
 else()
   if(NOT EXISTS "${TAPELOOP_LIBOBS_PREFIX}/lib/cmake/libobs/libobsConfig.cmake")
@@ -150,8 +165,8 @@ if(WIN32)
   # libobs looks for its effects at ../../data/libobs from the working directory.
   catch_discover_tests(
     tapeloop-obs-tests
-    WORKING_DIRECTORY "${TAPELOOP_OBS_RUNDIR}/bin/64bit"
-    DL_PATHS "${TAPELOOP_OBS_RUNDIR}/bin/64bit" "${TAPELOOP_OBS_DEPS_DIR}/bin"
+    WORKING_DIRECTORY "${_obs_rundir}/bin/64bit"
+    DL_PATHS "${_obs_rundir}/bin/64bit" "${_obs_deps_dir}/bin"
   )
 else()
   catch_discover_tests(tapeloop-obs-tests)
