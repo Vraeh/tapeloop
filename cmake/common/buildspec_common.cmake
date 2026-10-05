@@ -66,12 +66,32 @@ function(_setup_obs_studio)
     )
   endif()
 
+  set(_obs_plugins OFF)
+  set(_obs_targets obs-frontend-api)
+  if(OS_WINDOWS AND TAPELOOP_OBS_TEST_RUNTIME)
+    # The libobs harness also needs the Direct3D 11 renderer and obs-x264. The source
+    # tarball lacks the submodules other plugins require, which would stop the configure,
+    # so the plugin list is cut down to obs-x264.
+    file(
+      WRITE
+      "${dependencies_dir}/${_obs_destination}/plugins/CMakeLists.txt"
+      "cmake_minimum_required(VERSION 3.28...3.30)\n"
+      "option(ENABLE_PLUGINS \"Enable building OBS plugins\" ON)\n"
+      "if(NOT ENABLE_PLUGINS)\n"
+      "  return()\n"
+      "endif()\n"
+      "add_obs_plugin(obs-x264)\n"
+    )
+    set(_obs_plugins ON)
+    list(APPEND _obs_targets libobs-d3d11 libobs-winrt obs-x264)
+  endif()
+
   message(STATUS "Configure ${label} (${arch})")
   execute_process(
     COMMAND
       "${CMAKE_COMMAND}" -S "${dependencies_dir}/${_obs_destination}" -B
       "${dependencies_dir}/${_obs_destination}/build_${arch}" -G ${_cmake_generator} "${_cmake_arch}"
-      -DOBS_CMAKE_VERSION:STRING=3.0.0 -DENABLE_PLUGINS:BOOL=OFF -DENABLE_FRONTEND:BOOL=OFF
+      -DOBS_CMAKE_VERSION:STRING=3.0.0 -DENABLE_PLUGINS:BOOL=${_obs_plugins} -DENABLE_FRONTEND:BOOL=OFF
       -DOBS_VERSION_OVERRIDE:STRING=${_obs_version} "-DCMAKE_PREFIX_PATH='${CMAKE_PREFIX_PATH}'" ${_is_fresh}
       ${_cmake_extra}
     RESULT_VARIABLE _process_result
@@ -92,7 +112,7 @@ function(_setup_obs_studio)
 
   message(STATUS "Build ${label} (Release - ${arch})")
   execute_process(
-    COMMAND "${CMAKE_COMMAND}" --build build_${arch} --target obs-frontend-api --config Release --parallel
+    COMMAND "${CMAKE_COMMAND}" --build build_${arch} --target ${_obs_targets} --config Release --parallel
     WORKING_DIRECTORY "${dependencies_dir}/${_obs_destination}"
     RESULT_VARIABLE _process_result
     COMMAND_ERROR_IS_FATAL ANY
