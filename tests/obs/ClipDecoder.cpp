@@ -5,6 +5,8 @@
 
 #include "TestPattern.hpp"
 
+#include "decode/FFmpegHeaders.hpp"
+
 extern "C" {
 #include <libavcodec/avcodec.h>
 #include <libavutil/error.h>

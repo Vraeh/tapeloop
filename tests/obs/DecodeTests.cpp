@@ -9,6 +9,7 @@
 #include "core/DecodePlanner.hpp"
 #include "core/SourceBuffer.hpp"
 #include "decode/FFmpegDecoder.hpp"
+#include "decode/FFmpegHeaders.hpp"
 #include "decode/FFmpegVersion.hpp"
 #include "obs/SourceCapture.hpp"
 
