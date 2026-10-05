@@ -97,6 +97,10 @@ TEST_CASE_METHOD(ObsFixture, "a capture encodes its source into GOPs that decode
 	CHECK(stopped.buffer.discontinuities == 0);
 
 	const Clip clip = everything(capture);
+	// x264 encodes H.264, and the output read that from the encoder.
+	for (const auto &gop : clip.gops()) {
+		CHECK(gop->codec() == tapeloop::VideoCodec::H264);
+	}
 	const auto decoded = tapeloop::test::decodeGops(clip);
 	REQUIRE(decoded.size() == clip.gops().size());
 	for (size_t gop = 0; gop < decoded.size(); ++gop) {
