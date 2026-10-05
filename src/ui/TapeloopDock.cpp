@@ -14,6 +14,7 @@
 #include <QPushButton>
 #include <QSignalBlocker>
 #include <QSpinBox>
+#include <QStyle>
 #include <QTableWidget>
 #include <QTimer>
 #include <QVBoxLayout>
@@ -242,7 +243,11 @@ void TapeloopDock::updateSources(const std::vector<DockSource> &sources)
 	for (size_t i = 0; i < sources.size() && static_cast<int>(i) < sources_->rowCount(); ++i) {
 		const int row = static_cast<int>(i);
 		sources_->item(row, kSourceColumn)->setCheckState(sources[i].selected ? Qt::Checked : Qt::Unchecked);
-		sources_->item(row, kStatusColumn)->setText(statusText(sources[i]));
+		QTableWidgetItem *status = sources_->item(row, kStatusColumn);
+		status->setText(statusText(sources[i]));
+		const bool waiting = sources[i].selected && sources[i].state == SourceState::Waiting;
+		status->setIcon(waiting ? style()->standardIcon(QStyle::SP_MessageBoxInformation) : QIcon());
+		status->setToolTip(waiting ? text_("Dock.Status.Waiting.Tooltip") : QString());
 	}
 }
 
@@ -259,6 +264,8 @@ QString TapeloopDock::statusText(const DockSource &source) const
 	}
 	case SourceState::Failed:
 		return text_("Dock.Status.Failed");
+	case SourceState::Waiting:
+		return text_("Dock.Status.Waiting");
 	case SourceState::Stopped:
 		break;
 	}

@@ -50,6 +50,9 @@ void CaptureManager::setSettings(BufferSettings settings)
 	settings_ = std::move(settings);
 	lifecycle_.setStartWithOutputs(settings_.startWithOutputs);
 	reconcile();
+	if (!foreignSettings_) {
+		host_.requestSave();
+	}
 }
 
 bool CaptureManager::manualStart()
@@ -272,7 +275,12 @@ CaptureManager::StartOutcome CaptureManager::start(const std::string &uuid, Entr
 	if (source && obs_source_removed(source)) {
 		return StartOutcome::SourceRemoved;
 	}
-	if (!source || (quiet && (obs_source_get_width(source) == 0 || obs_source_get_height(source) == 0))) {
+	if (!source) {
+		entry.retry = true;
+		return StartOutcome::Failed;
+	}
+	if (quiet && (obs_source_get_width(source) == 0 || obs_source_get_height(source) == 0)) {
+		entry.capture.hold(source);
 		entry.retry = true;
 		return StartOutcome::Failed;
 	}

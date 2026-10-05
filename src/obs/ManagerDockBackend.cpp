@@ -33,6 +33,8 @@ ui::SourceState stateOf(CaptureState state)
 		return ui::SourceState::Running;
 	case CaptureState::Failed:
 		return ui::SourceState::Failed;
+	case CaptureState::Waiting:
+		return ui::SourceState::Waiting;
 	case CaptureState::Stopped:
 		break;
 	}
@@ -59,6 +61,11 @@ std::vector<ui::DockSource> ManagerDockBackend::sources() const
 						    });
 	});
 	return sources;
+}
+
+void ManagerDockBackend::setSettings(const BufferSettings &settings)
+{
+	manager_.setSettings(settings);
 }
 
 } // namespace tapeloop::obs

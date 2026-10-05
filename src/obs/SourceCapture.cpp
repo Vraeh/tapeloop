@@ -50,16 +50,19 @@ StartResult SourceCapture::start(obs_source_t *source, const CaptureSettings &se
 	obs_video_info video = {};
 	if (!obs_get_video_info(&video)) {
 		blog(LOG_WARNING, "[tapeloop] OBS has no video, not capturing '%s'", name);
+		tearDown();
 		return StartResult::ViewFailed;
 	}
 	const FrameSize sourceSize{obs_source_get_width(source), obs_source_get_height(source)};
 	if (sourceSize.width == 0 || sourceSize.height == 0) {
-		blog(LOG_INFO, "[tapeloop] '%s' has no size yet, not capturing it", name);
+		blog(LOG_INFO, "[tapeloop] '%s' has no size yet; showing it and waiting for a picture", name);
+		hold(source);
 		return StartResult::NoSourceSize;
 	}
 	if (sourceSize.width > kMaxViewSize || sourceSize.height > kMaxViewSize) {
 		blog(LOG_WARNING, "[tapeloop] '%s' is %ux%u, larger than the %u pixels a capture allows", name,
 		     sourceSize.width, sourceSize.height, kMaxViewSize);
+		tearDown();
 		return StartResult::SourceTooLarge;
 	}
 
@@ -69,6 +72,7 @@ StartResult SourceCapture::start(obs_source_t *source, const CaptureSettings &se
 	if (!outputSize) {
 		blog(LOG_WARNING, "[tapeloop] '%s' is %ux%u, too small to encode at height %u", name, sourceSize.width,
 		     sourceSize.height, height);
+		tearDown();
 		return StartResult::NoOutputSize;
 	}
 
@@ -80,6 +84,7 @@ StartResult SourceCapture::start(obs_source_t *source, const CaptureSettings &se
 				: settings.candidates;
 		if (candidates.empty()) {
 			blog(LOG_WARNING, "[tapeloop] No encoder can capture '%s'", name);
+			tearDown();
 			return StartResult::NoEncoder;
 		}
 
@@ -103,8 +108,7 @@ StartResult SourceCapture::start(obs_source_t *source, const CaptureSettings &se
 		target_.buffer = reuse ? buffer_.get() : replacement.get();
 		target_.clearOnStart = reuse && !keepBuffer;
 
-		view_ = obs_view_create();
-		obs_view_set_source(view_, 0, source);
+		hold(source);
 		video.base_width = sourceSize.width;
 		video.base_height = sourceSize.height;
 		video.output_width = outputSize->width;
@@ -168,6 +172,21 @@ StartResult SourceCapture::start(obs_source_t *source, const CaptureSettings &se
 	}
 }
 
+void SourceCapture::hold(obs_source_t *source)
+{
+	if (output_) {
+		return;
+	}
+	if (!view_) {
+		view_ = obs_view_create();
+	}
+	// The manager retries every second; the view changes only when the source does.
+	OBSSourceAutoRelease shown = obs_view_get_source(view_, 0);
+	if (shown != source) {
+		obs_view_set_source(view_, 0, source);
+	}
+}
+
 void SourceCapture::stop()
 {
 	if (output_) {
@@ -226,6 +245,8 @@ CaptureStats SourceCapture::stats() const
 	if (output_) {
 		stats.state = target_.failed || !obs_output_active(output_) ? CaptureState::Failed
 									    : CaptureState::Running;
+	} else if (view_) {
+		stats.state = CaptureState::Waiting;
 	}
 	stats.encoderId = encoderId_;
 	stats.outputSize = outputSize_;

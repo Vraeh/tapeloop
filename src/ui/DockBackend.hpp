@@ -11,7 +11,9 @@
 
 namespace tapeloop::ui {
 
-enum class SourceState { Stopped, Running, Failed };
+// Waiting: the source has no picture yet, as display, window and game captures do until
+// something shows them.
+enum class SourceState { Stopped, Waiting, Running, Failed };
 
 // A video source of the current scene collection as the dock lists it.
 struct DockSource {

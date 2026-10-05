@@ -54,3 +54,8 @@ See [CONTRIBUTING.md](CONTRIBUTING.md) before sending changes.
 ## License
 
 GPL-2.0-or-later. See [LICENSE](LICENSE).
+
+The Windows and Linux builds include [FFmpeg](https://ffmpeg.org) 8.1, linked
+statically for decoding, under the LGPL 2.1 or later. Its notice, with the exact version,
+the source and the configure options, and its license are installed with the plugin's data
+(`FFmpeg-NOTICE.txt`, `FFmpeg-LICENSE.txt`); `cmake/ffmpeg/BuildFFmpeg.cmake` builds it.

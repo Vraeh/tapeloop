@@ -46,6 +46,13 @@ public:
 	DecodeStatus openStatus = DecodeStatus::Ok;
 	// A packet send() refuses once, as a corrupt one would be.
 	std::optional<int64_t> failOnce;
+	// What the next receive() answers instead of a frame, when not Ok.
+	DecodeStatus receiveFailure = DecodeStatus::Ok;
+	// Packets taken whose frames never come out.
+	std::set<int64_t> dropped;
+	// After this packet, a frame of a pts no packet has comes out too.
+	std::optional<int64_t> strayAfter;
+	int closes = 0;
 	std::vector<Session> sessions;
 	std::map<uint64_t, Made> made;
 	std::set<uint64_t> outstanding;
@@ -76,21 +83,32 @@ public:
 		}
 		expectKeyframe_ = false;
 		lastPts_ = pts;
-		const uint64_t id = nextId_++;
-		made[id] = {pts, sessions.size() - 1};
-		inside_.push_back(id);
+		if (!dropped.contains(pts)) {
+			const uint64_t id = nextId_++;
+			made[id] = {pts, sessions.size() - 1};
+			inside_.push_back(id);
+		}
+		if (strayAfter == pts) {
+			strayAfter.reset();
+			const uint64_t id = nextId_++;
+			made[id] = {-1, sessions.size() - 1};
+			inside_.push_back(id);
+		}
 		return DecodeStatus::Ok;
 	}
 
 	DecodeStatus receive(DecodedFrame &frame) noexcept override
 	{
+		if (receiveFailure != DecodeStatus::Ok) {
+			return std::exchange(receiveFailure, DecodeStatus::Ok);
+		}
 		if (inside_.empty() || (!flushed_ && inside_.size() <= delay_)) {
 			return flushed_ ? DecodeStatus::Drained : DecodeStatus::NeedMore;
 		}
 		const uint64_t id = inside_.front();
 		inside_.pop_front();
 		outstanding.insert(id);
-		frame = {id, made[id].pts};
+		frame = {id, made[id].pts, Nanoseconds{0}};
 		return DecodeStatus::Ok;
 	}
 
@@ -115,6 +133,7 @@ public:
 
 	void close() noexcept override
 	{
+		++closes;
 		outstanding.clear();
 		inside_.clear();
 		open_ = false;

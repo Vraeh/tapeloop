@@ -25,6 +25,9 @@ public:
 	virtual ~CaptureHost() = default;
 	virtual bool streamingActive() const = 0;
 	virtual bool recordingActive() const = 0;
+	// The settings were edited: have them saved at once, so that a crash right after an
+	// edit loses nothing.
+	virtual void requestSave() = 0;
 };
 
 struct SourceStatus {
@@ -43,8 +46,10 @@ public:
 	CaptureManager &operator=(const CaptureManager &) = delete;
 
 	const BufferSettings &settings() const noexcept { return settings_; }
-	// Sources selected while the buffers run start at once and unselected ones stop and
-	// free their buffer; any other change reaches a capture at its next start.
+	// An edit of the settings, which the host is asked to save unless the collection
+	// holds settings of another version, kept as they came. Sources selected while the
+	// buffers run start at once and unselected ones stop and free their buffer; any other
+	// change reaches a capture at its next start.
 	void setSettings(BufferSettings settings);
 
 	bool running() const noexcept { return lifecycle_.running(); }
@@ -96,7 +101,8 @@ private:
 
 	void reconcile();
 	// candidates is filled on first use, so a batch of starts reads the encoders and the
-	// render adapter once. A quiet start skips a source without a size without trying.
+	// render adapter once. A quiet start does not try a source without a size: it only
+	// shows it on the capture's view, without logging.
 	StartOutcome start(const std::string &uuid, Entry &entry, bool keepBuffer, bool quiet,
 			   std::optional<std::vector<EncoderInfo>> &candidates);
 	void stop(Entry &entry);

@@ -13,9 +13,9 @@
 namespace tapeloop::obs {
 
 // The capture manager wired to the OBS frontend: streaming and recording events, scene
-// collection cleanup and exit, the scene collection save callback, and a poll every
-// second on the UI thread. Created and destroyed on the UI thread, at module load and
-// unload.
+// collection cleanup and exit, the scene collection save callback and save requests,
+// and a poll every second on the UI thread. Created and destroyed on the UI thread, at
+// module load and unload.
 class FrontendBridge : private CaptureHost {
 public:
 	FrontendBridge();
@@ -29,6 +29,7 @@ public:
 private:
 	bool streamingActive() const override;
 	bool recordingActive() const override;
+	void requestSave() override;
 	// The frontend API is gone by the time the module unloads, so the callbacks go at
 	// the exit event.
 	void removeFrontendCallbacks() noexcept;

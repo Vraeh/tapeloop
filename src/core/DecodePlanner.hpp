@@ -42,7 +42,11 @@ struct DecodeResult {
 // decoding starts at the keyframe of its GOP and goes no further than needed, the
 // decoded frames of the last GOPs are kept so that stepping back costs nothing, a new
 // run opens the decoder again, and reverse play can have the previous GOP decoded ahead.
-// Everything runs on the caller's thread.
+// Runs are told apart by their codec and configuration; two runs of one codec without a
+// configuration carry their parameter sets in the stream, so a reset is enough between
+// them. A frame the decoder never gives is reported as InvalidData, without decoding its
+// GOP again. Once warm, deciding allocates nothing unless a GOP is longer than any kept
+// before. Everything runs on the caller's thread.
 class DecodePlanner {
 public:
 	explicit DecodePlanner(FrameDecoder &decoder, DecodePlannerConfig config = {});
@@ -76,6 +80,9 @@ private:
 		// By packet index within the GOP, in decode order.
 		std::vector<std::optional<DecodedFrame>> frames;
 		size_t received = 0;
+		// Every frame the decoder gives for this GOP is in: all of them, or what was left
+		// once it was flushed at the end of the GOP.
+		bool complete = false;
 	};
 
 	KeptGop &keep(size_t gop);
@@ -87,6 +94,9 @@ private:
 	DecodeStatus decode(size_t gop, size_t packet);
 	DecodeStatus startAt(size_t gop);
 	DecodeStatus receiveAll(KeptGop &kept);
+	// Ends a pass that failed. A lost device also lets go of every kept frame and of
+	// the decoder, which the next pass opens again.
+	DecodeStatus fail(DecodeStatus status) noexcept;
 
 	FrameDecoder &decoder_;
 	DecodePlannerConfig config_;
