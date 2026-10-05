@@ -9,6 +9,7 @@
 
 #include <cstddef>
 #include <cstdint>
+#include <chrono>
 #include <limits>
 #include <memory>
 #include <string>
@@ -41,6 +42,11 @@ Moment replayAt(int64_t capturedAt)
 	return moment;
 }
 
+std::chrono::system_clock::time_point wallClock(int64_t seconds)
+{
+	return std::chrono::system_clock::time_point{} + std::chrono::hours(500'000) + std::chrono::seconds(seconds);
+}
+
 ReplayLibrary unlimited()
 {
 	return ReplayLibrary(MomentListConfig{kUnlimited, kUnlimited});
@@ -52,14 +58,16 @@ TEST_CASE("ReplayLibrary lists replays newest first and plays the newest unless 
 {
 	ReplayLibrary library = unlimited();
 	CHECK(library.current() == 0);
-	const uint64_t first = library.add(replayAt(10));
-	const uint64_t second = library.add(replayAt(20));
+	const uint64_t first = library.add(replayAt(10), wallClock(10));
+	const uint64_t second = library.add(replayAt(20), wallClock(20));
 	REQUIRE(first != 0);
 	REQUIRE(second != 0);
 	CHECK(library.list() == std::vector<uint64_t>{second, first});
 	CHECK(library.current() == second);
 	REQUIRE(library.find(first));
 	CHECK(library.find(first)->end == Nanoseconds{10'000'000'000});
+	CHECK(library.capturedAt(first) == wallClock(10));
+	CHECK(library.capturedAt(99) == std::chrono::system_clock::time_point{});
 
 	CHECK(library.pick(first));
 	CHECK(library.picked());
@@ -71,7 +79,7 @@ TEST_CASE("ReplayLibrary lists replays newest first and plays the newest unless 
 
 	// A replay just captured is the one to show next, whatever was picked.
 	REQUIRE(library.pick(first));
-	const uint64_t third = library.add(replayAt(30));
+	const uint64_t third = library.add(replayAt(30), wallClock(30));
 	CHECK_FALSE(library.picked());
 	CHECK(library.current() == third);
 }
@@ -79,7 +87,7 @@ TEST_CASE("ReplayLibrary lists replays newest first and plays the newest unless 
 TEST_CASE("ReplayLibrary stores no replay without clips")
 {
 	ReplayLibrary library = unlimited();
-	CHECK(library.add(Moment{}) == 0);
+	CHECK(library.add(Moment{}, wallClock(1)) == 0);
 	CHECK(library.size() == 0);
 	CHECK(library.list().empty());
 }
@@ -87,8 +95,8 @@ TEST_CASE("ReplayLibrary stores no replay without clips")
 TEST_CASE("ReplayLibrary falls back to the newest when the picked replay goes")
 {
 	ReplayLibrary library = unlimited();
-	const uint64_t first = library.add(replayAt(10));
-	const uint64_t second = library.add(replayAt(20));
+	const uint64_t first = library.add(replayAt(10), wallClock(10));
+	const uint64_t second = library.add(replayAt(20), wallClock(20));
 	REQUIRE(library.pick(first));
 	CHECK(library.remove(first));
 	CHECK_FALSE(library.remove(first));
@@ -105,9 +113,9 @@ TEST_CASE("ReplayLibrary tags replays and filters by tag")
 	CHECK(library.createTag("goals"));
 	CHECK_FALSE(library.createTag("goals"));
 	CHECK_FALSE(library.createTag(""));
-	const uint64_t goal = library.add(replayAt(10));
-	const uint64_t foul = library.add(replayAt(20));
-	const uint64_t both = library.add(replayAt(30));
+	const uint64_t goal = library.add(replayAt(10), wallClock(10));
+	const uint64_t foul = library.add(replayAt(20), wallClock(20));
+	const uint64_t both = library.add(replayAt(30), wallClock(30));
 
 	CHECK(library.addTag(goal, "goals"));
 	CHECK_FALSE(library.addTag(goal, "goals"));
@@ -142,14 +150,59 @@ TEST_CASE("ReplayLibrary tags replays and filters by tag")
 TEST_CASE("ReplayLibrary forgets the tags of replays dropped for room")
 {
 	ReplayLibrary library(MomentListConfig{2, kUnlimited});
-	const uint64_t first = library.add(replayAt(10));
+	const uint64_t first = library.add(replayAt(10), wallClock(10));
 	REQUIRE(library.addTag(first, "goals"));
-	library.add(replayAt(20));
-	library.add(replayAt(30));
+	library.add(replayAt(20), wallClock(20));
+	library.add(replayAt(30), wallClock(30));
 	CHECK_FALSE(library.find(first));
 	CHECK(library.size() == 2);
 	CHECK(library.tagsOf(first).empty());
 	CHECK(library.list("goals").empty());
 	// The tag itself stays for the replays to come.
+	CHECK(library.tags().size() == 1);
+}
+
+TEST_CASE("ReplayLibrary keeps tag names tidy and tells them apart regardless of case")
+{
+	ReplayLibrary library = unlimited();
+	const uint64_t replay = library.add(replayAt(10), wallClock(10));
+	CHECK(library.createTag("  Goals "));
+	CHECK_FALSE(library.createTag("goals"));
+	CHECK_FALSE(library.createTag(" "));
+	CHECK_FALSE(library.createTag(std::string("a\0b", 3)));
+	CHECK_FALSE(library.createTag("tab\tinside"));
+	REQUIRE(library.tags().size() == 1);
+	CHECK(library.tags()[0] == "Goals");
+
+	// Any spelling reaches the tag as it was first written.
+	CHECK(library.addTag(replay, "GOALS"));
+	CHECK_FALSE(library.addTag(replay, "goals"));
+	REQUIRE(library.tagsOf(replay).size() == 1);
+	CHECK(library.tagsOf(replay)[0] == "Goals");
+	CHECK(library.list("goals") == std::vector<uint64_t>{replay});
+	CHECK(library.removeTag(replay, " goals"));
+	CHECK(library.deleteTag("gOaLs"));
+	CHECK(library.tags().empty());
+}
+
+TEST_CASE("ReplayLibrary forgets the pick and the tags of what it lets go of")
+{
+	ReplayLibrary library = unlimited();
+	const uint64_t first = library.add(replayAt(10), wallClock(10));
+	library.add(replayAt(20), wallClock(20));
+	REQUIRE(library.addTag(first, "goals"));
+	REQUIRE(library.pick(first));
+
+	REQUIRE(library.remove(first));
+	CHECK(library.list("goals").empty());
+	CHECK(library.tagsOf(first).empty());
+
+	const uint64_t third = library.add(replayAt(30), wallClock(30));
+	REQUIRE(library.pick(third));
+	library.clear();
+	CHECK_FALSE(library.picked());
+	CHECK(library.tagsOf(third).empty());
+	CHECK(library.capturedAt(third) == std::chrono::system_clock::time_point{});
+	// Tags outlive their replays.
 	CHECK(library.tags().size() == 1);
 }
