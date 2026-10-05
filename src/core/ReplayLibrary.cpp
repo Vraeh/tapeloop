@@ -4,6 +4,7 @@
 #include "core/ReplayLibrary.hpp"
 
 #include <algorithm>
+#include <ranges>
 #include <utility>
 
 namespace tapeloop {
@@ -70,15 +71,15 @@ void ReplayLibrary::clear()
 
 std::vector<uint64_t> ReplayLibrary::list(std::string_view tag) const
 {
+	const auto carries = [&](uint64_t id) {
+		const auto found = tagsOf_.find(id);
+		return found != tagsOf_.end() && containsSorted(found->second, tag);
+	};
 	std::vector<uint64_t> ids;
 	ids.reserve(moments_.size());
-	const std::span<const Moment> moments = moments_.moments();
-	for (auto moment = moments.rbegin(); moment != moments.rend(); ++moment) {
-		if (tag.empty()) {
-			ids.push_back(moment->id);
-		} else if (const auto found = tagsOf_.find(moment->id);
-			   found != tagsOf_.end() && containsSorted(found->second, tag)) {
-			ids.push_back(moment->id);
+	for (const Moment &moment : std::views::reverse(moments_.moments())) {
+		if (tag.empty() || carries(moment.id)) {
+			ids.push_back(moment.id);
 		}
 	}
 	return ids;

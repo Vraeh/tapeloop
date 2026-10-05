@@ -31,11 +31,13 @@ bool ReplayPlayerState::move(size_t from, size_t to) noexcept
 
 bool ReplayPlayerState::setShown(std::string_view sourceKey, bool shown)
 {
-	if (!sequence_.setShown(sourceKey, shown)) {
+	const std::optional<size_t> index = sequence_.indexOf(sourceKey);
+	if (!index) {
 		return false;
 	}
+	sequence_.setShown(sourceKey, shown);
 	if (!shown && phase_ == AirPhase::Source && sourceKey == source_) {
-		advance(*sequence_.indexOf(sourceKey) + 1);
+		advance(*index + 1);
 	}
 	return true;
 }
@@ -72,9 +74,12 @@ void ReplayPlayerState::ended(uint64_t token)
 	case AirPhase::Intro:
 		advance(0);
 		break;
-	case AirPhase::Source:
-		advance(*sequence_.indexOf(source_) + 1);
+	case AirPhase::Source: {
+		// The source on air is always in the list: removing it moves on at once.
+		const std::optional<size_t> playing = sequence_.indexOf(source_);
+		advance(playing ? *playing + 1 : 0);
 		break;
+	}
 	case AirPhase::Outro:
 		enter(AirPhase::Live);
 		break;
