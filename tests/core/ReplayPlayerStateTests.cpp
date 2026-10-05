@@ -5,10 +5,14 @@
 #include "core/ReplayPlayerState.hpp"
 #include "core/ReplaySequence.hpp"
 
+#include "AllocationCounter.hpp"
+
 #include <catch2/catch_test_macros.hpp>
 
+#include <cstddef>
 #include <cstdint>
 #include <limits>
+#include <new>
 #include <string>
 #include <string_view>
 #include <vector>
@@ -266,6 +270,53 @@ TEST_CASE("ReplayPlayerState keeps the rate from one source to the next, not to 
 	endPart(player);
 	REQUIRE(player.start({"a"}));
 	CHECK(player.rate() == 1000);
+}
+
+TEST_CASE("ReplayPlayerState leaves no hidden or removed source on air when an edit fails")
+{
+	if (!tapeloop::test::kAllocationFailures) {
+		SKIP("allocation failures cannot be injected in this configuration");
+	}
+	// Keys too long to be stored inline, so that putting one on air allocates.
+	const std::string first(40, 'a');
+	const std::string second(40, 'b');
+	const std::string third(40, 'c');
+	for (const bool hide : {true, false}) {
+		bool wentLive = false;
+		for (size_t skip = 0; skip < 8; ++skip) {
+			CAPTURE(hide, skip);
+			ReplayPlayerState player;
+			player.setEntries(entries({first, second, third}));
+			REQUIRE(player.start({first, second, third}));
+			std::vector<SequenceEntry> without = entries({second, third});
+			bool failed = false;
+			{
+				tapeloop::test::AllocationFailure failure(skip);
+				try {
+					if (hide) {
+						player.setShown(first, false);
+					} else {
+						player.setEntries(std::move(without));
+					}
+				} catch (const std::bad_alloc &) {
+					failed = true;
+				}
+			}
+			if (!failed) {
+				CHECK(player.phase() == AirPhase::Source);
+				CHECK(player.source() == second);
+			} else if (player.phase() == AirPhase::Source) {
+				// It failed before the list changed, so nothing did.
+				CHECK(player.source() == first);
+				REQUIRE(player.sequence().indexOf(first) == 0);
+				CHECK(player.sequence().entries()[0].shown);
+			} else {
+				CHECK(player.phase() == AirPhase::Live);
+				wentLive = true;
+			}
+		}
+		CHECK(wentLive);
+	}
 }
 
 TEST_CASE("ReplayPlayerState plays a replay with the configuration it started with")

@@ -3,6 +3,7 @@
 
 #include "core/ReplayLibrary.hpp"
 
+#include "AllocationCounter.hpp"
 #include "SyntheticEncoder.hpp"
 
 #include <catch2/catch_test_macros.hpp>
@@ -12,6 +13,7 @@
 #include <chrono>
 #include <limits>
 #include <memory>
+#include <new>
 #include <string>
 #include <vector>
 
@@ -82,6 +84,39 @@ TEST_CASE("ReplayLibrary lists replays newest first and plays the newest unless 
 	const uint64_t third = library.add(replayAt(30), wallClock(30));
 	CHECK_FALSE(library.picked());
 	CHECK(library.current() == third);
+}
+
+TEST_CASE("ReplayLibrary is unchanged when adding fails")
+{
+	if (!tapeloop::test::kAllocationFailures) {
+		SKIP("allocation failures cannot be injected in this configuration");
+	}
+	for (size_t skip = 0; skip < 12; ++skip) {
+		CAPTURE(skip);
+		ReplayLibrary library = unlimited();
+		const uint64_t kept = library.add(replayAt(10), wallClock(10));
+		REQUIRE(library.pick(kept));
+		Moment moment = replayAt(20);
+		uint64_t added = 0;
+		bool failed = false;
+		{
+			tapeloop::test::AllocationFailure failure(skip);
+			try {
+				added = library.add(std::move(moment), wallClock(20));
+			} catch (const std::bad_alloc &) {
+				failed = true;
+			}
+		}
+		if (failed) {
+			CHECK(library.list() == std::vector<uint64_t>{kept});
+			CHECK(library.current() == kept);
+		} else {
+			REQUIRE(added != 0);
+			CHECK(library.capturedAt(added) == wallClock(20));
+			CHECK(library.current() == added);
+		}
+		CHECK(library.capturedAt(kept) == wallClock(10));
+	}
 }
 
 TEST_CASE("ReplayLibrary stores no replay without clips")

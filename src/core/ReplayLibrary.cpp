@@ -52,10 +52,15 @@ ReplayLibrary::ReplayLibrary(MomentListConfig limits) : moments_(limits) {}
 
 uint64_t ReplayLibrary::add(Moment moment, std::chrono::system_clock::time_point capturedAt)
 {
+	// The entry is made before the moment is stored and given its id after, which
+	// cannot fail, so a replay is never stored without it.
+	auto entry = info_.extract(info_.try_emplace(0).first);
+	entry.mapped().capturedAt = capturedAt;
 	const uint64_t id = moments_.add(std::move(moment));
 	if (id != 0) {
+		entry.key() = id;
+		info_.insert(std::move(entry));
 		picked_ = 0;
-		info_[id].capturedAt = capturedAt;
 		forgetDropped();
 	}
 	return id;

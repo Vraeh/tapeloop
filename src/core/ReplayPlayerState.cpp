@@ -17,9 +17,11 @@ void ReplayPlayerState::setEntries(std::vector<SequenceEntry> entries)
 	}
 	// What followed the source on air, in case the new list drops it.
 	std::vector<std::string> following;
-	const std::span<const SequenceEntry> old = sequence_.entries();
-	for (size_t i = sequence_.indexOf(source_).value_or(old.size()) + 1; i < old.size(); ++i) {
-		following.push_back(old[i].sourceKey);
+	{
+		const std::span<const SequenceEntry> old = sequence_.entries();
+		for (size_t i = sequence_.indexOf(source_).value_or(old.size()) + 1; i < old.size(); ++i) {
+			following.push_back(old[i].sourceKey);
+		}
 	}
 	sequence_.setEntries(std::move(entries));
 
@@ -125,12 +127,17 @@ bool ReplayPlayerState::setRate(int32_t rate) noexcept
 
 void ReplayPlayerState::advance(size_t from)
 {
-	if (const std::optional<size_t> next = sequence_.nextShown(from, available_)) {
-		enter(AirPhase::Source, sequence_.entries()[*next].sourceKey);
-	} else if (airing_.outro) {
-		enter(AirPhase::Outro);
-	} else {
+	try {
+		if (const std::optional<size_t> next = sequence_.nextShown(from, available_)) {
+			enter(AirPhase::Source, sequence_.entries()[*next].sourceKey);
+		} else if (airing_.outro) {
+			enter(AirPhase::Outro);
+		} else {
+			enter(AirPhase::Live);
+		}
+	} catch (...) {
 		enter(AirPhase::Live);
+		throw;
 	}
 }
 

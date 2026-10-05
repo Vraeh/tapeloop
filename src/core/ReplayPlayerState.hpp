@@ -69,7 +69,8 @@ public:
 
 private:
 	// Puts on air the first shown source at or after `from`, or else what follows the
-	// sources.
+	// sources. Should that fail, the replay goes back to live, so that a source the list
+	// no longer shows is never left on air.
 	void advance(size_t from);
 	void enter(AirPhase phase, std::string source = {});
 

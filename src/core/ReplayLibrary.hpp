@@ -28,7 +28,8 @@ public:
 
 	// Stores a replay and makes it the current one, dropping any pick: the replay just
 	// captured is the one to show next. Zero for a moment without clips, which is not
-	// stored. The oldest replays go when a limit is exceeded, as in MomentList.
+	// stored. The oldest replays go when a limit is exceeded, as in MomentList. Nothing
+	// changes when it throws.
 	uint64_t add(Moment moment, std::chrono::system_clock::time_point capturedAt);
 	bool remove(uint64_t id);
 	void clear();
@@ -62,19 +63,18 @@ public:
 	bool picked() const noexcept { return picked_ != 0; }
 
 private:
-	// Forgets the tags of replays the moment list no longer has.
-	void forgetDropped();
-
-	MomentList moments_;
 	struct Info {
 		std::chrono::system_clock::time_point capturedAt;
 		std::vector<std::string> tags;
 	};
 
+	// Forgets the tags of replays the moment list no longer has.
+	void forgetDropped();
 	// The spelling a name has in tags_ when it matches one ignoring ASCII case, else the
 	// name trimmed; empty for a name that is not valid.
 	std::string canonical(std::string_view tag) const;
 
+	MomentList moments_;
 	std::map<uint64_t, Info> info_;
 	std::vector<std::string> tags_;
 	uint64_t picked_ = 0;
