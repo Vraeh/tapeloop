@@ -183,9 +183,11 @@ jobs:
         working-directory: tests/obs
         run: cmake --build --preset linux-obs-asan
 
+      # Xvfb resets when its last client disconnects, and a test that starts libobs again
+      # right after shutting it down can find no display while it does.
       - name: Test
         working-directory: tests/obs
-        run: xvfb-run --auto-servernum --server-args='-screen 0 1920x1080x24' ctest --preset linux-obs-asan
+        run: xvfb-run --auto-servernum --server-args='-screen 0 1920x1080x24 -noreset' ctest --preset linux-obs-asan
 
   ui:
     name: linux-ui
