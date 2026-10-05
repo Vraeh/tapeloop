@@ -158,7 +158,7 @@ DecodePlanner::KeptGop &DecodePlanner::keep(size_t gop)
 	slot->complete = false;
 	const size_t count = clip_.gops()[gop]->packets().size();
 	slot->frames.assign(count, std::nullopt);
-	slot->dropped.assign(count, 0);
+	slot->dropped.assign(count, char{0});
 	slot->gop = gop;
 	return *slot;
 }
@@ -179,7 +179,7 @@ void DecodePlanner::release(KeptGop &kept) noexcept
 			frame.reset();
 		}
 	}
-	std::fill(kept.dropped.begin(), kept.dropped.end(), 0);
+	std::fill(kept.dropped.begin(), kept.dropped.end(), char{0});
 	kept.received = 0;
 	kept.complete = false;
 }
@@ -190,7 +190,7 @@ void DecodePlanner::drop(KeptGop &kept, size_t packet) noexcept
 		heldBytes_ -= frame->bytes;
 		decoder_.release(*frame);
 		frame.reset();
-		kept.dropped[packet] = 1;
+		kept.dropped[packet] = char{1};
 		--kept.received;
 	}
 }
@@ -278,7 +278,8 @@ DecodeStatus DecodePlanner::decode(size_t gop, size_t packet)
 		}
 		if (flushed_) {
 			// What the flush did not bring out the decoder never gives.
-			std::fill(kept.dropped.begin() + static_cast<ptrdiff_t>(passNext_), kept.dropped.end(), 0);
+			std::fill(kept.dropped.begin() + static_cast<ptrdiff_t>(passNext_), kept.dropped.end(),
+				  char{0});
 			kept.complete = true;
 		}
 	}
@@ -348,7 +349,7 @@ DecodeStatus DecodePlanner::receiveAll(KeptGop &kept, size_t wanted)
 		// Frames the pass went past without them the decoder never gives, so they no
 		// longer count as given back.
 		std::fill(kept.dropped.begin() + static_cast<ptrdiff_t>(passNext_),
-			  kept.dropped.begin() + static_cast<ptrdiff_t>(*index), 0);
+			  kept.dropped.begin() + static_cast<ptrdiff_t>(*index), char{0});
 		passNext_ = *index + 1;
 		if (passNext_ == kept.frames.size()) {
 			kept.complete = true;
@@ -357,14 +358,14 @@ DecodeStatus DecodePlanner::receiveAll(KeptGop &kept, size_t wanted)
 		// finds no room is given back, unless it is the one asked for.
 		if (kept.frames[*index] || (!makeRoom(kept, frame.bytes, wanted) && *index != wanted)) {
 			if (!kept.frames[*index]) {
-				kept.dropped[*index] = 1;
+				kept.dropped[*index] = char{1};
 			}
 			decoder_.release(frame);
 			continue;
 		}
 		frame.time = source.packets()[*index].time;
 		kept.frames[*index] = frame;
-		kept.dropped[*index] = 0;
+		kept.dropped[*index] = char{0};
 		++kept.received;
 		heldBytes_ += frame.bytes;
 	}
