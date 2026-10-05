@@ -906,8 +906,7 @@ TEST_CASE_METHOD(ObsFixture, "a media source that restarts when activated is not
 	CHECK_FALSE(obs_source_active(media));
 }
 
-TEST_CASE_METHOD(ObsFixture, "a VLC source or slideshow is kept active only when it does not restart",
-		 "[obs][manager]")
+TEST_CASE_METHOD(ObsFixture, "a VLC source or slideshow is kept active only when it does not restart", "[obs][manager]")
 {
 	struct Case {
 		const char *behavior;
