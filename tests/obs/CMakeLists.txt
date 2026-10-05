@@ -66,6 +66,7 @@ target_compile_definitions(
   tapeloop-obs-tests
   PRIVATE
     TAPELOOP_LIBOBS_PREFIX="${TAPELOOP_LIBOBS_PREFIX}"
+    TAPELOOP_TEST_DATA_DIR="${CMAKE_CURRENT_SOURCE_DIR}/data"
     TAPELOOP_TEST_UNLOAD_MODULE="$<TARGET_FILE:tapeloop-test-unload>"
 )
 add_dependencies(tapeloop-obs-tests tapeloop-test-unload)

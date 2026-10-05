@@ -34,44 +34,6 @@ struct FrameDeleter {
 	void operator()(AVFrame *frame) const noexcept { av_frame_free(&frame); }
 };
 
-// The packet without its SPS and PPS NAL units. Encoders write Annex B: each NAL unit
-// follows a 00 00 01 start code, sometimes with one more zero byte in front.
-std::vector<uint8_t> withoutParameterSets(std::span<const uint8_t> data)
-{
-	constexpr uint8_t kSps = 7;
-	constexpr uint8_t kPps = 8;
-
-	std::vector<size_t> units;
-	for (size_t i = 0; i + 2 < data.size(); ++i) {
-		if (data[i] == 0 && data[i + 1] == 0 && data[i + 2] == 1) {
-			units.push_back(i + 3);
-			i += 2;
-		}
-	}
-
-	std::vector<uint8_t> kept;
-	kept.reserve(data.size());
-	for (size_t n = 0; n < units.size(); ++n) {
-		const size_t begin = units[n];
-		size_t end = n + 1 < units.size() ? units[n + 1] - 3 : data.size();
-		// A NAL unit never ends in a zero byte; these belong to the next start code.
-		while (end > begin && data[end - 1] == 0) {
-			--end;
-		}
-		if (end == begin) {
-			continue;
-		}
-		const uint8_t type = data[begin] & 0x1f;
-		if (type == kSps || type == kPps) {
-			continue;
-		}
-		kept.insert(kept.end(), {0, 0, 0, 1});
-		kept.insert(kept.end(), data.begin() + static_cast<ptrdiff_t>(begin),
-			    data.begin() + static_cast<ptrdiff_t>(end));
-	}
-	return kept;
-}
-
 void check(int result, const char *what)
 {
 	if (result < 0) {
@@ -128,7 +90,7 @@ std::vector<DecodedFrame> decodeGop(const Gop &gop)
 	};
 
 	for (size_t i = 0; i < gop.packets().size(); ++i) {
-		const std::vector<uint8_t> data = withoutParameterSets(gop.packetData(i));
+		const std::vector<uint8_t> data = withoutParameterSets(gop.packetData(i), gop.codec());
 		check(av_new_packet(packet.get(), static_cast<int>(data.size())), "av_new_packet");
 		std::memcpy(packet->data, data.data(), data.size());
 		packet->pts = gop.packets()[i].pts;
@@ -144,6 +106,51 @@ std::vector<DecodedFrame> decodeGop(const Gop &gop)
 }
 
 } // namespace
+
+// Encoders write Annex B: each NAL unit follows a 00 00 01 start code, sometimes with one
+// more zero byte in front.
+std::vector<uint8_t> withoutParameterSets(std::span<const uint8_t> data, VideoCodec codec)
+{
+	const auto isParameterSet = [codec](uint8_t header) {
+		if (codec == VideoCodec::Hevc) {
+			const int type = (header >> 1) & 0x3f;
+			// VPS, SPS and PPS.
+			return type >= 32 && type <= 34;
+		}
+		const int type = header & 0x1f;
+		// SPS and PPS.
+		return type == 7 || type == 8;
+	};
+
+	std::vector<size_t> units;
+	for (size_t i = 0; i + 2 < data.size(); ++i) {
+		if (data[i] == 0 && data[i + 1] == 0 && data[i + 2] == 1) {
+			units.push_back(i + 3);
+			i += 2;
+		}
+	}
+
+	std::vector<uint8_t> kept;
+	kept.reserve(data.size());
+	for (size_t n = 0; n < units.size(); ++n) {
+		const size_t begin = units[n];
+		size_t end = n + 1 < units.size() ? units[n + 1] - 3 : data.size();
+		// A NAL unit never ends in a zero byte; these belong to the next start code.
+		while (end > begin && data[end - 1] == 0) {
+			--end;
+		}
+		if (end == begin) {
+			continue;
+		}
+		if (isParameterSet(data[begin])) {
+			continue;
+		}
+		kept.insert(kept.end(), {0, 0, 0, 1});
+		kept.insert(kept.end(), data.begin() + static_cast<ptrdiff_t>(begin),
+			    data.begin() + static_cast<ptrdiff_t>(end));
+	}
+	return kept;
+}
 
 std::vector<std::vector<DecodedFrame>> decodeGops(const Clip &clip)
 {
