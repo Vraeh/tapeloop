@@ -2,6 +2,7 @@
 // Copyright (C) 2026 Vicente Aedo <ryde1337@gmail.com>
 
 #include "decode/FFmpegDecoder.hpp"
+#include "decode/FFmpegHeaders.hpp"
 
 extern "C" {
 #include <libavcodec/avcodec.h>
