@@ -34,6 +34,8 @@ struct FFmpegDecoder::Slot {
 	Microsoft::WRL::ComPtr<ID3D11Texture2D> texture;
 #endif
 	Picture picture;
+	// The memory the picture holds: FFmpeg's buffers, or the texture.
+	size_t bytes = 0;
 	// Starts at 1, so the id of a default DecodedFrame names no frame.
 	uint32_t generation = 1;
 	bool held = false;
@@ -310,6 +312,7 @@ DecodeStatus FFmpegDecoder::receive(DecodedFrame &frame) noexcept
 	slot->held = true;
 	frame.id = (static_cast<uint64_t>(slot->generation) << 32) | index;
 	frame.pts = pts;
+	frame.bytes = slot->bytes;
 	return DecodeStatus::Ok;
 }
 
@@ -487,6 +490,7 @@ DecodeStatus FFmpegDecoder::keepPicture(Slot &slot) noexcept
 		picture.layout = PixelLayout::Nv12;
 		picture.texture = slot.texture.Get();
 		slot.picture = picture;
+		slot.bytes = size_t{width} * height * 3 / 2;
 		return DecodeStatus::Ok;
 	}
 #endif
@@ -507,6 +511,12 @@ DecodeStatus FFmpegDecoder::keepPicture(Slot &slot) noexcept
 		return DecodeStatus::Unsupported;
 	}
 	av_frame_move_ref(slot.frame.get(), received_.get());
+	slot.bytes = 0;
+	for (const AVBufferRef *buffer : slot.frame->buf) {
+		if (buffer) {
+			slot.bytes += buffer->size;
+		}
+	}
 	for (int plane = 0; plane < planes; ++plane) {
 		const auto at = static_cast<size_t>(plane);
 		picture.planes[at] = slot.frame->data[plane];

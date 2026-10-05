@@ -354,6 +354,9 @@ TEST_CASE("the FFmpeg decoder hands out each frame once and takes it back", "[de
 	for (size_t i = 0; i < frames.size(); ++i) {
 		CHECK(frames[i].pts == static_cast<int64_t>(i));
 		CHECK(numberOf(decoder, frames[i]) == i);
+		// What the planner's cap counts: at least the picture's own 4:2:0 planes.
+		CHECK(frames[i].bytes >= size_t{320} * 180 * 3 / 2);
+		CHECK(frames[i].bytes < size_t{320} * 180 * 4);
 	}
 	CHECK(decoder.heldFrames() == 10);
 	CHECK_FALSE(decoder.picture(DecodedFrame{}));
