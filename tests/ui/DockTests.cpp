@@ -113,6 +113,38 @@ TEST_CASE("selected sources show the state of their buffer")
 	CHECK(table->item(2, 1)->text().isEmpty());
 }
 
+TEST_CASE("a source on an encoder path that is not the optimal one says so")
+{
+	FakeBackend backend = backendWithSources();
+	backend.shown[0].state = SourceState::Running;
+	backend.shown[0].encoderPath = tapeloop::EncoderPath::Software;
+	backend.shown[1].state = SourceState::Running;
+	backend.shown[1].encoderPath = tapeloop::EncoderPath::Readback;
+	backend.shown[2].state = SourceState::Running;
+	for (const auto &source : backend.shown) {
+		backend.current.sources[source.uuid].selected = true;
+	}
+	TapeloopDock dock(backend, localeText());
+	auto *table = child<QTableWidget>(dock, "sources");
+	CHECK_FALSE(table->item(0, 1)->icon().isNull());
+	CHECK(table->item(0, 1)->toolTip().contains("x264"));
+	CHECK_FALSE(table->item(1, 1)->icon().isNull());
+	CHECK(table->item(1, 1)->toolTip().contains("reads every frame back"));
+	CHECK(table->item(2, 1)->icon().isNull());
+	CHECK(table->item(2, 1)->toolTip().isEmpty());
+
+	// With another note, both show.
+	backend.shown[0].activationLeftOut = true;
+	dock.refresh();
+	CHECK(table->item(0, 1)->toolTip().contains("restarts when it becomes active"));
+	CHECK(table->item(0, 1)->toolTip().contains("x264"));
+
+	// A stopped buffer has no encoder to speak of.
+	backend.shown[1].state = SourceState::Stopped;
+	dock.refresh();
+	CHECK(table->item(1, 1)->toolTip().isEmpty());
+}
+
 TEST_CASE("a media source left out of activation says why")
 {
 	FakeBackend backend = backendWithSources();

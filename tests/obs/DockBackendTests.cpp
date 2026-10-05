@@ -66,6 +66,8 @@ TEST_CASE_METHOD(ObsFixture, "the dock sees the video inputs of the scene collec
 	CHECK(sources[1].selected);
 	CHECK(sources[1].state == SourceState::Running);
 	CHECK(sources[0].state == SourceState::Stopped);
+	// The harness has no hardware encoder, so the dock hears of x264.
+	CHECK(sources[1].encoderPath == tapeloop::EncoderPath::Software);
 
 	REQUIRE(backend.toggleRunning());
 	CHECK_FALSE(backend.running());
