@@ -159,7 +159,7 @@ DecodeStatus DecodePlanner::decode(size_t gop, size_t packet)
 	if (streamGop_ != gop || flushed_) {
 		const DecodeStatus status = startAt(gop);
 		if (status != DecodeStatus::Ok) {
-			return status;
+			return fail(status);
 		}
 	}
 
@@ -186,11 +186,24 @@ DecodeStatus DecodePlanner::decode(size_t gop, size_t packet)
 			status = receiveAll(kept);
 		}
 		if (status != DecodeStatus::Ok) {
-			streamGop_.reset();
-			return status;
+			return fail(status);
 		}
 	}
 	return DecodeStatus::Ok;
+}
+
+DecodeStatus DecodePlanner::fail(DecodeStatus status) noexcept
+{
+	streamGop_.reset();
+	if (status == DecodeStatus::DeviceLost) {
+		// The kept frames lived on the lost device, and the decoder has to be opened
+		// again before it decodes anything.
+		releaseAll();
+		decoder_.close();
+		open_ = false;
+		fresh_ = true;
+	}
+	return status;
 }
 
 DecodeStatus DecodePlanner::startAt(size_t gop)
@@ -204,7 +217,6 @@ DecodeStatus DecodePlanner::startAt(size_t gop)
 		const DecodeStatus status = decoder_.open(source.codec(), config);
 		open_ = status == DecodeStatus::Ok;
 		if (!open_) {
-			streamGop_.reset();
 			return status;
 		}
 		openConfig_ = source.codecConfig();

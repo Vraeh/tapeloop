@@ -46,6 +46,9 @@ public:
 	DecodeStatus openStatus = DecodeStatus::Ok;
 	// A packet send() refuses once, as a corrupt one would be.
 	std::optional<int64_t> failOnce;
+	// What the next receive() answers instead of a frame, when not Ok.
+	DecodeStatus receiveFailure = DecodeStatus::Ok;
+	int closes = 0;
 	std::vector<Session> sessions;
 	std::map<uint64_t, Made> made;
 	std::set<uint64_t> outstanding;
@@ -84,6 +87,9 @@ public:
 
 	DecodeStatus receive(DecodedFrame &frame) noexcept override
 	{
+		if (receiveFailure != DecodeStatus::Ok) {
+			return std::exchange(receiveFailure, DecodeStatus::Ok);
+		}
 		if (inside_.empty() || (!flushed_ && inside_.size() <= delay_)) {
 			return flushed_ ? DecodeStatus::Drained : DecodeStatus::NeedMore;
 		}
@@ -115,6 +121,7 @@ public:
 
 	void close() noexcept override
 	{
+		++closes;
 		outstanding.clear();
 		inside_.clear();
 		open_ = false;

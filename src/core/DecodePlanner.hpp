@@ -87,6 +87,9 @@ private:
 	DecodeStatus decode(size_t gop, size_t packet);
 	DecodeStatus startAt(size_t gop);
 	DecodeStatus receiveAll(KeptGop &kept);
+	// Ends a pass that failed. A lost device also lets go of every kept frame and of
+	// the decoder, which the next pass opens again.
+	DecodeStatus fail(DecodeStatus status) noexcept;
 
 	FrameDecoder &decoder_;
 	DecodePlannerConfig config_;

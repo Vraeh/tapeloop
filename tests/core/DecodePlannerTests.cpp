@@ -266,3 +266,26 @@ TEST_CASE("DecodePlanner reports a packet the decoder refuses and starts over af
 	CHECK(planner.work().resets == resets + 1);
 	CHECK(shows(planner, decoder, 2));
 }
+
+TEST_CASE("DecodePlanner opens the decoder again after its device is lost")
+{
+	FakeDecoder decoder = makeDecoder();
+	DecodePlanner planner(decoder);
+	planner.load(makeClip({{VideoCodec::H264, {1}, 2}}));
+	REQUIRE(shows(planner, decoder, 5));
+	REQUIRE(decoder.closes == 0);
+
+	decoder.receiveFailure = DecodeStatus::DeviceLost;
+	CHECK(planner.frameAt(timeOf(6)).status == DecodeStatus::DeviceLost);
+	CHECK(planner.heldFrames() == 0);
+	CHECK(planner.keptGopCount() == 0);
+	CHECK(decoder.outstanding.empty());
+	CHECK(decoder.closes == 1);
+
+	// The frames kept before were on the lost device, so they are decoded again too.
+	const uint64_t opens = planner.work().opens;
+	const uint64_t sent = planner.work().packetsSent;
+	CHECK(shows(planner, decoder, 5));
+	CHECK(planner.work().opens == opens + 1);
+	CHECK(planner.work().packetsSent == sent + 6);
+}
