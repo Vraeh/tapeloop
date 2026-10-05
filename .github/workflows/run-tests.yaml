@@ -67,6 +67,12 @@ jobs:
           ../build_tests/linux-clang-fuzz/fuzz/playhead-fuzz -max_total_time=60 -timeout=10 \
             -artifact_prefix="$RUNNER_TEMP/crashes/" "$RUNNER_TEMP/corpus/playhead" fuzz/corpus/playhead
 
+      - name: Fuzz the replay player
+        run: |
+          mkdir -p "$RUNNER_TEMP/corpus/replay-player" "$RUNNER_TEMP/crashes"
+          ../build_tests/linux-clang-fuzz/fuzz/replay-player-fuzz -max_total_time=60 -timeout=10 \
+            -artifact_prefix="$RUNNER_TEMP/crashes/" "$RUNNER_TEMP/corpus/replay-player" fuzz/corpus/replay-player
+
       - name: Keep the crashing inputs
         if: failure()
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
