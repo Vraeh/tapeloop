@@ -1,6 +1,9 @@
 // SPDX-License-Identifier: GPL-2.0-or-later
 // Copyright (C) 2026 Vicente Aedo <ryde1337@gmail.com>
 
+#ifdef TAPELOOP_FFMPEG
+#include "decode/FFmpegVersion.hpp"
+#endif
 #include "obs/CaptureOutput.hpp"
 #include "obs/FrontendBridge.hpp"
 #include "obs/ManagerDockBackend.hpp"
@@ -60,6 +63,9 @@ bool obs_module_load()
 		return false;
 	}
 	obs_log(LOG_INFO, "plugin loaded successfully (version %s)", PLUGIN_VERSION);
+#ifdef TAPELOOP_FFMPEG
+	obs_log(LOG_INFO, "decoding with FFmpeg %s", tapeloop::decode::ffmpegVersion());
+#endif
 	return true;
 }
 

@@ -211,11 +211,37 @@ jobs:
           restore-keys: |
             ${{ runner.os }}-${{ matrix.os }}-ccache-x86_64-
 
+      # FFmpeg is built at configure time into .deps, keyed on its build script and the
+      # compiler; a new runner image may bring a new compiler.
+      - name: Read the runner image
+        id: image
+        run: echo "version=${ImageVersion}" >> "${GITHUB_OUTPUT}"
+
+      - name: Restore FFmpeg
+        id: ffmpeg-cache
+        uses: actions/cache/restore@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          path: ${{ github.workspace }}/.deps/ffmpeg-*
+          key: ffmpeg-${{ matrix.os }}-${{ steps.image.outputs.version }}-${{ hashFiles('cmake/ffmpeg/*.cmake') }}
+
       - name: Build Plugin 🧱
         uses: ./.github/actions/build-plugin
         with:
           target: x86_64
           config: ${{ needs.check-event.outputs.config }}
+
+      # The plugin links FFmpeg statically while OBS loads its own; none of ours may be
+      # visible outside the plugin.
+      - name: Check exported symbols
+        run: .github/scripts/check-ffmpeg-exports "$(find build_x86_64 -name tapeloop.so -print -quit)"
+
+      # Kept even when the plugin fails to build, once FFmpeg itself was complete.
+      - name: Save FFmpeg
+        if: always() && steps.ffmpeg-cache.outputs.cache-hit != 'true' && hashFiles('.deps/ffmpeg-*/configure-line.txt') != ''
+        uses: actions/cache/save@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          path: ${{ github.workspace }}/.deps/ffmpeg-*
+          key: ${{ steps.ffmpeg-cache.outputs.cache-primary-key }}
 
       - name: Package Plugin 📀
         uses: ./.github/actions/package-plugin
@@ -277,11 +303,36 @@ jobs:
           "pluginName=${ProductName}" >> $env:GITHUB_OUTPUT
           "pluginVersion=${ProductVersion}" >> $env:GITHUB_OUTPUT
 
+      # FFmpeg is built at configure time into .deps, keyed on its build script and the
+      # compiler, with MSVC and the shell, make and nasm of the runner's MSYS2. The tools
+      # are installed even on a cache hit: a new compiler builds FFmpeg again.
+      - name: Read the runner image
+        id: image
+        run: '"version=$env:ImageVersion" >> $env:GITHUB_OUTPUT'
+
+      - name: Restore FFmpeg
+        id: ffmpeg-cache
+        uses: actions/cache/restore@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          path: ${{ github.workspace }}/.deps/ffmpeg-*
+          key: ffmpeg-windows-2022-${{ steps.image.outputs.version }}-${{ hashFiles('cmake/ffmpeg/*.cmake') }}
+
+      - name: Install MSYS2 tools
+        run: C:\msys64\usr\bin\pacman.exe -S --noconfirm --needed --noprogressbar make nasm diffutils
+
       - name: Build Plugin 🧱
         uses: ./.github/actions/build-plugin
         with:
           target: x64
           config: ${{ needs.check-event.outputs.config }}
+
+      # Kept even when the plugin fails to build, once FFmpeg itself was complete.
+      - name: Save FFmpeg
+        if: always() && steps.ffmpeg-cache.outputs.cache-hit != 'true' && hashFiles('.deps/ffmpeg-*/configure-line.txt') != ''
+        uses: actions/cache/save@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          path: ${{ github.workspace }}/.deps/ffmpeg-*
+          key: ${{ steps.ffmpeg-cache.outputs.cache-primary-key }}
 
       - name: Package Plugin 📀
         uses: ./.github/actions/package-plugin
