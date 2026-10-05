@@ -50,6 +50,9 @@ void CaptureManager::setSettings(BufferSettings settings)
 	settings_ = std::move(settings);
 	lifecycle_.setStartWithOutputs(settings_.startWithOutputs);
 	reconcile();
+	if (!foreignSettings_) {
+		host_.requestSave();
+	}
 }
 
 bool CaptureManager::manualStart()
