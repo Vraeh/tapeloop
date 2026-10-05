@@ -51,9 +51,13 @@ On Windows and Linux the plugin decodes with its own FFmpeg, linked statically: 
 8.1.3 with only the H.264 and HEVC decoders and parsers (and the D3D11VA hwaccels on
 Windows), under the LGPL. CMake builds it the first time it configures, with
 `cmake/ffmpeg/BuildFFmpeg.cmake`, into `.deps/ffmpeg-<key>`, where the key follows that
-script, so a new version or option builds again. The build takes about a minute and needs
-nasm; on Windows it also needs MSYS2 with make, nasm and diffutils
-(`pacman -S make nasm diffutils`) and Visual Studio. The tarball is pinned by SHA-256,
+script and the compiler, so a new version, option or compiler builds again. The build
+takes about a minute on Linux and four on Windows, and needs nasm; on Windows it also
+needs MSYS2 with make, nasm and diffutils (`pacman -S make nasm diffutils`) and uses the
+Visual Studio, SDK and toolset the plugin builds with. FFmpeg's configure cannot build
+under a path with spaces, so the checkout must not be in one. A Debug build on Windows
+links FFmpeg's release runtime (`-MD`) with the debug one and stops on LNK4098; build
+RelWithDebInfo or Release. The tarball is pinned by SHA-256,
 and its signature was checked against FFmpeg's release key when the version was pinned:
 
 ```
