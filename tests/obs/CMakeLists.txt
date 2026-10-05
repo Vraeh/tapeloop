@@ -11,12 +11,16 @@ set(TAPELOOP_LIBOBS_PREFIX "" CACHE PATH "Prefix libobs was installed into")
 if(WIN32)
   set(TAPELOOP_OBS_RUNDIR "" CACHE PATH "Release rundir of the OBS build, with obs-x264")
   set(TAPELOOP_OBS_DEPS_DIR "" CACHE PATH "obs-deps, whose x264 DLL obs-x264 loads")
-  if(
-    NOT EXISTS "${TAPELOOP_LIBOBS_PREFIX}/cmake/libobs/libobsConfig.cmake"
-    OR NOT EXISTS "${TAPELOOP_OBS_RUNDIR}/obs-plugins/64bit/obs-x264.dll"
+  # OBS installs its package files on Windows straight into cmake/.
+  foreach(
+    required
+    IN
+    ITEMS "${TAPELOOP_LIBOBS_PREFIX}/cmake/libobsConfig.cmake" "${TAPELOOP_OBS_RUNDIR}/obs-plugins/64bit/obs-x264.dll"
   )
-    message(FATAL_ERROR "Configure the plugin with -DTAPELOOP_OBS_TEST_RUNTIME=ON first")
-  endif()
+    if(NOT EXISTS "${required}")
+      message(FATAL_ERROR "${required} is missing: configure the plugin with -DTAPELOOP_OBS_TEST_RUNTIME=ON first")
+    endif()
+  endforeach()
   list(APPEND CMAKE_PREFIX_PATH "${TAPELOOP_OBS_DEPS_DIR}")
   set(_obs_plugin_dir "${TAPELOOP_OBS_RUNDIR}/obs-plugins/64bit")
   set(_obs_plugin_data_dir "${TAPELOOP_OBS_RUNDIR}/data/obs-plugins")
