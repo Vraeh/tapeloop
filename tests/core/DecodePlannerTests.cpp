@@ -860,9 +860,28 @@ TEST_CASE("DecodePlanner stops at the next frame given when one ahead is skipped
 	REQUIRE(shows(planner, decoder, 4));
 	CHECK(planner.frameAt(timeOf(5)).status == DecodeStatus::InvalidData);
 	const uint64_t sent = planner.work().packetsSent;
-	CHECK(sent < static_cast<uint64_t>(kGopLength));
+	CHECK(sent == 7);
 	CHECK(planner.work().flushes == 0);
 	// The frame that showed the skip is already out.
 	REQUIRE(shows(planner, decoder, 6));
+	CHECK(planner.work().packetsSent == sent);
+}
+
+TEST_CASE("DecodePlanner remembers a skipped frame after the pass leaves its GOP")
+{
+	FakeDecoder decoder = makeDecoder();
+	decoder.dropped = {10};
+	DecodePlanner planner(decoder);
+	planner.load(makeClip({{VideoCodec::H264, {}, 2}}));
+
+	REQUIRE(shows(planner, decoder, 9));
+	CHECK(planner.frameAt(timeOf(10)).status == DecodeStatus::InvalidData);
+	REQUIRE(shows(planner, decoder, 11));
+	REQUIRE(shows(planner, decoder, kGopLength + 3));
+	const uint64_t sent = planner.work().packetsSent;
+	CHECK(planner.frameAt(timeOf(10)).status == DecodeStatus::InvalidData);
+	CHECK(planner.work().packetsSent == sent);
+	// Frames it holds still show without decoding.
+	REQUIRE(shows(planner, decoder, 11));
 	CHECK(planner.work().packetsSent == sent);
 }

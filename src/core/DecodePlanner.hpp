@@ -96,6 +96,9 @@ private:
 		// brings back; by packet index, as frames.
 		std::vector<char> dropped;
 		size_t received = 0;
+		// The furthest any pass over this GOP has gone, as a packet index: a frame before
+		// it that is neither held nor given back is one the decoder does not give.
+		size_t reached = 0;
 		// Every frame the decoder gives for this GOP came out: all of them, or what was
 		// left once it was flushed at the end of the GOP.
 		bool complete = false;
@@ -112,8 +115,8 @@ private:
 	// asked for.
 	// False when the frame still does not fit.
 	bool makeRoom(KeptGop &kept, size_t bytes, size_t wanted) noexcept;
-	// Decodes GOP gop until the frame of packet `packet` has come out, or the whole GOP
-	// when packet is past its end.
+	// Decodes GOP gop until the frame of packet `packet` has come out or the pass has gone
+	// past it, or the whole GOP when packet is past its end.
 	DecodeStatus decode(size_t gop, size_t packet);
 	DecodeStatus startAt(size_t gop);
 	DecodeStatus receiveAll(KeptGop &kept, size_t wanted);

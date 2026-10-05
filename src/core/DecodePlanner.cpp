@@ -76,9 +76,11 @@ DecodeResult DecodePlanner::frameAt(Nanoseconds t)
 	lastGop_ = at.gop;
 
 	KeptGop *kept = find(at.gop);
-	// A GOP the decoder has given every frame it will give needs no second pass for a
-	// frame it never gave, only for one given back to stay within maxBytes.
-	if (!kept || (!kept->frames[at.packet] && (!kept->complete || kept->dropped[at.packet]))) {
+	// A frame a pass went past without the decoder giving it needs no second pass, nor
+	// does any frame of a GOP the decoder has given all it will give; only one given back
+	// to stay within maxBytes does.
+	if (!kept || (!kept->frames[at.packet] &&
+		      ((!kept->complete && at.packet >= kept->reached) || kept->dropped[at.packet]))) {
 		const DecodeStatus status = decode(at.gop, at.packet);
 		if (status != DecodeStatus::Ok) {
 			return {status, {}};
@@ -90,7 +92,7 @@ DecodeResult DecodePlanner::frameAt(Nanoseconds t)
 			return {DecodeStatus::Ok, *frame};
 		}
 	}
-	// The decoder gave every frame it had and this one was not among them.
+	// The decoder went past this frame, or gave every frame it had, without giving it.
 	return {DecodeStatus::InvalidData, {}};
 }
 
@@ -155,6 +157,7 @@ DecodePlanner::KeptGop &DecodePlanner::keep(size_t gop)
 	// Named only once its frames are sized, so that a throw leaves a slot no GOP finds.
 	slot->gop = kNoGop;
 	slot->received = 0;
+	slot->reached = 0;
 	slot->complete = false;
 	const size_t count = clip_.gops()[gop]->packets().size();
 	slot->frames.assign(count, std::nullopt);
@@ -181,6 +184,7 @@ void DecodePlanner::release(KeptGop &kept) noexcept
 	}
 	std::fill(kept.dropped.begin(), kept.dropped.end(), char{0});
 	kept.received = 0;
+	kept.reached = 0;
 	kept.complete = false;
 }
 
@@ -251,8 +255,8 @@ DecodeStatus DecodePlanner::decode(size_t gop, size_t packet)
 	}
 	KeptGop &kept = keep(gop);
 
-	// Once the pass is past a frame the decoder did not give, and that was not given back
-	// for room, nothing further in the GOP brings it.
+	// A frame behind the pass that is not held is one the decoder skipped: one given back
+	// for room started a new pass above, and the frame asked for is never given back.
 	const auto done = [&] {
 		return packet < count ? kept.frames[packet].has_value() || packet < passNext_ : kept.complete;
 	};
@@ -353,6 +357,7 @@ DecodeStatus DecodePlanner::receiveAll(KeptGop &kept, size_t wanted)
 		std::fill(kept.dropped.begin() + static_cast<ptrdiff_t>(passNext_),
 			  kept.dropped.begin() + static_cast<ptrdiff_t>(*index), char{0});
 		passNext_ = *index + 1;
+		kept.reached = std::max(kept.reached, passNext_);
 		if (passNext_ == kept.frames.size()) {
 			kept.complete = true;
 		}
