@@ -154,7 +154,7 @@ function(run_step step command)
   if(NOT result EQUAL 0)
     file(READ "${log}" text)
     # configure says little on stdout; why it stopped is at the end of its own log.
-    if(EXISTS "${WORK_DIR}/build/ffbuild/config.log")
+    if(step STREQUAL "configure" AND EXISTS "${WORK_DIR}/build/ffbuild/config.log")
       file(READ "${WORK_DIR}/build/ffbuild/config.log" config_log)
       string(APPEND text "\n--- ffbuild/config.log ---\n${config_log}")
     endif()
