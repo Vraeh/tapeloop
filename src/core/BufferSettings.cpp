@@ -85,6 +85,13 @@ std::vector<std::string> BufferSettings::selectedSources() const
 	return selected;
 }
 
+EncoderPreferences BufferSettings::encoderPreferences() const
+{
+	EncoderPreferences preferences;
+	preferences.preferHevc = !forceH264;
+	return preferences;
+}
+
 SavedSettings saveSettings(const BufferSettings &settings)
 {
 	SavedSettings saved;
@@ -92,6 +99,7 @@ SavedSettings saveSettings(const BufferSettings &settings)
 	saved.resolution = resolutionName(settings.resolution.mode);
 	saved.height = settings.resolution.height;
 	saved.startWithOutputs = settings.startWithOutputs;
+	saved.forceH264 = settings.forceH264;
 	for (const auto &[uuid, source] : settings.sources) {
 		SavedSource entry;
 		entry.uuid = uuid;
@@ -118,6 +126,7 @@ std::optional<BufferSettings> loadSettings(const SavedSettings &saved)
 	settings.length = fromSeconds(saved.lengthSeconds);
 	settings.resolution = resolutionFrom(saved.resolution, saved.height);
 	settings.startWithOutputs = saved.startWithOutputs;
+	settings.forceH264 = saved.forceH264;
 	for (const SavedSource &entry : saved.sources) {
 		if (entry.uuid.empty()) {
 			continue;
