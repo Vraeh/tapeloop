@@ -55,11 +55,67 @@ else()
   list(APPEND options --enable-pthreads --enable-pic)
 endif()
 
+# Files of FFmpeg that carry a license other than the LGPL, alone or next to it, among
+# everything the build above compiles or includes. Each comes with that license and
+# a text the notice starts at, the start of the comment that holds that text being
+# taken. Their notices go into FFmpeg-THIRD-PARTY.txt.
+set(
+  other_licenses
+  "libavcodec/aom_film_grain_template.c|BSD-2-Clause|Redistribution and use"
+  "libavcodec/faandct.c|ISC|Permission to use"
+  "libavcodec/jfdctfst.c|IJG|Independent JPEG Group"
+  "libavcodec/jfdctint_template.c|IJG|Independent JPEG Group"
+  "libavcodec/jrevdct.c|IJG|Independent JPEG Group"
+  "libavutil/adler32.c|zlib|provided 'as-is'"
+  "libavutil/avsscanf.c|MIT|Permission is hereby granted"
+  "libavutil/fixed_dsp.c|BSD-3-Clause|Redistribution and use"
+  "libavutil/fixed_dsp.h|BSD-3-Clause|Redistribution and use"
+  "libavutil/uuid.c|BSD-3-Clause|Redistribution and use"
+  "libavutil/x86/x86inc.asm|ISC|Permission to use"
+)
+# Files whose permissive text FFmpeg carries without a notice to ship: code after
+# Boost's algorithms, whose license covers object code without its notice, and SHA code
+# that credits public-domain and BSD-licensed code it is based on, whose notices
+# FFmpeg's source does not hold.
+set(reviewed_licenses "libavutil/libm.h" "libavutil/mathematics.c" "libavutil/sha.c" "libavutil/sha512.c")
+# What marks a notice other than the LGPL's, matched in lower case with line breaks and
+# comment leaders taken out.
+set(
+  other_license_marks
+  "redistribution and use in source and binary forms|permission is hereby granted|permission to use, copy, modify|provided .as-is.|independent jpeg group|boost software license|public domain|apache license|bsd-licensed|bsd license"
+)
+
 # -DPRINT_SOURCE=ON prints the version and the source URL, for the release notes, and
 # builds nothing.
 if(PRINT_SOURCE)
   message("${version} ${url}")
   return()
+endif()
+
+# -DDOWNLOAD_SOURCE=<dir> puts the source tarball, checked against its SHA-256, into
+# that directory, for the release to carry, and builds nothing.
+if(DOWNLOAD_SOURCE)
+  set(archive "${DOWNLOAD_SOURCE}/ffmpeg-${version}.tar.xz")
+  # A release should not fail for one dropped connection; a wrong hash is not retried.
+  foreach(attempt RANGE 1 3)
+    if(attempt GREATER 1)
+      execute_process(COMMAND "${CMAKE_COMMAND}" -E sleep 30)
+    endif()
+    file(DOWNLOAD "${url}" "${archive}" TLS_VERIFY ON INACTIVITY_TIMEOUT 60 STATUS status)
+    list(GET status 0 code)
+    if(code EQUAL 0)
+      file(SHA256 "${archive}" actual)
+      if(NOT actual STREQUAL sha256)
+        file(REMOVE "${archive}")
+        message(FATAL_ERROR "${url} has SHA-256 ${actual}, not ${sha256}")
+      endif()
+      message("${archive}")
+      return()
+    endif()
+    file(REMOVE "${archive}")
+    message(STATUS "Downloading ${url} failed (${attempt} of 3): ${status}")
+  endforeach()
+  message(FATAL_ERROR "Downloading ${url} failed")
 endif()
 
 foreach(variable IN ITEMS PREFIX WORK_DIR)
@@ -214,20 +270,155 @@ endforeach()
 message(STATUS "Building FFmpeg ${version} with ${jobs} jobs")
 run_step(build "make -j${jobs} && make install")
 
+# Every file the build compiled or included, from the dependency files the compiler
+# and the assembler wrote, has its license checked: one with a notice other than the
+# LGPL's that the lists above do not name stops the build. Paths are compared from the
+# source directory down, and on Windows without case, as it writes them.
+set(listed)
+foreach(entry IN LISTS other_licenses)
+  string(REPLACE "|" ";" entry "${entry}")
+  list(GET entry 0 path)
+  list(APPEND listed "${path}")
+endforeach()
+list(APPEND listed ${reviewed_licenses})
+if(CMAKE_HOST_WIN32)
+  string(TOLOWER "${listed}" listed)
+endif()
+file(GLOB_RECURSE dependency_files "${WORK_DIR}/build/*.d")
+if(NOT dependency_files)
+  message(FATAL_ERROR "FFmpeg's build left no dependency files to check the licenses of")
+endif()
+set(used)
+foreach(dependency_file IN LISTS dependency_files)
+  file(READ "${dependency_file}" dependencies)
+  # Line continuations go, then Windows separators and doubled ones, which nasm writes;
+  # FFmpeg names its sources through the src link it makes in the build directory, or
+  # by their full path.
+  string(REPLACE "\\\r\n" " " dependencies "${dependencies}")
+  string(REPLACE "\\\n" " " dependencies "${dependencies}")
+  string(REPLACE "\\" "/" dependencies "${dependencies}")
+  string(REGEX REPLACE "/+" "/" dependencies "${dependencies}")
+  string(REGEX REPLACE "[ \t\r\n]+" ";" tokens "${dependencies}")
+  foreach(token IN LISTS tokens)
+    if(token MATCHES "^src/([^:]+)")
+      list(APPEND used "${CMAKE_MATCH_1}")
+    elseif(token MATCHES "ffmpeg-${version}/([^:]+)")
+      list(APPEND used "${CMAKE_MATCH_1}")
+    endif()
+  endforeach()
+endforeach()
+# Included files come only from there: a header nothing compiles shows they were read.
+if(NOT "libavutil/attributes.h" IN_LIST used)
+  message(FATAL_ERROR "FFmpeg's dependency files do not name its sources the way this script reads them")
+endif()
+# MSVC's dependency files name only what a file includes, never the file itself, so each
+# object adds its own source. Sources the build generates hold no license of their own.
+file(GLOB_RECURSE objects RELATIVE "${WORK_DIR}/build" "${WORK_DIR}/build/*.o")
+foreach(object IN LISTS objects)
+  string(REGEX REPLACE "\\.o$" "" stem "${object}")
+  set(found)
+  foreach(extension IN ITEMS c asm S)
+    if(EXISTS "${source}/${stem}.${extension}")
+      set(found "${stem}.${extension}")
+      break()
+    endif()
+  endforeach()
+  if(found)
+    list(APPEND used "${found}")
+  elseif(NOT EXISTS "${WORK_DIR}/build/${stem}.c")
+    message(FATAL_ERROR "No source found for FFmpeg's ${object}")
+  endif()
+endforeach()
+list(REMOVE_DUPLICATES used)
+list(LENGTH used used_count)
+message(STATUS "Checked the licenses of the ${used_count} files FFmpeg's build read")
+set(unlisted)
+foreach(path IN LISTS used)
+  if(NOT EXISTS "${source}/${path}")
+    continue()
+  endif()
+  file(READ "${source}/${path}" text)
+  string(TOLOWER "${text}" text)
+  string(REGEX REPLACE "[ \t\r\n*;/]+" " " text "${text}")
+  set(key "${path}")
+  if(CMAKE_HOST_WIN32)
+    string(TOLOWER "${key}" key)
+  endif()
+  if(text MATCHES "${other_license_marks}" AND NOT key IN_LIST listed)
+    list(APPEND unlisted "${path}")
+  endif()
+endforeach()
+if(unlisted)
+  list(JOIN unlisted "\n  " unlisted)
+  message(FATAL_ERROR "Not under the LGPL alone, and in neither other_licenses nor reviewed_licenses:\n  ${unlisted}")
+endif()
+
 # What a package that links FFmpeg statically carries next to it.
 file(COPY_FILE "${source}/COPYING.LGPLv2.1" "${PREFIX}/FFmpeg-LICENSE.txt")
+file(COPY_FILE "${source}/LICENSE.md" "${PREFIX}/FFmpeg-LICENSE.md")
 file(
   WRITE
   "${PREFIX}/FFmpeg-NOTICE.txt"
   "Tapeloop includes FFmpeg ${version}, linked statically, under the GNU Lesser General\n"
-  "Public License version 2.1 or later. The license is in FFmpeg-LICENSE.txt.\n"
+  "Public License version 2.1 or later. The license is in FFmpeg-LICENSE.txt, FFmpeg's\n"
+  "own account of its licensing in FFmpeg-LICENSE.md, and the notices of the few files\n"
+  "under other licenses in FFmpeg-THIRD-PARTY.txt.\n"
   "\n"
   "Source: ${url}\n"
   "SHA-256: ${sha256}\n"
   "\n"
   "Built from that source without changes, configured with:\n"
   "${joined}\n"
+  "\n"
+  "Every release of Tapeloop carries that FFmpeg source and Tapeloop's own source. With\n"
+  "them you can build Tapeloop again against a modified FFmpeg and use it in place of\n"
+  "this one, as the LGPL allows: point url and sha256 in cmake/ffmpeg/BuildFFmpeg.cmake\n"
+  "at your FFmpeg's tarball (a file:// URL will do), which has to unpack into\n"
+  "ffmpeg-${version}/ as FFmpeg's own do, and build Tapeloop as its README says.\n"
 )
+string(
+  CONCAT
+  third_party
+  "Most of FFmpeg is under the LGPL. A few of the files this build of it compiles, or\n"
+  "includes into what it compiles, also carry other licenses; their notices follow, as\n"
+  "they stand in FFmpeg ${version}'s source.\n"
+  "\n"
+  "This software is based in part on the work of the Independent JPEG Group. FFmpeg's\n"
+  "jfdctfst.c, jfdctint_template.c and jrevdct.c are its changed copies of libjpeg's\n"
+  "jfdctfst.c, jfdctint.c and jrevdct.c; FFmpeg's history of them is at\n"
+  "https://git.ffmpeg.org/ffmpeg.git.\n"
+)
+foreach(entry IN LISTS other_licenses)
+  string(REPLACE "|" ";" entry "${entry}")
+  list(GET entry 0 path)
+  list(GET entry 1 license)
+  list(GET entry 2 mark)
+  file(READ "${source}/${path}" text)
+  string(FIND "${text}" "${mark}" at)
+  if(at EQUAL -1)
+    message(FATAL_ERROR "${path} no longer holds \"${mark}\"")
+  endif()
+  # The comment around the mark: a C block, or the run of lines starting with ";*" in
+  # an assembly file.
+  string(SUBSTRING "${text}" 0 ${at} before)
+  string(SUBSTRING "${text}" ${at} -1 after)
+  if(path MATCHES "\\.asm$")
+    string(REGEX MATCH "(;\\*[^\n]*\n)*;\\*[^\n]*$" opening "${before}")
+    string(REGEX MATCH "^[^\n]*\n(;\\*[^\n]*\n)*" closing "${after}")
+  else()
+    string(FIND "${before}" "/*" start REVERSE)
+    string(FIND "${after}" "*/" end)
+    if(start EQUAL -1 OR end EQUAL -1)
+      message(FATAL_ERROR "${path} holds \"${mark}\" outside a comment")
+    endif()
+    string(SUBSTRING "${before}" ${start} -1 opening)
+    math(EXPR end "${end} + 2")
+    string(SUBSTRING "${after}" 0 ${end} closing)
+    string(APPEND closing "\n")
+  endif()
+  string(APPEND third_party "\n${path} (${license}):\n\n${opening}${closing}")
+endforeach()
+file(WRITE "${PREFIX}/FFmpeg-THIRD-PARTY.txt" "${third_party}")
 
 # Written last: ffmpeg.cmake takes the prefix as complete only once this file is there.
 file(WRITE "${PREFIX}/configure-line.txt" "${joined}\n")

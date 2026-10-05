@@ -72,7 +72,15 @@ function(tapeloop_add_ffmpeg)
       message(FATAL_ERROR "Building FFmpeg failed")
     endif()
   endif()
-  set_property(GLOBAL PROPERTY TAPELOOP_FFMPEG_NOTICES "${prefix}/FFmpeg-NOTICE.txt" "${prefix}/FFmpeg-LICENSE.txt")
+  set_property(
+    GLOBAL
+    PROPERTY
+      TAPELOOP_FFMPEG_NOTICES
+        "${prefix}/FFmpeg-NOTICE.txt"
+        "${prefix}/FFmpeg-LICENSE.txt"
+        "${prefix}/FFmpeg-LICENSE.md"
+        "${prefix}/FFmpeg-THIRD-PARTY.txt"
+  )
   file(READ "${prefix}/configure-line.txt" configure_line)
   string(STRIP "${configure_line}" configure_line)
   message(STATUS "FFmpeg from ${prefix}: ${configure_line}")
