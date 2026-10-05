@@ -1,12 +1,33 @@
 cmake_minimum_required(VERSION 3.28...3.30)
 
-# Tests of the libobs glue against a real, headless libobs. BuildLibobs.cmake builds
-# that libobs; TAPELOOP_LIBOBS_PREFIX points at where it installed it.
+# Tests of the libobs glue against a real, headless libobs. On Linux BuildLibobs.cmake
+# builds that libobs and TAPELOOP_LIBOBS_PREFIX points at where it installed it. On
+# Windows the plugin's own configure builds it into .deps, with the Direct3D 11 renderer
+# and obs-x264 when given -DTAPELOOP_OBS_TEST_RUNTIME=ON, and the modules are taken from
+# that build's rundir.
 project(tapeloop-obs-tests LANGUAGES C CXX)
 
-set(TAPELOOP_LIBOBS_PREFIX "" CACHE PATH "Prefix BuildLibobs.cmake installed libobs into")
-if(NOT EXISTS "${TAPELOOP_LIBOBS_PREFIX}/lib/cmake/libobs/libobsConfig.cmake")
-  message(FATAL_ERROR "TAPELOOP_LIBOBS_PREFIX must point at a libobs built by BuildLibobs.cmake")
+set(TAPELOOP_LIBOBS_PREFIX "" CACHE PATH "Prefix libobs was installed into")
+if(WIN32)
+  set(TAPELOOP_OBS_RUNDIR "" CACHE PATH "Release rundir of the OBS build, with obs-x264")
+  set(TAPELOOP_OBS_DEPS_DIR "" CACHE PATH "obs-deps, whose x264 DLL obs-x264 loads")
+  if(
+    NOT EXISTS "${TAPELOOP_LIBOBS_PREFIX}/cmake/libobs/libobsConfig.cmake"
+    OR NOT EXISTS "${TAPELOOP_OBS_RUNDIR}/obs-plugins/64bit/obs-x264.dll"
+  )
+    message(FATAL_ERROR "Configure the plugin with -DTAPELOOP_OBS_TEST_RUNTIME=ON first")
+  endif()
+  list(APPEND CMAKE_PREFIX_PATH "${TAPELOOP_OBS_DEPS_DIR}")
+  set(_obs_plugin_dir "${TAPELOOP_OBS_RUNDIR}/obs-plugins/64bit")
+  set(_obs_plugin_data_dir "${TAPELOOP_OBS_RUNDIR}/data/obs-plugins")
+  set(_obs_graphics_module "libobs-d3d11")
+else()
+  if(NOT EXISTS "${TAPELOOP_LIBOBS_PREFIX}/lib/cmake/libobs/libobsConfig.cmake")
+    message(FATAL_ERROR "TAPELOOP_LIBOBS_PREFIX must point at a libobs built by BuildLibobs.cmake")
+  endif()
+  set(_obs_plugin_dir "${TAPELOOP_LIBOBS_PREFIX}/lib/obs-plugins")
+  set(_obs_plugin_data_dir "${TAPELOOP_LIBOBS_PREFIX}/share/obs/obs-plugins")
+  set(_obs_graphics_module "${TAPELOOP_LIBOBS_PREFIX}/lib/libobs-opengl")
 endif()
 
 set(CMAKE_CXX_STANDARD 20)
@@ -65,7 +86,10 @@ target_sources(
 target_compile_definitions(
   tapeloop-obs-tests
   PRIVATE
-    TAPELOOP_LIBOBS_PREFIX="${TAPELOOP_LIBOBS_PREFIX}"
+    TAPELOOP_OBS_PLUGIN_DIR="${_obs_plugin_dir}"
+    TAPELOOP_OBS_PLUGIN_DATA_DIR="${_obs_plugin_data_dir}"
+    TAPELOOP_OBS_GRAPHICS_MODULE="${_obs_graphics_module}"
+    TAPELOOP_OBS_MODULE_SUFFIX="${CMAKE_SHARED_MODULE_SUFFIX}"
     TAPELOOP_TEST_UNLOAD_MODULE="$<TARGET_FILE:tapeloop-test-unload>"
 )
 add_dependencies(tapeloop-obs-tests tapeloop-test-unload)
@@ -75,12 +99,23 @@ target_link_libraries(
 )
 # libobs loads the system's FFmpeg; the static one stays inside the test binary. Only
 # FFmpeg's archives: Clang links the sanitizer runtimes as archives that must stay
-# exported.
-target_link_options(tapeloop-obs-tests PRIVATE "LINKER:--exclude-libs=libavcodec.a:libavutil.a")
+# exported. A Windows executable exports nothing unless asked to.
+if(CMAKE_SYSTEM_NAME STREQUAL "Linux")
+  target_link_options(tapeloop-obs-tests PRIVATE "LINKER:--exclude-libs=libavcodec.a:libavutil.a")
+endif()
 set_target_properties(tapeloop-obs-tests PROPERTIES BUILD_RPATH "${TAPELOOP_LIBOBS_PREFIX}/lib")
 tapeloop_core_warnings(tapeloop-obs-tests)
 
 enable_testing()
 list(APPEND CMAKE_MODULE_PATH "${catch2_SOURCE_DIR}/extras")
 include(Catch)
-catch_discover_tests(tapeloop-obs-tests)
+if(WIN32)
+  # libobs looks for its effects at ../../data/libobs from the working directory.
+  catch_discover_tests(
+    tapeloop-obs-tests
+    WORKING_DIRECTORY "${TAPELOOP_OBS_RUNDIR}/bin/64bit"
+    DL_PATHS "${TAPELOOP_OBS_RUNDIR}/bin/64bit" "${TAPELOOP_OBS_DEPS_DIR}/bin"
+  )
+else()
+  catch_discover_tests(tapeloop-obs-tests)
+endif()
