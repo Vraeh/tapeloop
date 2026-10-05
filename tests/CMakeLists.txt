@@ -47,7 +47,9 @@ target_sources(
     core/BufferLifecycleTests.cpp
     core/BufferSettingsTests.cpp
     core/ClipTests.cpp
+    core/DecodePlannerTests.cpp
     core/EncoderPolicyTests.cpp
+    core/FakeDecoder.hpp
     core/GopTests.cpp
     core/MediaTimeTests.cpp
     core/MomentCutterTests.cpp
