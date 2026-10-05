@@ -51,8 +51,8 @@ struct DecodeResult {
 // Decides what to feed a FrameDecoder so that the frame the playhead wants is ready:
 // decoding starts at the keyframe of its GOP and goes no further than needed, the
 // decoded frames of the last GOPs are kept, within maxBytes, so that stepping back costs
-// nothing while they fit, a new
-// run opens the decoder again, and reverse play can have the previous GOP decoded ahead.
+// nothing while they fit, a new run opens the decoder again, and reverse play can have
+// the previous GOP decoded ahead.
 // Runs are told apart by their codec and configuration; two runs of one codec without a
 // configuration carry their parameter sets in the stream, so a reset is enough between
 // them. A frame the decoder never gives is reported as InvalidData, without decoding its

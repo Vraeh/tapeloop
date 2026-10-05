@@ -754,9 +754,66 @@ TEST_CASE("DecodePlanner counts a frame the decoder gives twice once")
 	decoder.twice = 3;
 	DecodePlanner planner(decoder);
 	planner.load(makeClip({{VideoCodec::H264, {}, 1}}));
-	REQUIRE(shows(planner, decoder, kGopLength - 1));
+	for (int64_t frame = 0; frame < kGopLength; ++frame) {
+		REQUIRE(shows(planner, decoder, frame));
+	}
 	REQUIRE(shows(planner, decoder, 3));
 	CHECK(decoder.outstanding.size() == planner.heldFrames());
+}
+
+TEST_CASE("DecodePlanner plays forward under the cap with a decoder that holds frames back")
+{
+	FakeDecoder decoder = makeDecoder(3);
+	decoder.frameBytes = 100;
+	DecodePlannerConfig config;
+	config.maxBytes = 1000;
+	DecodePlanner planner(decoder, config);
+	planner.load(makeClip({{VideoCodec::H264, {}, 3}}));
+	for (int64_t frame = 0; frame < 3 * kGopLength; ++frame) {
+		REQUIRE(shows(planner, decoder, frame));
+	}
+	CHECK(planner.work().packetsSent == 3 * kGopLength);
+	CHECK(planner.work().resets == 2);
+}
+
+TEST_CASE("DecodePlanner stops asking for a frame given back that the decoder no longer gives")
+{
+	FakeDecoder decoder = makeDecoder();
+	decoder.frameBytes = 100;
+	DecodePlannerConfig config;
+	config.maxBytes = 1000;
+	DecodePlanner planner(decoder, config);
+	planner.load(makeClip({{VideoCodec::H264, {}, 1}}));
+	for (int64_t frame = 0; frame < kGopLength; ++frame) {
+		REQUIRE(shows(planner, decoder, frame));
+	}
+	// Frame 5 was given back for room, and the decoder stops giving it.
+	decoder.dropped = {5};
+	CHECK(planner.frameAt(timeOf(5)).status == DecodeStatus::InvalidData);
+	const uint64_t sent = planner.work().packetsSent;
+	CHECK(planner.frameAt(timeOf(5)).status == DecodeStatus::InvalidData);
+	CHECK(planner.frameAt(timeOf(5)).status == DecodeStatus::InvalidData);
+	CHECK(planner.work().packetsSent == sent);
+}
+
+TEST_CASE("DecodePlanner lets go of a later GOP from its end")
+{
+	FakeDecoder decoder = makeDecoder();
+	decoder.frameBytes = 100;
+	DecodePlannerConfig config;
+	config.maxBytes = 4000;
+	DecodePlanner planner(decoder, config);
+	planner.load(makeClip({{VideoCodec::H264, {}, 2}}));
+	for (int64_t frame = kGopLength; frame < 2 * kGopLength; ++frame) {
+		REQUIRE(shows(planner, decoder, frame));
+	}
+	REQUIRE(shows(planner, decoder, kGopLength - 1));
+	// The start of the later GOP, nearest the earlier one, is still held.
+	const uint64_t sent = planner.work().packetsSent;
+	for (int64_t frame = kGopLength; frame < kGopLength + 10; ++frame) {
+		REQUIRE(shows(planner, decoder, frame));
+	}
+	CHECK(planner.work().packetsSent == sent);
 }
 
 TEST_CASE("DecodePlanner reports a frame the decoder never gives once, under the cap too")

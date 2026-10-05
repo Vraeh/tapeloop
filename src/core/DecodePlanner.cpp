@@ -211,7 +211,9 @@ bool DecodePlanner::makeRoom(KeptGop &kept, size_t bytes, size_t wanted) noexcep
 	}
 	// Reverse play keeps what it needs next: the frames just before the one asked for.
 	const size_t count = kept.frames.size();
-	for (size_t packet = count; wanted < count && packet > wanted + 1 && !fits(); --packet) {
+	// Only frames this pass has not come to yet: one it just brought out may be the next
+	// one shown.
+	for (size_t packet = count; wanted < count && packet > std::max(wanted + 1, passNext_) && !fits(); --packet) {
 		drop(kept, packet - 1);
 	}
 	for (size_t packet = 0; packet < count && !fits(); ++packet) {
