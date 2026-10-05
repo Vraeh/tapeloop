@@ -1214,7 +1214,7 @@ TEST_CASE_METHOD(ObsFixture, "the oldest replays go with a warning past the libr
 		},
 		60s));
 
-	LogCounter warned("old replays to stay within");
+	LogCounter warned("Old replays dropped to stay within");
 	const uint64_t first = manager.captureReplay();
 	REQUIRE(first != 0);
 	for (int i = 1; i < 200; ++i) {
