@@ -9,22 +9,39 @@ project(tapeloop-obs-tests LANGUAGES C CXX)
 
 set(TAPELOOP_LIBOBS_PREFIX "" CACHE PATH "Prefix libobs was installed into")
 if(WIN32)
-  set(TAPELOOP_OBS_RUNDIR "" CACHE PATH "Release rundir of the OBS build, with obs-x264")
-  set(TAPELOOP_OBS_DEPS_DIR "" CACHE PATH "obs-deps, whose x264 DLL obs-x264 loads")
+  # Where the plugin's configure put the OBS build and obs-deps of buildspec.json.
+  file(READ "${CMAKE_CURRENT_SOURCE_DIR}/../../buildspec.json" _buildspec)
+  string(JSON _obs_version GET "${_buildspec}" dependencies obs-studio version)
+  string(JSON _obs_deps_version GET "${_buildspec}" dependencies prebuilt version)
+  set(
+    TAPELOOP_OBS_RUNDIR
+    "${TAPELOOP_LIBOBS_PREFIX}/obs-studio-${_obs_version}/build_x64/rundir/Release"
+    CACHE PATH
+    "Release rundir of the OBS build, with obs-x264"
+  )
+  set(
+    TAPELOOP_OBS_DEPS_DIR
+    "${TAPELOOP_LIBOBS_PREFIX}/obs-deps-${_obs_deps_version}-x64"
+    CACHE PATH
+    "obs-deps, whose x264 DLL obs-x264 loads"
+  )
   # OBS installs its package files on Windows straight into cmake/.
   foreach(
     required
     IN
-    ITEMS "${TAPELOOP_LIBOBS_PREFIX}/cmake/libobsConfig.cmake" "${TAPELOOP_OBS_RUNDIR}/obs-plugins/64bit/obs-x264.dll"
+    ITEMS
+      "${TAPELOOP_LIBOBS_PREFIX}/cmake/libobsConfig.cmake"
+      "${TAPELOOP_OBS_RUNDIR}/obs-plugins/64bit/obs-x264.dll"
+      "${TAPELOOP_OBS_DEPS_DIR}/bin"
   )
     if(NOT EXISTS "${required}")
       message(FATAL_ERROR "${required} is missing: configure the plugin with -DTAPELOOP_OBS_TEST_RUNTIME=ON first")
     endif()
   endforeach()
   list(APPEND CMAKE_PREFIX_PATH "${TAPELOOP_OBS_DEPS_DIR}")
-  # As the plugin's own Windows build has it. Not UNICODE: with it Catch2 defines wmain,
-  # which the linker does not look for in a library.
-  add_compile_definitions(_CRT_SECURE_NO_WARNINGS)
+  # As the plugin's own Windows build has them (cmake/windows/compilerconfig.cmake).
+  add_compile_definitions(UNICODE _UNICODE _CRT_SECURE_NO_WARNINGS _CRT_NONSTDC_NO_WARNINGS)
+  add_compile_options(/utf-8 /Zc:preprocessor /MP)
   set(_obs_plugin_dir "${TAPELOOP_OBS_RUNDIR}/obs-plugins/64bit")
   set(_obs_plugin_data_dir "${TAPELOOP_OBS_RUNDIR}/data/obs-plugins")
   set(_obs_graphics_module "libobs-d3d11")
@@ -60,6 +77,10 @@ FetchContent_MakeAvailable(Catch2)
 
 # Warnings inside Catch2 are not ours to fix.
 set_target_properties(Catch2 Catch2WithMain PROPERTIES COMPILE_WARNING_AS_ERROR OFF)
+# With UNICODE Catch2 defines wmain, which the linker does not look for in a library.
+if(WIN32)
+  target_compile_definitions(Catch2WithMain PRIVATE DO_NOT_USE_WMAIN)
+endif()
 
 add_subdirectory(../../src/core core)
 add_subdirectory(../../src/obs obs)

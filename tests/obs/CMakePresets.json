@@ -44,9 +44,7 @@
       },
       "cacheVariables": {
         "CMAKE_COMPILE_WARNING_AS_ERROR": true,
-        "TAPELOOP_LIBOBS_PREFIX": "${sourceDir}/../../.deps",
-        "TAPELOOP_OBS_RUNDIR": "${sourceDir}/../../.deps/obs-studio-32.0.4/build_x64/rundir/Release",
-        "TAPELOOP_OBS_DEPS_DIR": "${sourceDir}/../../.deps/obs-deps-2025-08-23-x64"
+        "TAPELOOP_LIBOBS_PREFIX": "${sourceDir}/../../.deps"
       }
     }
   ],
