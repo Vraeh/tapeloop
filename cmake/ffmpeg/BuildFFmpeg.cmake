@@ -52,20 +52,32 @@ else()
   list(APPEND options --enable-pthreads --enable-pic)
 endif()
 
-# Files of FFmpeg under another license than the LGPL that the build above compiles, or
-# includes into what it compiles, each with that license. Their notices go into
-# FFmpeg-THIRD-PARTY.txt. After the build every object is traced back to its source,
-# and a source under such a license that is not listed here stops the build; files only
-# included, such as the two below that are, have to be found by hand.
+# Files of FFmpeg that carry a license other than the LGPL, alone or next to it, among
+# everything the build above compiles or includes. Each comes with that license and
+# a text the notice starts at, the start of the comment that holds that text being
+# taken. Their notices go into FFmpeg-THIRD-PARTY.txt.
 set(
   other_licenses
-  "libavcodec/faandct.c|ISC"
-  "libavcodec/jfdctfst.c|IJG"
-  "libavcodec/jfdctint_template.c|IJG"
-  "libavcodec/jrevdct.c|IJG"
-  "libavutil/adler32.c|zlib"
-  "libavutil/avsscanf.c|MIT"
-  "libavutil/x86/x86inc.asm|ISC"
+  "libavcodec/aom_film_grain_template.c|BSD-2-Clause|Redistribution and use"
+  "libavcodec/faandct.c|ISC|Permission to use"
+  "libavcodec/jfdctfst.c|IJG|Independent JPEG Group"
+  "libavcodec/jfdctint_template.c|IJG|Independent JPEG Group"
+  "libavcodec/jrevdct.c|IJG|Independent JPEG Group"
+  "libavutil/adler32.c|zlib|provided 'as-is'"
+  "libavutil/avsscanf.c|MIT|Permission is hereby granted"
+  "libavutil/fixed_dsp.c|BSD-3-Clause|Redistribution and use"
+  "libavutil/fixed_dsp.h|BSD-3-Clause|Redistribution and use"
+  "libavutil/uuid.c|BSD-3-Clause|Redistribution and use"
+  "libavutil/x86/x86inc.asm|ISC|Permission to use"
+)
+# Files whose permissive text asks for nothing in a binary: code after Boost's
+# algorithms, whose license covers object code without its notice, and credits to
+# public-domain code.
+set(reviewed_licenses "libavutil/libm.h" "libavutil/mathematics.c" "libavutil/sha.c")
+# What marks a notice other than the LGPL's.
+set(
+  other_license_marks
+  "Redistribution and use in source and binary forms|Permission is hereby granted|Permission to use, copy, modify|provided 'as-is'|Independent JPEG Group|Boost Software License|[Pp]ublic domain|Apache License"
 )
 
 # -DPRINT_SOURCE=ON prints the version and the source URL, for the release notes, and
@@ -233,42 +245,63 @@ endforeach()
 message(STATUS "Building FFmpeg ${version} with ${jobs} jobs")
 run_step(build "make -j${jobs} && make install")
 
-# Every object back to its source. Sources the build generates have no license of
-# their own; a source with a permissive notice and no LGPL one has to be listed above.
+# Every file the build compiled or included, from the dependency files the compiler
+# and the assembler wrote, has its license checked: one with a notice other than the
+# LGPL's that the lists above do not name stops the build. Paths are compared from the
+# source directory down, without case, as Windows writes them.
 set(listed)
 foreach(entry IN LISTS other_licenses)
   string(REPLACE "|" ";" entry "${entry}")
   list(GET entry 0 path)
+  string(TOLOWER "${path}" path)
   list(APPEND listed "${path}")
 endforeach()
-file(GLOB_RECURSE objects RELATIVE "${WORK_DIR}/build" "${WORK_DIR}/build/*.o")
-foreach(object IN LISTS objects)
-  string(REGEX REPLACE "\\.o$" "" stem "${object}")
-  set(found)
-  foreach(extension IN ITEMS c asm S)
-    if(EXISTS "${source}/${stem}.${extension}")
-      set(found "${stem}.${extension}")
-      break()
+foreach(path IN LISTS reviewed_licenses)
+  string(TOLOWER "${path}" path)
+  list(APPEND listed "${path}")
+endforeach()
+file(GLOB_RECURSE dependency_files "${WORK_DIR}/build/*.d")
+if(NOT dependency_files)
+  message(FATAL_ERROR "FFmpeg's build left no dependency files to check the licenses of")
+endif()
+set(used)
+foreach(dependency_file IN LISTS dependency_files)
+  file(READ "${dependency_file}" dependencies)
+  # Line continuations go, then Windows separators and doubled ones, which nasm writes;
+  # FFmpeg names its sources through the src link it makes in the build directory, or
+  # by their full path.
+  string(REPLACE "\\\r\n" " " dependencies "${dependencies}")
+  string(REPLACE "\\\n" " " dependencies "${dependencies}")
+  string(REPLACE "\\" "/" dependencies "${dependencies}")
+  string(REGEX REPLACE "/+" "/" dependencies "${dependencies}")
+  string(REGEX REPLACE "[ \t\r\n]+" ";" tokens "${dependencies}")
+  foreach(token IN LISTS tokens)
+    if(token MATCHES "^src/([^:]+)")
+      list(APPEND used "${CMAKE_MATCH_1}")
+    elseif(token MATCHES "ffmpeg-${version}/([^:]+)")
+      list(APPEND used "${CMAKE_MATCH_1}")
     endif()
   endforeach()
-  if(NOT found)
-    if(EXISTS "${WORK_DIR}/build/${stem}.c")
-      continue()
-    endif()
-    message(FATAL_ERROR "No source found for FFmpeg's ${object}")
+endforeach()
+list(REMOVE_DUPLICATES used)
+if(NOT "libavcodec/h264dec.c" IN_LIST used)
+  message(FATAL_ERROR "FFmpeg's dependency files do not name its sources the way this script reads them")
+endif()
+set(unlisted)
+foreach(path IN LISTS used)
+  if(NOT EXISTS "${source}/${path}")
+    continue()
   endif()
-  file(READ "${source}/${found}" head LIMIT 4096)
-  if(
-    NOT head MATCHES "Lesser General Public"
-    AND
-      head
-        MATCHES
-        "Permission is hereby granted|Permission to use, copy, modify|provided 'as-is'|Independent JPEG Group"
-    AND NOT found IN_LIST listed
-  )
-    message(FATAL_ERROR "${found} is not under the LGPL; add its license to other_licenses")
+  file(READ "${source}/${path}" text)
+  string(TOLOWER "${path}" key)
+  if(text MATCHES "${other_license_marks}" AND NOT key IN_LIST listed)
+    list(APPEND unlisted "${path}")
   endif()
 endforeach()
+if(unlisted)
+  list(JOIN unlisted "\n  " unlisted)
+  message(FATAL_ERROR "Not under the LGPL alone, and in neither other_licenses nor reviewed_licenses:\n  ${unlisted}")
+endif()
 
 # What a package that links FFmpeg statically carries next to it.
 file(COPY_FILE "${source}/COPYING.LGPLv2.1" "${PREFIX}/FFmpeg-LICENSE.txt")
@@ -289,39 +322,51 @@ file(
   "\n"
   "Every release of Tapeloop carries that FFmpeg source and Tapeloop's own source. With\n"
   "them you can build Tapeloop again against a modified FFmpeg and use it in place of\n"
-  "this one, as the LGPL allows.\n"
+  "this one, as the LGPL allows: point url and sha256 in cmake/ffmpeg/BuildFFmpeg.cmake\n"
+  "at your FFmpeg's tarball (a file:// URL will do) and build Tapeloop as its README\n"
+  "says.\n"
 )
 string(
   CONCAT
   third_party
   "Most of FFmpeg is under the LGPL. A few of the files this build of it compiles, or\n"
-  "includes into what it compiles, are under other licenses; their notices follow, as\n"
-  "they stand at the top of each file in FFmpeg ${version}'s source.\n"
+  "includes into what it compiles, also carry other licenses; their notices follow, as\n"
+  "they stand in FFmpeg ${version}'s source.\n"
   "\n"
-  "This software is based in part on the work of the Independent JPEG Group.\n"
+  "This software is based in part on the work of the Independent JPEG Group. FFmpeg's\n"
+  "jfdctfst.c, jfdctint_template.c and jrevdct.c are its changed copies of libjpeg's\n"
+  "jfdctfst.c, jfdctint.c and jrevdct.c; FFmpeg's history of them is at\n"
+  "https://git.ffmpeg.org/ffmpeg.git.\n"
 )
 foreach(entry IN LISTS other_licenses)
   string(REPLACE "|" ";" entry "${entry}")
   list(GET entry 0 path)
   list(GET entry 1 license)
+  list(GET entry 2 mark)
   file(READ "${source}/${path}" text)
-  # The notice is the comment the file opens with: a C block, or the boxed lines, each
-  # starting with ";*", at the top of an assembly file.
+  string(FIND "${text}" "${mark}" at)
+  if(at EQUAL -1)
+    message(FATAL_ERROR "${path} no longer holds \"${mark}\"")
+  endif()
+  # The comment around the mark: a C block, or the run of lines starting with ";*" in
+  # an assembly file.
+  string(SUBSTRING "${text}" 0 ${at} before)
+  string(SUBSTRING "${text}" ${at} -1 after)
   if(path MATCHES "\\.asm$")
-    string(REGEX MATCH "^(;\\*[^\n]*\n)+" notice "${text}")
+    string(REGEX MATCH "(;\\*[^\n]*\n)*;\\*[^\n]*$" opening "${before}")
+    string(REGEX MATCH "^[^\n]*\n(;\\*[^\n]*\n)*" closing "${after}")
   else()
-    string(FIND "${text}" "*/" end)
-    if(NOT text MATCHES "^/\\*" OR end EQUAL -1)
-      message(FATAL_ERROR "${path} does not open with its notice")
+    string(FIND "${before}" "/*" start REVERSE)
+    string(FIND "${after}" "*/" end)
+    if(start EQUAL -1 OR end EQUAL -1)
+      message(FATAL_ERROR "${path} holds \"${mark}\" outside a comment")
     endif()
+    string(SUBSTRING "${before}" ${start} -1 opening)
     math(EXPR end "${end} + 2")
-    string(SUBSTRING "${text}" 0 ${end} notice)
-    string(APPEND notice "\n")
+    string(SUBSTRING "${after}" 0 ${end} closing)
+    string(APPEND closing "\n")
   endif()
-  if(notice STREQUAL "")
-    message(FATAL_ERROR "${path} does not open with its notice")
-  endif()
-  string(APPEND third_party "\n${path} (${license}):\n\n${notice}")
+  string(APPEND third_party "\n${path} (${license}):\n\n${opening}${closing}")
 endforeach()
 file(WRITE "${PREFIX}/FFmpeg-THIRD-PARTY.txt" "${third_party}")
 
