@@ -60,9 +60,10 @@ bool SharedPictures::prepare(uint32_t width, uint32_t height) noexcept
 
 	std::array<uint32_t, 2> handles{};
 	for (size_t i = 0; i < luma_.size(); ++i) {
-		// Without real NV12 support libobs would make two separate textures instead,
-		// which share no handle, so the handle is checked too.
+		// When it cannot make a real NV12 texture, libobs makes two separate ones, each
+		// with a handle of its own; a real one is a single texture behind both planes.
 		if (!gs_texture_create_nv12(&luma_[i], &chroma_[i], width, height, GS_SHARED_KM_TEX) ||
+		    gs_texture_get_obj(luma_[i]) != gs_texture_get_obj(chroma_[i]) ||
 		    (handles[i] = gs_texture_get_shared_handle(luma_[i])) == GS_INVALID_HANDLE) {
 			destroyTextures();
 			return false;
