@@ -194,8 +194,9 @@ TEST_CASE("a hidden or deprecated choice, and a software render vendor, leave th
 	preferences.chosen = "obs_nvenc_h264_soft";
 	CHECK(order(Vendor::Nvidia, preferences) == automatic);
 
-	// Software rendering runs on no adapter an encoder could share, so no hardware
-	// encoder counts as another adapter's.
+	// A Software render vendor is no adapter an encoder could share, so no hardware
+	// encoder counts as another adapter's. Adapters that render in software come out as
+	// Unknown, which the test above covers.
 	preferences.chosen.clear();
 	preferences.otherAdapters = false;
 	CHECK(order(Vendor::Software, preferences) == automatic);

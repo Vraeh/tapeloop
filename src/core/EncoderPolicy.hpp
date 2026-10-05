@@ -65,7 +65,7 @@ struct EncoderPreferences {
 	// Try each vendor's HEVC encoder before its H.264 one. HEVC gives the same picture at
 	// a lower bitrate, so less memory per buffer and less disk per replay.
 	bool preferHevc = true;
-	// An encoder the user chose, tried before all others when it is one of
+	// An encoder the user chose, tried before all others when it is one of the
 	// replayEncoderChoices; empty for the automatic order alone.
 	std::string chosen;
 	// Hardware encoders of another vendor than the adapter OBS renders on, whose frames
