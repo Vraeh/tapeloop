@@ -1,6 +1,7 @@
 # The FFmpeg Tapeloop decodes with, linked statically: built once by BuildFFmpeg.cmake
-# into .deps at the top of the repository, in a directory keyed on that script's hash,
-# so a new version or configure line builds again and anything else reuses it.
+# into .deps at the top of the repository, in a directory keyed on that script's hash
+# and the compiler, so a new version, configure line or compiler builds again and
+# anything else reuses it.
 # tapeloop_add_ffmpeg() defines the imported targets FFmpeg::avcodec and FFmpeg::avutil,
 # and the global property TAPELOOP_FFMPEG_NOTICES: the notice and license files a
 # package that links them carries.
