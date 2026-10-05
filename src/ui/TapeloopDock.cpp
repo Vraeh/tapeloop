@@ -221,7 +221,12 @@ TapeloopDock::TapeloopDock(DockBackend &backend, TextLookup text, QWidget *paren
 		guarded([this] { backend_.captureReplay(); });
 		refresh();
 	});
-	connect(tagFilter_, &QComboBox::currentIndexChanged, this, [this] { refresh(); });
+	connect(tagFilter_, &QComboBox::currentIndexChanged, this, [this] {
+		// A filter chosen after a capture the list has not shown yet is the user's choice
+		// over that capture.
+		guarded([this] { newestReplay_ = std::max(newestReplay_, backend_.currentReplay()); });
+		refresh();
+	});
 	const auto addTag = [this] {
 		const std::string tag = tagName_->text().toStdString();
 		bool added = false;
@@ -233,13 +238,18 @@ TapeloopDock::TapeloopDock(DockBackend &backend, TextLookup text, QWidget *paren
 	};
 	connect(addTag_, &QPushButton::clicked, this, addTag);
 	connect(tagName_, &QLineEdit::returnPressed, this, addTag);
-	// Moving through the list with the keyboard picks as a click does.
-	connect(replays_, &QListWidget::currentItemChanged, this, [this](QListWidgetItem *item) {
+	// Moving through the list with the keyboard picks as a click does, and a click on the
+	// row already current picks it again after a capture the list has not shown yet. The
+	// list is rebuilt once the view has finished with the event, which may still select
+	// the row under the pointer.
+	const auto pick = [this](QListWidgetItem *item) {
 		if (item) {
 			guarded([&] { backend_.pickReplay(item->data(Qt::UserRole).toULongLong()); });
-			refresh();
+			QMetaObject::invokeMethod(this, [this] { refresh(); }, Qt::QueuedConnection);
 		}
-	});
+	};
+	connect(replays_, &QListWidget::currentItemChanged, this, pick);
+	connect(replays_, &QListWidget::itemClicked, this, pick);
 	connect(startStop_, &QPushButton::clicked, this, [this] {
 		guarded([this] { backend_.toggleRunning(); });
 		refresh();
@@ -472,7 +482,10 @@ void TapeloopDock::updateReplays()
 	const auto shown = std::find(shownReplays_.begin(), shownReplays_.end(), current);
 	const bool listed = shown != shownReplays_.end();
 	const QSignalBlocker block(replays_);
-	replays_->setCurrentRow(listed ? static_cast<int>(shown - shownReplays_.begin()) : -1);
+	// No current row has to be set as such, or the view makes its first row current when
+	// it gains focus, which would pick that replay.
+	replays_->setCurrentIndex(listed ? replays_->model()->index(static_cast<int>(shown - shownReplays_.begin()), 0)
+					 : QModelIndex());
 	addTag_->setEnabled(listed);
 	tagName_->setEnabled(listed);
 }

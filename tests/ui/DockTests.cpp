@@ -19,6 +19,7 @@
 #include <QComboBox>
 #include <QDialog>
 #include <QDir>
+#include <QFocusEvent>
 #include <QPushButton>
 #include <QListWidget>
 #include <QSpinBox>
@@ -303,6 +304,10 @@ TEST_CASE("the dock captures replays and picks the one that goes on air")
 	CHECK(list->currentRow() == -1);
 	CHECK_FALSE(child<QPushButton>(dock, "addTag")->isEnabled());
 	CHECK_FALSE(name->isEnabled());
+	// Tabbing into the list picks nothing.
+	QFocusEvent focusIn(QEvent::FocusIn, Qt::TabFocusReason);
+	QApplication::sendEvent(list, &focusIn);
+	CHECK(backend.picked == 2u);
 	// A capture shows every replay again, since the new one carries no tag yet.
 	capture->click();
 	CHECK(filter->currentIndex() == 0);
@@ -320,6 +325,24 @@ TEST_CASE("the dock captures replays and picks the one that goes on air")
 	REQUIRE(list->count() == 1);
 	list->setCurrentRow(0);
 	CHECK(backend.picked == 1u);
+	CHECK(filter->currentIndex() == 1);
+	// The list follows once the pick's event is done with.
+	QCoreApplication::processEvents();
+	REQUIRE(list->currentItem());
+	CHECK(list->currentItem()->data(Qt::UserRole).toULongLong() == 1u);
+
+	// A click on the row still current picks it again after a capture the list has not
+	// shown yet.
+	backend.captureReplay();
+	REQUIRE(backend.picked == 5u);
+	Q_EMIT list->itemClicked(list->item(0));
+	CHECK(backend.picked == 1u);
+	QCoreApplication::processEvents();
+	CHECK(filter->currentIndex() == 1);
+	// A filter chosen in that time is kept over the capture.
+	filter->setCurrentIndex(0);
+	backend.captureReplay();
+	filter->setCurrentIndex(1);
 	CHECK(filter->currentIndex() == 1);
 
 	// Buffers and settings are left alone.
