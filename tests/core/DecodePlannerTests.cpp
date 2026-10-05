@@ -832,3 +832,20 @@ TEST_CASE("DecodePlanner reports a frame the decoder never gives once, under the
 	CHECK(planner.frameAt(timeOf(5)).status == DecodeStatus::InvalidData);
 	CHECK(planner.work().packetsSent == sent);
 }
+
+TEST_CASE("DecodePlanner reports a frame the pass went past without decoding further")
+{
+	FakeDecoder decoder = makeDecoder();
+	decoder.dropped = {5};
+	DecodePlanner planner(decoder);
+	planner.load(makeClip({{VideoCodec::H264, {}, 1}}));
+
+	REQUIRE(shows(planner, decoder, 10));
+	const uint64_t sent = planner.work().packetsSent;
+	CHECK(planner.frameAt(timeOf(5)).status == DecodeStatus::InvalidData);
+	CHECK(planner.work().packetsSent == sent);
+	CHECK(planner.work().flushes == 0);
+	// The pass goes on from where it was.
+	REQUIRE(shows(planner, decoder, 11));
+	CHECK(planner.work().packetsSent == sent + 1);
+}
