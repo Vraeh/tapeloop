@@ -42,7 +42,9 @@ struct DecodeResult {
 // decoding starts at the keyframe of its GOP and goes no further than needed, the
 // decoded frames of the last GOPs are kept so that stepping back costs nothing, a new
 // run opens the decoder again, and reverse play can have the previous GOP decoded ahead.
-// A frame the decoder never gives is reported as InvalidData, without decoding its
+// Runs are told apart by their codec and configuration; two runs of one codec without a
+// configuration carry their parameter sets in the stream, so a reset is enough between
+// them. A frame the decoder never gives is reported as InvalidData, without decoding its
 // GOP again. Once warm, deciding allocates nothing unless a GOP is longer than any kept
 // before. Everything runs on the caller's thread.
 class DecodePlanner {

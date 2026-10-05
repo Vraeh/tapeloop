@@ -65,7 +65,8 @@ public:
 	// No more packets for now: the frames still inside come out of receive(), and the
 	// next packet needs a reset() first.
 	virtual DecodeStatus flush() noexcept = 0;
-	// Drops what is inside, to start again at a keyframe of the same run. Frames already
+	// Drops what is inside, to start again at a keyframe of the same run, or of another
+	// run of the same codec that carries its parameter sets in the stream. Frames already
 	// received stay valid.
 	virtual void reset() noexcept = 0;
 	virtual void release(const DecodedFrame &frame) noexcept = 0;
