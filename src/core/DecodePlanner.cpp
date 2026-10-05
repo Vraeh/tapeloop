@@ -243,11 +243,6 @@ DecodeStatus DecodePlanner::decode(size_t gop, size_t packet)
 	// kept.
 	const KeptGop *before = find(gop);
 	const bool passed = streamGop_ == gop && packet < count && packet < passNext_;
-	// A frame the pass went past that the decoder did not give, and that was not given
-	// back for room, is one it never gives: nothing further in the GOP brings it.
-	if (passed && before && !before->frames[packet] && !before->dropped[packet]) {
-		return DecodeStatus::Ok;
-	}
 	if (streamGop_ != gop || flushed_ || (passed && before && before->dropped[packet])) {
 		const DecodeStatus status = startAt(gop);
 		if (status != DecodeStatus::Ok) {
@@ -256,8 +251,10 @@ DecodeStatus DecodePlanner::decode(size_t gop, size_t packet)
 	}
 	KeptGop &kept = keep(gop);
 
+	// Once the pass is past a frame the decoder did not give, and that was not given back
+	// for room, nothing further in the GOP brings it.
 	const auto done = [&] {
-		return packet < count ? kept.frames[packet].has_value() : kept.complete;
+		return packet < count ? kept.frames[packet].has_value() || packet < passNext_ : kept.complete;
 	};
 	while (!done()) {
 		DecodeStatus status = DecodeStatus::Ok;
