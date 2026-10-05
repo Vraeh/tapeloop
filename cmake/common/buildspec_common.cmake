@@ -83,7 +83,7 @@ function(_setup_obs_studio)
       "add_obs_plugin(obs-x264)\n"
     )
     set(_obs_plugins ON)
-    list(APPEND _obs_targets libobs-d3d11 obs-x264)
+    list(APPEND _obs_targets libobs-d3d11 libobs-winrt obs-x264)
   endif()
 
   message(STATUS "Configure ${label} (${arch})")
