@@ -462,6 +462,7 @@ TEST_CASE("every kind of edit in the dock writes the settings once")
 	CHECK(writesOnce([&] { child<QSpinBox>(dock, "length")->setValue(45); }));
 	CHECK(writesOnce([&] { child<QComboBox>(dock, "resolution")->setCurrentIndex(4); }));
 	CHECK(writesOnce([&] { child<QCheckBox>(dock, "startWithOutputs")->setChecked(false); }));
+	CHECK(writesOnce([&] { child<QCheckBox>(dock, "forceH264")->setChecked(true); }));
 	CHECK(writesOnce([&] {
 		table->setCurrentCell(0, 0);
 		child<QPushButton>(dock, "sourceSettings")->click();
