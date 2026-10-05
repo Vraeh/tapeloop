@@ -41,9 +41,9 @@ namespace {
 // The canvas of ObsFixture runs at 30 fps.
 constexpr Nanoseconds kFrameInterval{33'333'333};
 
-EncoderInfo testEncoder(const char *id)
+EncoderInfo testEncoder(const char *id, const char *codec = "h264")
 {
-	return {id, "h264", Vendor::Software};
+	return {id, codec, Vendor::Software};
 }
 
 Clip everything(const SourceCapture &capture)
@@ -268,6 +268,23 @@ TEST_CASE_METHOD(ObsFixture, "a capture falls through to the next encoder candid
 	CHECK(capture.stats().encoderId == "obs_x264");
 	REQUIRE(waitFor([&] { return hasGops(capture, 1); }, 60s));
 	capture.stop();
+}
+
+TEST_CASE_METHOD(ObsFixture, "a capture records the codec its encoder makes", "[obs][capture]")
+{
+	OBSSourceAutoRelease pattern = createTestPattern(640, 360);
+	SourceCapture capture;
+	CaptureSettings settings;
+	settings.candidates = {testEncoder(tapeloop::test::kHevcEncoderId, "hevc")};
+	REQUIRE(capture.start(pattern, settings) == StartResult::Started);
+	REQUIRE(waitFor([&] { return hasGops(capture, 3); }, 30s));
+	capture.stop();
+
+	const Clip clip = everything(capture);
+	REQUIRE(clip.gops().size() >= 3);
+	for (const auto &gop : clip.gops()) {
+		CHECK(gop->codec() == tapeloop::VideoCodec::Hevc);
+	}
 }
 
 TEST_CASE_METHOD(ObsFixture, "the capture output refuses another codec before its encoder opens", "[obs][capture]")
