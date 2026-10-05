@@ -126,6 +126,16 @@ std::string lowercase(std::string_view text)
 
 } // namespace
 
+EncoderPath encoderPathOf(const EncoderInfo &encoder) noexcept
+{
+	if (encoder.vendor == Vendor::Software) {
+		return EncoderPath::Software;
+	}
+	// OBS gives a texture encoder only frames of its own device, so one that started
+	// runs on the adapter OBS renders on.
+	return encoder.passTexture ? EncoderPath::Texture : EncoderPath::Readback;
+}
+
 Vendor encoderVendor(std::string_view id)
 {
 	if (startsWith(id, "obs_nvenc_") || startsWith(id, "jim_") || id == "ffmpeg_nvenc" ||

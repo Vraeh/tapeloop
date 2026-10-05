@@ -32,6 +32,20 @@ struct EncoderInfo {
 	bool internal = false;
 };
 
+// How an encoder takes the frames of a capture. Only Texture is the optimal path; the
+// others work, and the plugin says so where it uses them.
+enum class EncoderPath {
+	// A hardware encoder that takes OBS's textures on the adapter OBS renders on.
+	Texture,
+	// A hardware encoder that takes every frame read back through memory: one without
+	// texture input, as on another adapter than the one OBS renders on.
+	Readback,
+	// x264, on the CPU.
+	Software,
+};
+
+EncoderPath encoderPathOf(const EncoderInfo &encoder) noexcept;
+
 // The vendor of an OBS encoder id, from the ids OBS 32 registers; Unknown for any other.
 // VideoToolbox ids cannot be told apart from its software encoders and all count as
 // Apple.

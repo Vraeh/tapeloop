@@ -307,6 +307,16 @@ TEST_CASE("HEVC gets a share of the H.264 bitrate")
 	      tapeloop::replayByteBudget(30'000, std::chrono::seconds(60)) * 18);
 }
 
+TEST_CASE("an encoder's path is the optimal one only when it takes textures")
+{
+	using tapeloop::EncoderPath;
+	CHECK(tapeloop::encoderPathOf(encoder("obs_nvenc_hevc_tex", "hevc", Vendor::Nvidia, true)) ==
+	      EncoderPath::Texture);
+	CHECK(tapeloop::encoderPathOf(encoder("obs_qsv11_v2", "h264", Vendor::Intel, false)) == EncoderPath::Readback);
+	CHECK(tapeloop::encoderPathOf(encoder("h264_texture_amf", "h264", Vendor::Amd, true)) == EncoderPath::Texture);
+	CHECK(tapeloop::encoderPathOf(encoder("obs_x264", "h264", Vendor::Software, false)) == EncoderPath::Software);
+}
+
 TEST_CASE("replay encoders prefer HEVC unless told otherwise, with H.264 of the same vendor after it")
 {
 	CHECK(EncoderPreferences{}.preferHevc);
