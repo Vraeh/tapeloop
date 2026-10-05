@@ -53,11 +53,20 @@ bool SharedPictures::prepare(uint32_t width, uint32_t height) noexcept
 		return false;
 	}
 	if (!gs_nv12_available()) {
-		noteCopyThroughMemory();
+		copiesThroughMemory_ = true;
+		// The same for every replay, so said once.
+		static std::atomic<bool> said{false};
+		if (!said.exchange(true)) {
+			blog(LOG_WARNING,
+			     "[tapeloop] This graphics card or OBS's renderer gives no shared NV12 textures, so replay "
+			     "pictures are copied through memory. Replays work, but this costs CPU time and memory "
+			     "bandwidth: it is not the optimal path");
+		}
 		return false;
 	}
 	// Only this thread writes the size, so reading it here needs no lock.
 	if (luma_[0] && width == width_ && height == height_) {
+		copiesThroughMemory_ = false;
 		return true;
 	}
 	destroyTextures();
@@ -70,7 +79,11 @@ bool SharedPictures::prepare(uint32_t width, uint32_t height) noexcept
 		    gs_texture_get_obj(luma_[i]) != gs_texture_get_obj(chroma_[i]) ||
 		    (handles[i] = gs_texture_get_shared_handle(luma_[i])) == GS_INVALID_HANDLE) {
 			destroyTextures();
-			noteCopyThroughMemory();
+			if (!copiesThroughMemory_.exchange(true)) {
+				blog(LOG_WARNING,
+				     "[tapeloop] Shared NV12 textures for replay pictures could not be made, so "
+				     "pictures are copied through memory until they can be");
+			}
 			return false;
 		}
 	}
@@ -86,6 +99,7 @@ bool SharedPictures::prepare(uint32_t width, uint32_t height) noexcept
 	ready_ = -1;
 	drawing_ = -1;
 	++generation_;
+	copiesThroughMemory_ = false;
 	return true;
 }
 
@@ -208,17 +222,6 @@ void SharedPictures::rebuildDevice(void *, void *data) noexcept
 		self.keys_[i] = kFree;
 	}
 	++self.generation_;
-}
-
-void SharedPictures::noteCopyThroughMemory() noexcept
-{
-	if (copiesThroughMemory_) {
-		return;
-	}
-	copiesThroughMemory_ = true;
-	blog(LOG_WARNING, "[tapeloop] This graphics card cannot share NV12 textures with OBS, so replay pictures are "
-			  "copied through memory. Replays work, but this costs CPU time and memory bandwidth: it "
-			  "is not the optimal path");
 }
 
 void SharedPictures::destroyTextures() noexcept
