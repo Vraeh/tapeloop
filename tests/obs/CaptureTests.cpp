@@ -366,7 +366,11 @@ TEST_CASE_METHOD(ObsFixture, "a capture reports the path its encoder takes the f
 	OBSSourceAutoRelease pattern = createTestPattern(640, 360);
 	SourceCapture capture;
 	CaptureSettings settings;
-	settings.candidates = {testEncoder("obs_x264")};
+	// The path of the encoder that started, not of the first one tried.
+	EncoderInfo failing = testEncoder(tapeloop::test::kFailingEncoderId);
+	failing.vendor = Vendor::Intel;
+	failing.passTexture = true;
+	settings.candidates = {failing, testEncoder("obs_x264")};
 	REQUIRE(capture.start(pattern, settings) == StartResult::Started);
 	CHECK(capture.stats().encoderPath == tapeloop::EncoderPath::Software);
 	capture.stop();

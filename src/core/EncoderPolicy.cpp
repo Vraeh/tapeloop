@@ -126,14 +126,21 @@ std::string lowercase(std::string_view text)
 
 } // namespace
 
-EncoderPath encoderPathOf(const EncoderInfo &encoder) noexcept
+EncoderPath encoderPathOf(const EncoderInfo &encoder, Vendor renderVendor, bool nv12Textures) noexcept
 {
 	if (encoder.vendor == Vendor::Software) {
 		return EncoderPath::Software;
 	}
-	// OBS gives a texture encoder only frames of its own device, so one that started
-	// runs on the adapter OBS renders on.
-	return encoder.passTexture ? EncoderPath::Texture : EncoderPath::Readback;
+	if (encoder.vendor == Vendor::Apple && renderVendor == Vendor::Apple) {
+		return EncoderPath::Texture;
+	}
+	// An Unknown render vendor tells nothing about where the encoder runs.
+	const bool otherAdapter = renderVendor != Vendor::Unknown && renderVendor != Vendor::Software &&
+				  encoder.vendor != renderVendor;
+	if (!encoder.passTexture || otherAdapter || !nv12Textures) {
+		return EncoderPath::Readback;
+	}
+	return EncoderPath::Texture;
 }
 
 Vendor encoderVendor(std::string_view id)

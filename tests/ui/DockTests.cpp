@@ -25,6 +25,7 @@
 #include <cstdlib>
 #include <set>
 #include <string>
+#include <initializer_list>
 
 using namespace std::chrono_literals;
 using tapeloop::BufferSettings;
@@ -129,18 +130,26 @@ TEST_CASE("a source on an encoder path that is not the optimal one says so")
 	CHECK_FALSE(table->item(0, 1)->icon().isNull());
 	CHECK(table->item(0, 1)->toolTip().contains("x264"));
 	CHECK_FALSE(table->item(1, 1)->icon().isNull());
-	CHECK(table->item(1, 1)->toolTip().contains("reads every frame back"));
+	CHECK(table->item(1, 1)->toolTip().contains("read back through memory"));
 	CHECK(table->item(2, 1)->icon().isNull());
 	CHECK(table->item(2, 1)->toolTip().isEmpty());
 
-	// With another note, both show.
+	// With another note, both show, a paragraph each.
 	backend.shown[0].activationLeftOut = true;
 	dock.refresh();
 	CHECK(table->item(0, 1)->toolTip().contains("restarts when it becomes active"));
 	CHECK(table->item(0, 1)->toolTip().contains("x264"));
+	CHECK(table->item(0, 1)->toolTip().contains("\n\n"));
 
-	// A stopped buffer has no encoder to speak of.
-	backend.shown[1].state = SourceState::Stopped;
+	// A buffer that is stopped, failed or waiting has no encoder at work to speak of, and
+	// an unselected source no buffer.
+	for (const SourceState state : {SourceState::Stopped, SourceState::Failed, SourceState::Waiting}) {
+		backend.shown[1].state = state;
+		dock.refresh();
+		CHECK_FALSE(table->item(1, 1)->toolTip().contains("read back through memory"));
+	}
+	backend.shown[1].state = SourceState::Running;
+	backend.current.sources[backend.shown[1].uuid].selected = false;
 	dock.refresh();
 	CHECK(table->item(1, 1)->toolTip().isEmpty());
 }

@@ -307,14 +307,29 @@ TEST_CASE("HEVC gets a share of the H.264 bitrate")
 	      tapeloop::replayByteBudget(30'000, std::chrono::seconds(60)) * 18);
 }
 
-TEST_CASE("an encoder's path is the optimal one only when it takes textures")
+TEST_CASE("an encoder's path is the optimal one only when it takes OBS's textures on OBS's adapter")
 {
 	using tapeloop::EncoderPath;
-	CHECK(tapeloop::encoderPathOf(encoder("obs_nvenc_hevc_tex", "hevc", Vendor::Nvidia, true)) ==
-	      EncoderPath::Texture);
-	CHECK(tapeloop::encoderPathOf(encoder("obs_qsv11_v2", "h264", Vendor::Intel, false)) == EncoderPath::Readback);
-	CHECK(tapeloop::encoderPathOf(encoder("h264_texture_amf", "h264", Vendor::Amd, true)) == EncoderPath::Texture);
-	CHECK(tapeloop::encoderPathOf(encoder("obs_x264", "h264", Vendor::Software, false)) == EncoderPath::Software);
+	using tapeloop::encoderPathOf;
+	const EncoderInfo nvenc = encoder("obs_nvenc_hevc_tex", "hevc", Vendor::Nvidia, true);
+	const EncoderInfo qsv = encoder("obs_qsv11_v2", "h264", Vendor::Intel, true);
+	const EncoderInfo amf = encoder("h264_texture_amf", "h264", Vendor::Amd, true);
+	CHECK(encoderPathOf(nvenc, Vendor::Nvidia, true) == EncoderPath::Texture);
+	CHECK(encoderPathOf(amf, Vendor::Amd, true) == EncoderPath::Texture);
+	// QuickSync while OBS renders on NVIDIA: the iGPU of the match PC, reading back.
+	CHECK(encoderPathOf(qsv, Vendor::Nvidia, true) == EncoderPath::Readback);
+	CHECK(encoderPathOf(qsv, Vendor::Intel, true) == EncoderPath::Texture);
+	// Without NV12 textures every encoder reads back.
+	CHECK(encoderPathOf(nvenc, Vendor::Nvidia, false) == EncoderPath::Readback);
+	CHECK(encoderPathOf(encoder("obs_qsv11_soft", "h264", Vendor::Intel, false), Vendor::Intel, true) ==
+	      EncoderPath::Readback);
+	// An adapter of unknown vendor says nothing about where the encoder runs.
+	CHECK(encoderPathOf(nvenc, Vendor::Unknown, true) == EncoderPath::Texture);
+	// VideoToolbox on a Mac is the best path there is, without textures.
+	CHECK(encoderPathOf(encoder("com.apple.videotoolbox.videoencoder.ave.avc", "h264", Vendor::Apple, false),
+			    Vendor::Apple, false) == EncoderPath::Texture);
+	CHECK(encoderPathOf(encoder("obs_x264", "h264", Vendor::Software, false), Vendor::Nvidia, true) ==
+	      EncoderPath::Software);
 }
 
 TEST_CASE("replay encoders prefer HEVC unless told otherwise, with H.264 of the same vendor after it")
