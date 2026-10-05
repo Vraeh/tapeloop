@@ -136,6 +136,11 @@ TEST_CASE("the advanced settings choose the replay encoder and whether other car
 	CHECK(encoder->itemText(1) == "NVIDIA NVENC HEVC");
 	encoder->setCurrentIndex(2);
 	CHECK(backend.current.replayEncoder == "obs_x264");
+	CHECK_FALSE(child<QCheckBox>(dock, "forceH264")->isEnabled());
+	// Another offered encoder in the settings, as after a scene collection switch.
+	backend.current.replayEncoder = "obs_nvenc_hevc_tex";
+	dock.refresh();
+	CHECK(encoder->currentData().toString() == "obs_nvenc_hevc_tex");
 	encoder->setCurrentIndex(0);
 	CHECK(backend.current.replayEncoder.empty());
 
@@ -634,6 +639,7 @@ TEST_CASE("every kind of edit in the dock writes the settings once")
 	CHECK(writesOnce([&] { child<QCheckBox>(dock, "startWithOutputs")->setChecked(false); }));
 	CHECK(writesOnce([&] { child<QCheckBox>(dock, "activateOffAir")->setChecked(true); }));
 	CHECK(writesOnce([&] { child<QCheckBox>(dock, "forceH264")->setChecked(true); }));
+	child<QCheckBox>(dock, "advanced")->setChecked(true);
 	CHECK(writesOnce([&] { child<QComboBox>(dock, "replayEncoder")->setCurrentIndex(1); }));
 	CHECK(writesOnce([&] { child<QCheckBox>(dock, "otherAdapters")->setChecked(false); }));
 	CHECK(writesOnce([&] {

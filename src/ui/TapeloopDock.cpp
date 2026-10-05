@@ -165,7 +165,10 @@ TapeloopDock::TapeloopDock(DockBackend &backend, TextLookup text, QWidget *paren
 		changeSettings([](BufferSettings &settings, int on) { settings.activateOffAir = on != 0; },
 			       checked ? 1 : 0);
 	});
-	connect(advanced_, &QCheckBox::toggled, advancedSettings_, &QWidget::setVisible);
+	connect(advanced_, &QCheckBox::toggled, this, [this](bool checked) {
+		advancedSettings_->setVisible(checked);
+		refresh();
+	});
 	connect(replayEncoder_, &QComboBox::currentIndexChanged, this, [this](int index) {
 		guarded([&] {
 			BufferSettings settings = backend_.settings();
@@ -239,7 +242,10 @@ void TapeloopDock::refresh()
 		// A chosen encoder decides the codec itself.
 		forceH264_->setEnabled(settings.replayEncoder.empty());
 		otherAdapters_->setChecked(settings.allowOtherAdapters);
-		updateEncoders(settings.replayEncoder);
+		// The encoders are looked up only while the advanced settings show them.
+		if (advanced_->isChecked()) {
+			updateEncoders(settings.replayEncoder);
+		}
 
 		startStop_->setText(backend_.running() ? text_("Dock.Stop") : text_("Dock.Start"));
 		const bool enabled = backend_.manualControlEnabled();
