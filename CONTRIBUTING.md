@@ -45,6 +45,30 @@ Formatting is checked in CI, so run the formatters before pushing:
 
 They need the same versions CI uses: clang-format 19.1.1 and gersemi 0.21.0.
 
+## FFmpeg
+
+On Windows and Linux the plugin decodes with its own FFmpeg, linked statically: version
+8.1.3 with only the H.264 and HEVC decoders and parsers (and the D3D11VA hwaccels on
+Windows), under the LGPL. CMake builds it the first time it configures, with
+`cmake/ffmpeg/BuildFFmpeg.cmake`, into `.deps/ffmpeg-<key>`, where the key follows that
+script and the compiler, so a new version, option or compiler builds again. The build
+takes about a minute on Linux and four on Windows, and needs nasm; on Windows it also
+needs MSYS2 with make, nasm and diffutils (`pacman -S make nasm diffutils`) and uses the
+Visual Studio, SDK and toolset the plugin builds with. FFmpeg's configure cannot build
+under a path with spaces, so the checkout must not be in one. A Debug build on Windows
+would link FFmpeg's release runtime (`-MD`) with the debug one, which MSVC warns about
+(LNK4098) and warnings as errors would stop; it has not been tried, so build
+RelWithDebInfo or Release. The tarball is pinned by SHA-256,
+and its signature was checked against FFmpeg's release key when the version was pinned:
+
+```
+gpg --import ffmpeg-devel.asc   # https://ffmpeg.org/ffmpeg-devel.asc
+gpg --verify ffmpeg-8.1.3.tar.xz.asc ffmpeg-8.1.3.tar.xz
+# Primary key fingerprint: FCF9 86EA 15E6 E293 A564  4F10 B432 2F04 D676 58D8
+```
+
+macOS decodes with VideoToolbox and does not build FFmpeg.
+
 ## Tests
 
 The core library in `src/core` does not depend on OBS, so its tests build as a
@@ -77,7 +101,8 @@ the file instead of the directories.
 The libobs glue is tested in `tests/obs` against a real libobs running headless: the
 OBS sources pinned in `buildspec.json`, built without the frontend or the plugin set,
 plus OBS's obs-x264 plugin, rendering with Mesa's software OpenGL under Xvfb. Building
-libobs needs its Linux build dependencies, x264 and FFmpeg; the `linux-obs` job in
+libobs needs its Linux build dependencies, x264 and FFmpeg, and the tests need nasm for
+the plugin's own FFmpeg; the `linux-obs` job in
 `.github/workflows/run-tests.yaml` lists the Ubuntu packages. Then:
 
 ```
