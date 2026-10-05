@@ -8,11 +8,23 @@
 
 namespace tapeloop {
 
+std::optional<VideoCodec> videoCodecFromName(std::string_view name) noexcept
+{
+	if (name == "h264") {
+		return VideoCodec::H264;
+	}
+	if (name == "hevc") {
+		return VideoCodec::Hevc;
+	}
+	return std::nullopt;
+}
+
 Gop::Gop(Key, std::vector<uint8_t> bytes, std::vector<PacketRecord> packets, Nanoseconds frameDuration,
-	 std::shared_ptr<const CodecConfig> codecConfig)
+	 VideoCodec codec, std::shared_ptr<const CodecConfig> codecConfig)
 	: bytes_(std::move(bytes)),
 	  packets_(std::move(packets)),
 	  frameDuration_(frameDuration),
+	  codec_(codec),
 	  codecConfig_(std::move(codecConfig))
 {
 	assert(!packets_.empty() && packets_.front().keyframe);
@@ -72,16 +84,17 @@ void GopBuilder::clear() noexcept
 	packets_.clear();
 }
 
-void GopBuilder::setCodecConfig(std::shared_ptr<const CodecConfig> codecConfig) noexcept
+void GopBuilder::setCodecConfig(VideoCodec codec, std::shared_ptr<const CodecConfig> codecConfig) noexcept
 {
 	assert(packets_.empty());
+	codec_ = codec;
 	codecConfig_ = std::move(codecConfig);
 }
 
 std::shared_ptr<const Gop> GopBuilder::makeGop() const
 {
 	assert(!packets_.empty());
-	return std::make_shared<const Gop>(Gop::Key{}, bytes_, packets_, frameDuration_, codecConfig_);
+	return std::make_shared<const Gop>(Gop::Key{}, bytes_, packets_, frameDuration_, codec_, codecConfig_);
 }
 
 } // namespace tapeloop
