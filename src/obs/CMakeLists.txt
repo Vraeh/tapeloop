@@ -15,6 +15,8 @@ target_sources(
     ManagerDockBackend.hpp
     ObsEncoders.cpp
     ObsEncoders.hpp
+    PictureRenderer.cpp
+    PictureRenderer.hpp
     SettingsData.cpp
     SettingsData.hpp
     SourceCapture.cpp

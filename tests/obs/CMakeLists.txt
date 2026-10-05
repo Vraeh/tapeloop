@@ -56,6 +56,7 @@ target_sources(
     ManagerTests.cpp
     ObsFixture.cpp
     ObsFixture.hpp
+    PictureTests.cpp
     SmokeTests.cpp
     TestEncoders.cpp
     TestEncoders.hpp
