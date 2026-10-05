@@ -26,6 +26,9 @@ class OfflineHost : public tapeloop::obs::CaptureHost {
 public:
 	bool streamingActive() const override { return false; }
 	bool recordingActive() const override { return false; }
+	void requestSave() override { ++saves; }
+
+	int saves = 0;
 };
 
 } // namespace
@@ -96,24 +99,33 @@ TEST_CASE_METHOD(ObsFixture, "the dock sees a source waiting for its size", "[ob
 	REQUIRE(backend.toggleRunning());
 }
 
-TEST_CASE_METHOD(ObsFixture, "every settings change from the dock asks for one save", "[obs][dock]")
+TEST_CASE_METHOD(ObsFixture, "every settings change from the dock asks the host for one save", "[obs][dock]")
 {
 	OBSSourceAutoRelease camera = createTestPattern(320, 180, "Camera");
 	OfflineHost host;
 	CaptureManager manager(host);
-	int saves = 0;
-	ManagerDockBackend backend(manager, [&saves] { ++saves; });
+	ManagerDockBackend backend(manager);
 
 	BufferSettings settings = backend.settings();
+	settings.startWithOutputs = false;
 	settings.sources[obs_source_get_uuid(camera)].selected = true;
 	backend.setSettings(settings);
-	CHECK(saves == 1);
+	CHECK(host.saves == 1);
 	settings.length = std::chrono::seconds(90);
 	backend.setSettings(settings);
-	CHECK(saves == 2);
+	CHECK(host.saves == 2);
 
 	// Starting and stopping the buffers is not an edit of the settings.
 	REQUIRE(backend.toggleRunning());
+	CHECK(host.saves == 2);
+
+	// Nor is what an edit starts or stops while the buffers run.
+	settings.sources[obs_source_get_uuid(camera)].selected = false;
+	backend.setSettings(settings);
+	CHECK(host.saves == 3);
+	settings.sources[obs_source_get_uuid(camera)].selected = true;
+	backend.setSettings(settings);
+	CHECK(host.saves == 4);
 	REQUIRE(backend.toggleRunning());
-	CHECK(saves == 2);
+	CHECK(host.saves == 4);
 }

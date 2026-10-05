@@ -40,6 +40,9 @@ public:
 
 	bool streamingActive() const override { return streaming; }
 	bool recordingActive() const override { return recording; }
+	void requestSave() override { ++saves; }
+
+	int saves = 0;
 };
 
 std::string uuidOf(obs_source_t *source)

@@ -29,6 +29,7 @@ public:
 private:
 	bool streamingActive() const override;
 	bool recordingActive() const override;
+	void requestSave() override;
 	// The frontend API is gone by the time the module unloads, so the callbacks go at
 	// the exit event.
 	void removeFrontendCallbacks() noexcept;

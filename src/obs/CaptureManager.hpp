@@ -25,6 +25,9 @@ public:
 	virtual ~CaptureHost() = default;
 	virtual bool streamingActive() const = 0;
 	virtual bool recordingActive() const = 0;
+	// The settings were edited: have them saved at once, so that a crash right after an
+	// edit loses nothing (D-054).
+	virtual void requestSave() = 0;
 };
 
 struct SourceStatus {
@@ -43,8 +46,9 @@ public:
 	CaptureManager &operator=(const CaptureManager &) = delete;
 
 	const BufferSettings &settings() const noexcept { return settings_; }
-	// Sources selected while the buffers run start at once and unselected ones stop and
-	// free their buffer; any other change reaches a capture at its next start.
+	// An edit of the settings, which the host is asked to save. Sources selected while
+	// the buffers run start at once and unselected ones stop and free their buffer; any
+	// other change reaches a capture at its next start.
 	void setSettings(BufferSettings settings);
 
 	bool running() const noexcept { return lifecycle_.running(); }
