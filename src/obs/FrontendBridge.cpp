@@ -57,6 +57,14 @@ bool FrontendBridge::recordingActive() const
 	return obs_frontend_recording_active();
 }
 
+void FrontendBridge::requestSave()
+{
+	// The frontend saves on a later pass of the UI thread's event loop, so the edits of
+	// one pass make one save; it does nothing while it has saving turned off, as during
+	// a collection load.
+	obs_frontend_save();
+}
+
 void FrontendBridge::handleEvent(obs_frontend_event event, void *data) noexcept
 {
 	auto &bridge = *static_cast<FrontendBridge *>(data);

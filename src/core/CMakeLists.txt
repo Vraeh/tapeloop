@@ -20,8 +20,11 @@ target_sources(
     BufferSettings.hpp
     Clip.cpp
     Clip.hpp
+    DecodePlanner.cpp
+    DecodePlanner.hpp
     EncoderPolicy.cpp
     EncoderPolicy.hpp
+    FrameDecoder.hpp
     Gop.cpp
     Gop.hpp
     MediaTime.cpp
