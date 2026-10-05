@@ -70,7 +70,7 @@ bool ReplayPlayerState::start(std::vector<std::string> sources)
 	}
 	available_ = std::move(sources);
 	airing_ = config_;
-	speed_ = 1.0;
+	rate_ = 1000;
 	if (airing_.intro) {
 		enter(AirPhase::Intro);
 	} else {
@@ -114,12 +114,12 @@ void ReplayPlayerState::cutShort() noexcept
 	}
 }
 
-bool ReplayPlayerState::setSpeed(double speed) noexcept
+bool ReplayPlayerState::setRate(int32_t rate) noexcept
 {
-	if (!(speed >= kMinSpeed && speed <= kMaxSpeed)) {
+	if (rate < kMinRate || rate > kMaxRate) {
 		return false;
 	}
-	speed_ = speed;
+	rate_ = rate;
 	return true;
 }
 

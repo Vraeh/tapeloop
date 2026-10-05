@@ -3,6 +3,7 @@
 
 #pragma once
 
+#include "core/Playhead.hpp"
 #include "core/ReplaySequence.hpp"
 
 #include <cstddef>
@@ -43,8 +44,8 @@ public:
 	void setConfig(AirConfig config) noexcept { config_ = config; }
 
 	// Puts a replay with clips of these sources on air, from its intro or else its first
-	// shown source with a clip, at 1x. False, staying live, while another replay is on
-	// air or when no shown source has a clip.
+	// shown source with a clip, at real time. False, staying live, while another replay
+	// is on air or when no shown source has a clip.
 	bool start(std::vector<std::string> sources);
 	// The part with this token ended. Any other token is ignored.
 	void ended(uint64_t token);
@@ -57,13 +58,14 @@ public:
 	std::string_view source() const noexcept { return source_; }
 	// Changes every time a part goes on air or the replay goes back to live.
 	uint64_t token() const noexcept { return token_; }
-	// The speed the sources play at. Each replay starts at 1x, and the speed chosen
-	// stays for the next source.
-	double speed() const noexcept { return speed_; }
-	// False, changing nothing, for a speed outside the bounds below, NaN included.
-	bool setSpeed(double speed) noexcept;
-	static constexpr double kMinSpeed = 1.0 / 16;
-	static constexpr double kMaxSpeed = 16;
+	// The rate the sources play at, in thousandths of real time as the Playhead keeps
+	// it, and positive: the direction is the player's. Each replay starts at real time,
+	// and the rate chosen stays for the next source.
+	int32_t rate() const noexcept { return rate_; }
+	// False, changing nothing, for a rate outside the Playhead's default limits.
+	bool setRate(int32_t rate) noexcept;
+	static constexpr int32_t kMinRate = PlayheadConfig{}.minRate;
+	static constexpr int32_t kMaxRate = PlayheadConfig{}.maxRate;
 
 private:
 	// Puts on air the first shown source at or after `from`, or else what follows the
@@ -80,7 +82,7 @@ private:
 	AirPhase phase_ = AirPhase::Live;
 	std::string source_;
 	uint64_t token_ = 0;
-	double speed_ = 1.0;
+	int32_t rate_ = 1000;
 };
 
 } // namespace tapeloop

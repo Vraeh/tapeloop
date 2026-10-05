@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: GPL-2.0-or-later
 // Copyright (C) 2026 Vicente Aedo <ryde1337@gmail.com>
 
+#include "core/Playhead.hpp"
 #include "core/ReplayPlayerState.hpp"
 #include "core/ReplaySequence.hpp"
 
@@ -240,26 +241,31 @@ TEST_CASE("ReplayPlayerState cuts a replay short through its outro")
 	CHECK(plain.phase() == AirPhase::Live);
 }
 
-TEST_CASE("ReplayPlayerState keeps the speed from one source to the next, not to the next replay")
+TEST_CASE("ReplayPlayerState keeps the rate from one source to the next, not to the next replay")
 {
 	ReplayPlayerState player;
 	player.setEntries(entries({"a", "b"}));
 	REQUIRE(player.start({"a", "b"}));
-	CHECK(player.speed() == 1.0);
-	CHECK(player.setSpeed(0.5));
-	CHECK_FALSE(player.setSpeed(0.0));
-	CHECK_FALSE(player.setSpeed(-1.0));
-	CHECK_FALSE(player.setSpeed(std::numeric_limits<double>::infinity()));
-	CHECK_FALSE(player.setSpeed(std::numeric_limits<double>::quiet_NaN()));
-	CHECK_FALSE(player.setSpeed(1e-300));
-	CHECK(player.setSpeed(ReplayPlayerState::kMaxSpeed));
-	CHECK(player.setSpeed(0.5));
+	CHECK(player.rate() == 1000);
+	CHECK(player.setRate(500));
+	// The Playhead's limits, so that the rate chosen is the rate played.
+	CHECK(ReplayPlayerState::kMinRate == tapeloop::PlayheadConfig{}.minRate);
+	CHECK(ReplayPlayerState::kMaxRate == tapeloop::PlayheadConfig{}.maxRate);
+	CHECK_FALSE(player.setRate(0));
+	CHECK_FALSE(player.setRate(-1000));
+	CHECK_FALSE(player.setRate(ReplayPlayerState::kMinRate - 1));
+	CHECK_FALSE(player.setRate(ReplayPlayerState::kMaxRate + 1));
+	CHECK_FALSE(player.setRate(std::numeric_limits<int32_t>::min()));
+	CHECK(player.rate() == 500);
+	CHECK(player.setRate(ReplayPlayerState::kMinRate));
+	CHECK(player.setRate(ReplayPlayerState::kMaxRate));
+	CHECK(player.setRate(500));
 	endPart(player);
 	CHECK(player.source() == "b");
-	CHECK(player.speed() == 0.5);
+	CHECK(player.rate() == 500);
 	endPart(player);
 	REQUIRE(player.start({"a"}));
-	CHECK(player.speed() == 1.0);
+	CHECK(player.rate() == 1000);
 }
 
 TEST_CASE("ReplayPlayerState plays a replay with the configuration it started with")

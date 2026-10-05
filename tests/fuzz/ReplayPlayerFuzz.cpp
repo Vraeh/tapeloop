@@ -106,10 +106,10 @@ extern "C" int LLVMFuzzerTestOneInput(const uint8_t *data, size_t size)
 	FuzzInput input(data, size);
 	AirConfig config{input.flag(), input.flag()};
 	ReplayPlayerState player(config);
-	// The model's view of the replay on air: its sources, its configuration and its speed.
+	// The model's view of the replay on air: its sources, its configuration and its rate.
 	std::vector<std::string> sources;
 	AirConfig airing;
-	double speed = 1.0;
+	int32_t rate = 1000;
 
 	while (!input.empty()) {
 		const uint64_t token = player.token();
@@ -172,8 +172,8 @@ extern "C" int LLVMFuzzerTestOneInput(const uint8_t *data, size_t size)
 			if (started) {
 				sources = offered;
 				airing = config;
-				speed = 1.0;
-				require(player.speed() == 1.0);
+				rate = 1000;
+				require(player.rate() == 1000);
 				require(player.phase() == (airing.intro ? AirPhase::Intro : AirPhase::Source));
 			} else {
 				require(player.token() == token);
@@ -215,12 +215,14 @@ extern "C" int LLVMFuzzerTestOneInput(const uint8_t *data, size_t size)
 			}
 			break;
 		case 6: {
-			const double wanted = static_cast<double>(static_cast<int8_t>(input.byte())) / 4.0;
-			const bool valid = wanted >= ReplayPlayerState::kMinSpeed &&
-					   wanted <= ReplayPlayerState::kMaxSpeed;
-			require(player.setSpeed(wanted) == valid);
+			const auto low = static_cast<uint16_t>(input.byte());
+			const auto high = static_cast<uint16_t>(input.byte());
+			const int32_t wanted = static_cast<int16_t>(high << 8 | low) / 4;
+			const bool valid = wanted >= ReplayPlayerState::kMinRate &&
+					   wanted <= ReplayPlayerState::kMaxRate;
+			require(player.setRate(wanted) == valid);
 			if (valid) {
-				speed = wanted;
+				rate = wanted;
 			}
 			break;
 		}
@@ -246,7 +248,7 @@ extern "C" int LLVMFuzzerTestOneInput(const uint8_t *data, size_t size)
 		// when the part on air does.
 		require(player.token() >= token);
 		require((player.phase() != phase || player.source() != source) == (player.token() != token));
-		require(player.speed() == speed);
+		require(player.rate() == rate);
 		if (player.phase() == AirPhase::Source) {
 			const std::optional<size_t> playing = player.sequence().indexOf(player.source());
 			require(playing.has_value());
@@ -255,7 +257,7 @@ extern "C" int LLVMFuzzerTestOneInput(const uint8_t *data, size_t size)
 		} else {
 			require(player.source().empty());
 		}
-		require(player.speed() > 0.0);
+		require(player.rate() > 0);
 	}
 
 	// Whatever happened, ending each part in turn reaches live.
