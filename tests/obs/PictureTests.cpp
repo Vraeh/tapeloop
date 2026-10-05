@@ -11,6 +11,9 @@
 #include <catch2/catch_test_macros.hpp>
 #include <obs.h>
 
+#include <algorithm>
+#include <array>
+#include <cmath>
 #include <cstddef>
 #include <cstdint>
 #include <cstring>
@@ -83,6 +86,14 @@ PatternPicture makePattern(uint32_t number, PixelLayout layout, bool fullRange)
 	return pattern;
 }
 
+// The device starts culling back faces until OBS's video thread first renders, so a
+// test that takes the graphics lock first would have its sprite culled.
+void drawState()
+{
+	gs_set_cull_mode(GS_NEITHER);
+	gs_enable_depth_test(false);
+}
+
 // What the renderer draws at the picture's own size, as RGBA rows without padding.
 std::vector<uint8_t> drawAndRead(PictureRenderer &renderer)
 {
@@ -93,6 +104,7 @@ std::vector<uint8_t> drawAndRead(PictureRenderer &renderer)
 	vec4_zero(&clear);
 	gs_clear(GS_CLEAR_COLOR, &clear, 0.0f, 0);
 	gs_ortho(0.0f, static_cast<float>(kWidth), 0.0f, static_cast<float>(kHeight), -100.0f, 100.0f);
+	drawState();
 	const bool drawn = renderer.draw(kWidth, kHeight);
 	gs_texrender_end(target);
 
@@ -214,6 +226,7 @@ TEST_CASE_METHOD(ObsFixture, "the picture renderer draws NV12 planes held elsewh
 		gs_texrender_t *target = gs_texrender_create(GS_RGBA, GS_ZS_NONE);
 		REQUIRE(gs_texrender_begin(target, kWidth, kHeight));
 		gs_ortho(0.0f, static_cast<float>(kWidth), 0.0f, static_cast<float>(kHeight), -100.0f, 100.0f);
+		drawState();
 		CHECK(renderer.drawNv12(luma, chroma, limited.picture, kWidth, kHeight));
 		gs_texrender_end(target);
 		gs_stagesurf_t *stage = gs_stagesurface_create(kWidth, kHeight, GS_RGBA);
@@ -248,5 +261,206 @@ TEST_CASE_METHOD(ObsFixture, "only Direct3D 11 names an adapter for the decoder"
 {
 	obs_enter_graphics();
 	CHECK_FALSE(tapeloop::obs::renderAdapterLuid());
+	obs_leave_graphics();
+}
+
+namespace {
+
+struct Yuv {
+	double y;
+	double u;
+	double v;
+};
+
+// What BT.601 and BT.709 make of one YUV value, in 8-bit RGB, before clamping.
+std::array<double, 3> expectedRgb(Yuv yuv, ColorMatrix matrix, bool fullRange)
+{
+	const bool bt601 = matrix == ColorMatrix::Bt601;
+	const double kr = bt601 ? 0.299 : 0.2126;
+	const double kb = bt601 ? 0.114 : 0.0722;
+	const double kg = 1.0 - kr - kb;
+	const double y = fullRange ? yuv.y / 255.0 : (yuv.y - 16.0) / 219.0;
+	const double pb = fullRange ? (yuv.u - 128.0) / 255.0 : (yuv.u - 128.0) / 224.0;
+	const double pr = fullRange ? (yuv.v - 128.0) / 255.0 : (yuv.v - 128.0) / 224.0;
+	const double r = y + 2.0 * (1.0 - kr) * pr;
+	const double b = y + 2.0 * (1.0 - kb) * pb;
+	const double g = (y - kr * r - kb * b) / kg;
+	return {r * 255.0, g * 255.0, b * 255.0};
+}
+
+// A picture of one color whose chroma changes to `right` from column `edge` of the
+// chroma planes on, with rows padded past their width with bytes that must not show.
+struct FlatPicture {
+	std::vector<uint8_t> luma;
+	std::vector<uint8_t> chroma;
+	std::vector<uint8_t> chromaV;
+	Picture picture;
+};
+
+FlatPicture makeFlat(uint32_t width, uint32_t height, PixelLayout layout, ColorMatrix matrix, bool fullRange, Yuv left,
+		     Yuv right, uint32_t edge)
+{
+	constexpr uint32_t kPadding = 16;
+	const uint32_t chromaWidth = (width + 1) / 2;
+	const uint32_t chromaHeight = (height + 1) / 2;
+	FlatPicture flat;
+	Picture &picture = flat.picture;
+	picture.width = width;
+	picture.height = height;
+	picture.fullRange = fullRange;
+	picture.matrix = matrix;
+	picture.layout = layout;
+	picture.strides[0] = width + kPadding;
+	flat.luma.assign(size_t{picture.strides[0]} * height, 0xff);
+	for (uint32_t row = 0; row < height; ++row) {
+		std::memset(flat.luma.data() + size_t{row} * picture.strides[0], static_cast<int>(left.y), width);
+	}
+	picture.planes[0] = flat.luma.data();
+	const auto at = [&](uint32_t column) {
+		return column < edge ? left : right;
+	};
+	if (layout == PixelLayout::Nv12) {
+		picture.strides[1] = chromaWidth * 2 + kPadding;
+		flat.chroma.assign(size_t{picture.strides[1]} * chromaHeight, 0xff);
+		for (uint32_t row = 0; row < chromaHeight; ++row) {
+			for (uint32_t column = 0; column < chromaWidth; ++column) {
+				uint8_t *pair = flat.chroma.data() + size_t{row} * picture.strides[1] + column * 2;
+				pair[0] = static_cast<uint8_t>(at(column).u);
+				pair[1] = static_cast<uint8_t>(at(column).v);
+			}
+		}
+		picture.planes[1] = flat.chroma.data();
+	} else {
+		picture.strides[1] = chromaWidth + kPadding;
+		picture.strides[2] = chromaWidth + kPadding;
+		flat.chroma.assign(size_t{picture.strides[1]} * chromaHeight, 0xff);
+		flat.chromaV.assign(size_t{picture.strides[2]} * chromaHeight, 0xff);
+		for (uint32_t row = 0; row < chromaHeight; ++row) {
+			for (uint32_t column = 0; column < chromaWidth; ++column) {
+				flat.chroma[size_t{row} * picture.strides[1] + column] =
+					static_cast<uint8_t>(at(column).u);
+				flat.chromaV[size_t{row} * picture.strides[2] + column] =
+					static_cast<uint8_t>(at(column).v);
+			}
+		}
+		picture.planes[1] = flat.chroma.data();
+		picture.planes[2] = flat.chromaV.data();
+	}
+	return flat;
+}
+
+float halfToFloat(uint16_t half)
+{
+	const int exponent = (half >> 10) & 0x1f;
+	const double mantissa = half & 0x3ff;
+	const double magnitude = exponent == 0 ? std::ldexp(mantissa, -24)
+					       : std::ldexp(mantissa + 1024.0, exponent - 25);
+	return static_cast<float>((half & 0x8000) != 0 ? -magnitude : magnitude);
+}
+
+double encodeSrgb(double linear)
+{
+	return linear <= 0.0031308 ? linear * 12.92 : 1.055 * std::pow(linear, 1.0 / 2.4) - 0.055;
+}
+
+// The 8-bit sRGB color the renderer draws at (x, y) of a picture drawn at its own size,
+// into an 8-bit target or, on a 16-bit SDR canvas, a half-float one in linear light.
+std::array<double, 3> drawnAt(PictureRenderer &renderer, uint32_t width, uint32_t height, uint32_t x, uint32_t y,
+			      bool halfFloat)
+{
+	const gs_color_format format = halfFloat ? GS_RGBA16F : GS_RGBA;
+	gs_texrender_t *target = gs_texrender_create(format, GS_ZS_NONE);
+	REQUIRE(target);
+	REQUIRE(gs_texrender_begin_with_color_space(target, width, height, halfFloat ? GS_CS_SRGB_16F : GS_CS_SRGB));
+	vec4 clear;
+	vec4_zero(&clear);
+	gs_clear(GS_CLEAR_COLOR, &clear, 0.0f, 0);
+	gs_ortho(0.0f, static_cast<float>(width), 0.0f, static_cast<float>(height), -100.0f, 100.0f);
+	drawState();
+	REQUIRE(renderer.draw(width, height));
+	gs_texrender_end(target);
+
+	std::array<double, 3> rgb{};
+	gs_stagesurf_t *stage = gs_stagesurface_create(width, height, format);
+	gs_stage_texture(stage, gs_texrender_get_texture(target));
+	uint8_t *data = nullptr;
+	uint32_t stride = 0;
+	REQUIRE(gs_stagesurface_map(stage, &data, &stride));
+	const uint8_t *pixel = data + size_t{y} * stride + size_t{x} * (halfFloat ? 8 : 4);
+	for (size_t channel = 0; channel < 3; ++channel) {
+		if (halfFloat) {
+			uint16_t half = 0;
+			std::memcpy(&half, pixel + channel * 2, sizeof(half));
+			rgb[channel] = encodeSrgb(halfToFloat(half)) * 255.0;
+		} else {
+			rgb[channel] = pixel[channel];
+		}
+	}
+	gs_stagesurface_unmap(stage);
+	gs_stagesurface_destroy(stage);
+	gs_texrender_destroy(target);
+	return rgb;
+}
+
+void checkClose(const std::array<double, 3> &drawn, const std::array<double, 3> &expected)
+{
+	for (size_t channel = 0; channel < 3; ++channel) {
+		CAPTURE(channel, drawn[channel], expected[channel]);
+		CHECK(std::abs(drawn[channel] - std::clamp(expected[channel], 0.0, 255.0)) <= 3.0);
+	}
+}
+
+} // namespace
+
+TEST_CASE_METHOD(ObsFixture, "the picture renderer turns YUV into the RGB of each matrix and range", "[obs][picture]")
+{
+	const Yuv color{120.0, 100.0, 170.0};
+	obs_enter_graphics();
+	{
+		PictureRenderer renderer;
+		for (const bool halfFloat : {false, true}) {
+			for (const PixelLayout layout : {PixelLayout::I420, PixelLayout::Nv12}) {
+				for (const ColorMatrix matrix :
+				     {ColorMatrix::Bt601, ColorMatrix::Bt709, ColorMatrix::Unspecified}) {
+					for (const bool fullRange : {false, true}) {
+						CAPTURE(halfFloat, layout == PixelLayout::Nv12,
+							static_cast<int>(matrix), fullRange);
+						// Odd sizes, and rows padded past their width.
+						FlatPicture flat =
+							makeFlat(63, 35, layout, matrix, fullRange, color, color, 0);
+						REQUIRE(renderer.upload(flat.picture));
+						// OBS takes an unspecified matrix as BT.709.
+						const ColorMatrix meant = matrix == ColorMatrix::Unspecified
+										  ? ColorMatrix::Bt709
+										  : matrix;
+						checkClose(drawnAt(renderer, 63, 35, 31, 17, halfFloat),
+							   expectedRgb(color, meant, fullRange));
+					}
+				}
+			}
+		}
+	}
+	obs_leave_graphics();
+}
+
+TEST_CASE_METHOD(ObsFixture, "the picture renderer sites chroma left of its luma pairs as OBS does", "[obs][picture]")
+{
+	const Yuv grey{120.0, 128.0, 128.0};
+	const Yuv red{120.0, 128.0, 200.0};
+	obs_enter_graphics();
+	{
+		PictureRenderer renderer;
+		for (const PixelLayout layout : {PixelLayout::I420, PixelLayout::Nv12}) {
+			CAPTURE(layout == PixelLayout::Nv12);
+			// Chroma column 16 is the first red one; it is sited at luma column 32, which
+			// shows it alone, and luma column 31 sits halfway between it and the one before.
+			FlatPicture flat = makeFlat(64, 16, layout, ColorMatrix::Bt709, false, grey, red, 16);
+			REQUIRE(renderer.upload(flat.picture));
+			checkClose(drawnAt(renderer, 64, 16, 32, 8, false),
+				   expectedRgb(red, ColorMatrix::Bt709, false));
+			checkClose(drawnAt(renderer, 64, 16, 31, 8, false),
+				   expectedRgb({120.0, 128.0, 164.0}, ColorMatrix::Bt709, false));
+		}
+	}
 	obs_leave_graphics();
 }

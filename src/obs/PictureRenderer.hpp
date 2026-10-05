@@ -47,8 +47,8 @@ private:
 	bool makeEffect() noexcept;
 	bool makeTextures(const decode::Picture &picture) noexcept;
 	void setColors(const decode::Picture &picture) noexcept;
-	void drawPlanes(decode::PixelLayout layout, const std::array<gs_texture_t *, 3> &planes, uint32_t width,
-			uint32_t height) noexcept;
+	void drawPlanes(decode::PixelLayout layout, const std::array<gs_texture_t *, 3> &planes, uint32_t lumaWidth,
+			uint32_t width, uint32_t height) noexcept;
 
 	gs_effect_t *effect_ = nullptr;
 	std::array<gs_texture_t *, 3> planes_{};

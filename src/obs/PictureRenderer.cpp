@@ -21,6 +21,7 @@ uniform float4 to_rgb_g;
 uniform float4 to_rgb_b;
 uniform float3 range_min;
 uniform float3 range_max;
+uniform float chroma_shift;
 
 sampler_state planes {
 	Filter = Linear;
@@ -41,25 +42,63 @@ Vertex vertex_main(Vertex v)
 	return result;
 }
 
-float4 rgb_of(float3 yuv)
+float3 rgb_of(float3 yuv)
 {
 	float4 clamped = float4(clamp(yuv, range_min, range_max), 1.0);
-	return float4(dot(to_rgb_r, clamped), dot(to_rgb_g, clamped), dot(to_rgb_b, clamped), 1.0);
+	return float3(dot(to_rgb_r, clamped), dot(to_rgb_g, clamped), dot(to_rgb_b, clamped));
+}
+
+float linear_of(float u)
+{
+	return (u <= 0.04045) ? (u / 12.92) : pow(mad(u, 1.0 / 1.055, 0.055 / 1.055), 2.4);
+}
+
+float4 linear_rgb(float3 rgb)
+{
+	float3 encoded = saturate(rgb);
+	return float4(linear_of(encoded.r), linear_of(encoded.g), linear_of(encoded.b), 1.0);
+}
+
+// Chroma is sited left of its pairs of luma samples, as OBS's own encoders write it and
+// read it back.
+float2 chroma_uv(float2 uv)
+{
+	return uv + float2(chroma_shift, 0.0);
+}
+
+float3 nv12_rgb(Vertex v)
+{
+	float y = luma.Sample(planes, v.uv).x;
+	float2 uv = chroma.Sample(planes, chroma_uv(v.uv)).xy;
+	return rgb_of(float3(y, uv));
+}
+
+float3 i420_rgb(Vertex v)
+{
+	float y = luma.Sample(planes, v.uv).x;
+	float u = chroma.Sample(planes, chroma_uv(v.uv)).x;
+	float w = chroma_v.Sample(planes, chroma_uv(v.uv)).x;
+	return rgb_of(float3(y, u, w));
 }
 
 float4 pixel_nv12(Vertex v) : TARGET
 {
-	float y = luma.Sample(planes, v.uv).x;
-	float2 uv = chroma.Sample(planes, v.uv).xy;
-	return rgb_of(float3(y, uv));
+	return float4(nv12_rgb(v), 1.0);
 }
 
 float4 pixel_i420(Vertex v) : TARGET
 {
-	float y = luma.Sample(planes, v.uv).x;
-	float u = chroma.Sample(planes, v.uv).x;
-	float w = chroma_v.Sample(planes, v.uv).x;
-	return rgb_of(float3(y, u, w));
+	return float4(i420_rgb(v), 1.0);
+}
+
+float4 pixel_nv12_linear(Vertex v) : TARGET
+{
+	return linear_rgb(nv12_rgb(v));
+}
+
+float4 pixel_i420_linear(Vertex v) : TARGET
+{
+	return linear_rgb(i420_rgb(v));
 }
 
 technique Nv12
@@ -77,6 +116,24 @@ technique I420
 	{
 		vertex_shader = vertex_main(v);
 		pixel_shader = pixel_i420(v);
+	}
+}
+
+technique Nv12Linear
+{
+	pass
+	{
+		vertex_shader = vertex_main(v);
+		pixel_shader = pixel_nv12_linear(v);
+	}
+}
+
+technique I420Linear
+{
+	pass
+	{
+		vertex_shader = vertex_main(v);
+		pixel_shader = pixel_i420_linear(v);
 	}
 }
 )";
@@ -99,8 +156,19 @@ PictureRenderer::~PictureRenderer()
 bool PictureRenderer::upload(const decode::Picture &picture) noexcept
 {
 	ready_ = false;
-	if (picture.texture || !picture.planes[0] || picture.width == 0 || picture.height == 0 || !makeEffect() ||
-	    !makeTextures(picture)) {
+	if (picture.texture || picture.width == 0 || picture.height == 0) {
+		return false;
+	}
+	// Every plane there, and each row of it within its stride.
+	const bool nv12 = picture.layout == decode::PixelLayout::Nv12;
+	const std::array<uint32_t, 3> rows = {picture.width, nv12 ? half(picture.width) * 2 : half(picture.width),
+					      nv12 ? 0 : half(picture.width)};
+	for (size_t plane = 0; plane < (nv12 ? 2u : 3u); ++plane) {
+		if (!picture.planes[plane] || picture.strides[plane] < rows[plane]) {
+			return false;
+		}
+	}
+	if (!makeEffect() || !makeTextures(picture)) {
 		return false;
 	}
 
@@ -122,7 +190,7 @@ bool PictureRenderer::draw(uint32_t width, uint32_t height) noexcept
 		return false;
 	}
 	setColors(colors_);
-	drawPlanes(layout_, planes_, width, height);
+	drawPlanes(layout_, planes_, colors_.width, width, height);
 	return true;
 }
 
@@ -135,12 +203,12 @@ bool PictureRenderer::drawNv12(gs_texture_t *luma, gs_texture_t *chroma, const d
 	decode::Picture nv12 = colors;
 	nv12.layout = decode::PixelLayout::Nv12;
 	setColors(nv12);
-	drawPlanes(decode::PixelLayout::Nv12, {luma, chroma, nullptr}, width, height);
+	drawPlanes(decode::PixelLayout::Nv12, {luma, chroma, nullptr}, gs_texture_get_width(luma), width, height);
 	return true;
 }
 
 void PictureRenderer::drawPlanes(decode::PixelLayout layout, const std::array<gs_texture_t *, 3> &planes,
-				 uint32_t width, uint32_t height) noexcept
+				 uint32_t lumaWidth, uint32_t width, uint32_t height) noexcept
 {
 	gs_effect_set_texture(gs_effect_get_param_by_name(effect_, "luma"), planes[0]);
 	gs_effect_set_texture(gs_effect_get_param_by_name(effect_, "chroma"), planes[1]);
@@ -150,12 +218,19 @@ void PictureRenderer::drawPlanes(decode::PixelLayout layout, const std::array<gs
 	gs_effect_set_vec4(gs_effect_get_param_by_name(effect_, "to_rgb_b"), &toRgb_[2]);
 	gs_effect_set_vec3(gs_effect_get_param_by_name(effect_, "range_min"), &rangeMin_);
 	gs_effect_set_vec3(gs_effect_get_param_by_name(effect_, "range_max"), &rangeMax_);
+	// Half a luma sample, in texture coordinates.
+	gs_effect_set_float(gs_effect_get_param_by_name(effect_, "chroma_shift"),
+			    lumaWidth ? 0.5f / static_cast<float>(lumaWidth) : 0.0f);
 
-	// The effect writes the encoded values as they are; a framebuffer that converts to
-	// sRGB would encode them twice.
+	// As OBS draws its own asynchronous sources: in linear light when asked to or when the
+	// canvas is not plain sRGB, as a 16-bit SDR one is, with the framebuffer encoding it
+	// again where it can; otherwise the encoded values as they are, with that encoding
+	// off so that they are not encoded twice.
+	const bool linear = gs_get_linear_srgb() || gs_get_color_space() != GS_CS_SRGB;
 	const bool srgb = gs_framebuffer_srgb_enabled();
-	gs_enable_framebuffer_srgb(false);
-	const char *technique = layout == decode::PixelLayout::Nv12 ? "Nv12" : "I420";
+	gs_enable_framebuffer_srgb(linear);
+	const bool nv12 = layout == decode::PixelLayout::Nv12;
+	const char *technique = linear ? (nv12 ? "Nv12Linear" : "I420Linear") : (nv12 ? "Nv12" : "I420");
 	while (gs_effect_loop(effect_, technique)) {
 		gs_draw_sprite(planes[0], 0, width, height);
 	}
