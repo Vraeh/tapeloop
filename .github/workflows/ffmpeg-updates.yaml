@@ -1,0 +1,44 @@
+name: FFmpeg Updates
+# The plugin links FFmpeg statically, so a fix in FFmpeg reaches users only through a
+# Tapeloop release. Once a week this compares the pinned version with the newest 8.1
+# point release and opens an issue, or updates the open one, when a newer one exists.
+on:
+  schedule:
+    - cron: '17 6 * * 1'
+  workflow_dispatch:
+permissions:
+  contents: read
+jobs:
+  check:
+    name: Check for a newer FFmpeg 8.1
+    runs-on: ubuntu-24.04
+    permissions:
+      contents: read
+      issues: write
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+          sparse-checkout: cmake/ffmpeg
+
+      - name: Compare with the newest release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          read -r pinned url < <(cmake -DPRINT_SOURCE=ON -P cmake/ffmpeg/BuildFFmpeg.cmake 2>&1)
+          newest="$(gh api repos/FFmpeg/FFmpeg/git/matching-refs/tags/n8.1 --jq '.[].ref' |
+            sed -n 's|^refs/tags/n\(8\.1\(\.[0-9]*\)*\)$|\1|p' | sort -V | tail -1)"
+          echo "Pinned ${pinned} (${url}), newest 8.1 release ${newest:-unknown}"
+          if [[ -z "${newest}" || "$(printf '%s\n' "${pinned}" "${newest}" | sort -V | tail -1)" == "${pinned}" ]]; then
+            exit 0
+          fi
+
+          title="FFmpeg ${newest} is available"
+          body="Tapeloop builds FFmpeg ${pinned} (\`cmake/ffmpeg/BuildFFmpeg.cmake\`), and FFmpeg ${newest} is out: https://ffmpeg.org/releases/ffmpeg-${newest}.tar.xz. Check its signature, pin its SHA-256 and see whether its changes reach the H.264 and HEVC decoders."
+          number="$(gh issue list --repo "${GITHUB_REPOSITORY}" --state open --search 'FFmpeg in:title' \
+            --json number,title --jq '.[] | select(.title | test("^FFmpeg [0-9.]+ is available$")) | .number' | head -1)"
+          if [[ -n "${number}" ]]; then
+            gh issue edit "${number}" --repo "${GITHUB_REPOSITORY}" --title "${title}" --body "${body}"
+          else
+            gh issue create --repo "${GITHUB_REPOSITORY}" --title "${title}" --body "${body}"
+          fi
