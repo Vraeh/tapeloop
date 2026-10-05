@@ -3,6 +3,8 @@
 
 #include "decode/FFmpegVersion.hpp"
 
+#include "decode/FFmpegHeaders.hpp"
+
 extern "C" {
 #include <libavutil/avutil.h>
 }
