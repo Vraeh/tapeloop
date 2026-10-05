@@ -23,9 +23,9 @@
 
 #include <chrono>
 #include <cstdlib>
+#include <initializer_list>
 #include <set>
 #include <string>
-#include <initializer_list>
 
 using namespace std::chrono_literals;
 using tapeloop::BufferSettings;

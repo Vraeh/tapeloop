@@ -376,6 +376,17 @@ TEST_CASE_METHOD(ObsFixture, "a capture reports the path its encoder takes the f
 	capture.stop();
 	CHECK(capture.stats().encoderPath == tapeloop::EncoderPath::Texture);
 
+	// A texture encoder on the adapter OBS renders on: the optimal path, as OBS hands it
+	// NV12 textures.
+	EncoderInfo texture = testEncoder(tapeloop::test::kHevcTextureEncoderId, "hevc");
+	texture.vendor = Vendor::Nvidia;
+	texture.passTexture = true;
+	settings.candidates = {texture};
+	REQUIRE(capture.start(pattern, settings) == StartResult::Started);
+	CHECK(capture.stats().encoderPath == tapeloop::EncoderPath::Texture);
+	REQUIRE(waitFor([&] { return hasGops(capture, 2); }, 60s));
+	capture.stop();
+
 	// As QuickSync on another adapter than the one OBS renders on.
 	EncoderInfo readback = testEncoder(tapeloop::test::kHevcEncoderId, "hevc");
 	readback.vendor = Vendor::Intel;

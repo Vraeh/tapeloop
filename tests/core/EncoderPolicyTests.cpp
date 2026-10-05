@@ -328,6 +328,9 @@ TEST_CASE("an encoder's path is the optimal one only when it takes OBS's texture
 	// VideoToolbox on a Mac is the best path there is, without textures.
 	CHECK(encoderPathOf(encoder("com.apple.videotoolbox.videoencoder.ave.avc", "h264", Vendor::Apple, false),
 			    Vendor::Apple, false) == EncoderPath::Texture);
+	// On another adapter, as a Mac with a discrete card OBS does not render on.
+	CHECK(encoderPathOf(encoder("com.apple.videotoolbox.videoencoder.ave.avc", "h264", Vendor::Apple, false),
+			    Vendor::Amd, true) == EncoderPath::Readback);
 	CHECK(encoderPathOf(encoder("obs_x264", "h264", Vendor::Software, false), Vendor::Nvidia, true) ==
 	      EncoderPath::Software);
 }
