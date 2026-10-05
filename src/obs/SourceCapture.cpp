@@ -180,7 +180,11 @@ void SourceCapture::hold(obs_source_t *source)
 	if (!view_) {
 		view_ = obs_view_create();
 	}
-	obs_view_set_source(view_, 0, source);
+	// The manager retries every second; the view changes only when the source does.
+	OBSSourceAutoRelease shown = obs_view_get_source(view_, 0);
+	if (shown != source) {
+		obs_view_set_source(view_, 0, source);
+	}
 }
 
 void SourceCapture::stop()

@@ -63,10 +63,10 @@ public:
 	// Starts encoding source, which needs no reference beyond the call. The buffer is
 	// emptied once the encoder has started unless keepBuffer is set; a kept buffer takes
 	// the new byte budget and sees the restart as a discontinuity. A new length or frame
-	// rate needs a new buffer, kept or not. Logs why when it does not start, and stays
-	// stopped; a start that fails before an encoder has initialized leaves the buffer as
-	// it was. A source without a size stays shown on the capture's view (see hold) and
-	// gives NoSourceSize; a later start uses that view.
+	// rate needs a new buffer, kept or not. Logs why when it does not start. A source
+	// without a size stays shown on the capture's view (see hold), waiting, and gives
+	// NoSourceSize; a later start uses that view. Any other failure leaves the capture
+	// stopped, and one before an encoder has initialized leaves the buffer as it was.
 	StartResult start(obs_source_t *source, const CaptureSettings &settings, bool keepBuffer = false);
 
 	// Shows the source on the capture's view, without encoding. Display, window and game
