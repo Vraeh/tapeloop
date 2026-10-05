@@ -8,3 +8,5 @@ endfunction()
 
 tapeloop_add_fuzzer(source-buffer-fuzz SourceBufferFuzz.cpp)
 tapeloop_add_fuzzer(playhead-fuzz PlayheadFuzz.cpp)
+tapeloop_add_fuzzer(decode-planner-fuzz DecodePlannerFuzz.cpp)
+tapeloop_add_fuzzer(replay-player-fuzz ReplayPlayerFuzz.cpp)

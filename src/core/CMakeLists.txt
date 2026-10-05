@@ -20,8 +20,11 @@ target_sources(
     BufferSettings.hpp
     Clip.cpp
     Clip.hpp
+    DecodePlanner.cpp
+    DecodePlanner.hpp
     EncoderPolicy.cpp
     EncoderPolicy.hpp
+    FrameDecoder.hpp
     Gop.cpp
     Gop.hpp
     MediaTime.cpp
@@ -32,6 +35,12 @@ target_sources(
     MomentList.hpp
     Playhead.cpp
     Playhead.hpp
+    ReplayLibrary.cpp
+    ReplayLibrary.hpp
+    ReplayPlayerState.cpp
+    ReplayPlayerState.hpp
+    ReplaySequence.cpp
+    ReplaySequence.hpp
     ReplaySize.cpp
     ReplaySize.hpp
     SourceBuffer.cpp

@@ -14,14 +14,15 @@ class QSpinBox;
 
 namespace tapeloop::ui {
 
-// Lets one source have its own buffer length or resolution instead of the global ones.
+// Lets one source have its own buffer length, resolution or activation off air instead
+// of the global ones.
 class SourceSettingsDialog : public QDialog {
 public:
 	SourceSettingsDialog(const QString &sourceName, const SourceSettings &current, const BufferSettings &global,
 			     const TextLookup &text, QWidget *parent = nullptr);
 
-	// The source's own length and resolution as the dialog leaves them; the selection is
-	// not the dialog's and stays unset.
+	// The source's own length, resolution and activation as the dialog leaves them; the
+	// selection is not the dialog's and stays unset.
 	SourceSettings result() const;
 
 private:
@@ -29,6 +30,8 @@ private:
 	QSpinBox *length_;
 	QCheckBox *ownResolution_;
 	QComboBox *resolution_;
+	QCheckBox *ownActivation_;
+	QCheckBox *activate_;
 };
 
 } // namespace tapeloop::ui

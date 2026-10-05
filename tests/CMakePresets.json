@@ -128,7 +128,7 @@
     {
       "name": "linux-clang-fuzz",
       "configurePreset": "linux-clang-fuzz",
-      "targets": ["source-buffer-fuzz", "playhead-fuzz"]
+      "targets": ["source-buffer-fuzz", "playhead-fuzz", "decode-planner-fuzz", "replay-player-fuzz"]
     },
     {
       "name": "linux-clang-coverage",

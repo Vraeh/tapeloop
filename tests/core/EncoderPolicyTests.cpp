@@ -253,31 +253,74 @@ TEST_CASE("adapter vendors come from the driver's name")
 TEST_CASE("replay bitrate scales with pixel rate and is capped")
 {
 	ReplayEncoderParams params;
-	CHECK(tapeloop::replayBitrateKbps(params) == 30'000);
+	CHECK(tapeloop::replayBitrateKbps(params, "h264") == 30'000);
 
 	params.width = 1280;
 	params.height = 720;
-	CHECK(tapeloop::replayBitrateKbps(params) == 13'333);
+	CHECK(tapeloop::replayBitrateKbps(params, "h264") == 13'333);
 
 	params.width = 1920;
 	params.height = 1080;
 	params.frameDuration = {1001, 60000};
-	CHECK(tapeloop::replayBitrateKbps(params) == 29'970);
+	CHECK(tapeloop::replayBitrateKbps(params, "h264") == 29'970);
 	params.frameDuration = {1, 30};
-	CHECK(tapeloop::replayBitrateKbps(params) == 15'000);
+	CHECK(tapeloop::replayBitrateKbps(params, "h264") == 15'000);
 
 	params.width = 3840;
 	params.height = 2160;
 	params.frameDuration = {1, 60};
-	CHECK(tapeloop::replayBitrateKbps(params) == 100'000);
+	CHECK(tapeloop::replayBitrateKbps(params, "h264") == 100'000);
 	params.maxBitrateKbps = 150'000;
-	CHECK(tapeloop::replayBitrateKbps(params) == 120'000);
+	CHECK(tapeloop::replayBitrateKbps(params, "h264") == 120'000);
 
 	params.width = 1;
 	params.height = 1;
-	CHECK(tapeloop::replayBitrateKbps(params) == 1);
+	CHECK(tapeloop::replayBitrateKbps(params, "h264") == 1);
 	params.width = -5;
-	CHECK(tapeloop::replayBitrateKbps(params) == 1);
+	CHECK(tapeloop::replayBitrateKbps(params, "h264") == 1);
+}
+
+TEST_CASE("HEVC gets a share of the H.264 bitrate")
+{
+	ReplayEncoderParams params;
+	CHECK(tapeloop::replayBitrateKbps(params, "hevc") == 18'000);
+	params.width = 1280;
+	params.height = 720;
+	CHECK(tapeloop::replayBitrateKbps(params, "hevc") == 8'000);
+
+	params.hevcBitratePercent = 50;
+	CHECK(tapeloop::replayBitrateKbps(params, "hevc") == 6'667);
+	CHECK(tapeloop::replayBitrateKbps(params, "h264") == 13'333);
+	params.hevcBitratePercent = 0;
+	CHECK(tapeloop::replayBitrateKbps(params, "hevc") == 133);
+	params.hevcBitratePercent = 250;
+	CHECK(tapeloop::replayBitrateKbps(params, "hevc") == 13'333);
+
+	// The cap holds whatever the codec.
+	params.width = 7680;
+	params.height = 4320;
+	params.hevcBitratePercent = 60;
+	CHECK(tapeloop::replayBitrateKbps(params, "hevc") == 100'000);
+
+	// The byte budget follows the bitrate.
+	CHECK(tapeloop::replayByteBudget(18'000, std::chrono::seconds(60)) * 30 ==
+	      tapeloop::replayByteBudget(30'000, std::chrono::seconds(60)) * 18);
+}
+
+TEST_CASE("replay encoders prefer HEVC unless told otherwise, with H.264 of the same vendor after it")
+{
+	CHECK(EncoderPreferences{}.preferHevc);
+	const std::vector<EncoderInfo> encoders = {
+		encoder("obs_nvenc_h264_tex", "h264", Vendor::Nvidia, true),
+		encoder("obs_nvenc_hevc_tex", "hevc", Vendor::Nvidia, true),
+		encoder("obs_x264", "h264", Vendor::Software, false),
+	};
+	Ids preferred;
+	for (const EncoderInfo &info : tapeloop::replayEncoderCandidates(encoders, Vendor::Nvidia, {})) {
+		preferred.push_back(info.id);
+	}
+	CHECK(preferred == Ids{"obs_nvenc_hevc_tex", "obs_nvenc_h264_tex", "obs_x264"});
+	CHECK(candidates(encoders, Vendor::Nvidia, false) == Ids{"obs_nvenc_h264_tex", "obs_x264"});
 }
 
 TEST_CASE("replay byte budget is the bitrate over the length plus half")
@@ -328,7 +371,9 @@ TEST_CASE("replay settings for each encoder family")
 			{"opts", std::string("keyint=30")},
 		};
 		CHECK(settingsFor("obs_nvenc_h264_tex", "h264", Vendor::Nvidia) == expected);
-		CHECK(settingsFor("obs_nvenc_hevc_tex", "hevc", Vendor::Nvidia) == expected);
+		EncoderSettings hevc = expected;
+		hevc["bitrate"] = int64_t{17'982};
+		CHECK(settingsFor("obs_nvenc_hevc_tex", "hevc", Vendor::Nvidia) == hevc);
 	}
 
 	SECTION("QuickSync")
@@ -343,7 +388,9 @@ TEST_CASE("replay settings for each encoder family")
 			{"repeat_headers", true},
 		};
 		CHECK(settingsFor("obs_qsv11_v2", "h264", Vendor::Intel) == expected);
-		CHECK(settingsFor("obs_qsv11_hevc", "hevc", Vendor::Intel) == expected);
+		EncoderSettings hevc = expected;
+		hevc["bitrate"] = int64_t{17'982};
+		CHECK(settingsFor("obs_qsv11_hevc", "hevc", Vendor::Intel) == hevc);
 	}
 
 	SECTION("AMF")
@@ -360,7 +407,7 @@ TEST_CASE("replay settings for each encoder family")
 
 		const EncoderSettings hevc = {
 			{"rate_control", std::string("CBR")},
-			{"bitrate", int64_t{29'970}},
+			{"bitrate", int64_t{17'982}},
 			{"keyint_sec", int64_t{1}},
 			{"preset", std::string("speed")},
 			{"ffmpeg_opts", std::string("HevcGOPSize=30 gops_per_idr=1 header_insertion_mode=idr")},
@@ -377,6 +424,9 @@ TEST_CASE("replay settings for each encoder family")
 			{"bframes", false},
 		};
 		CHECK(settingsFor("com.apple.videotoolbox.videoencoder.ave.avc", "h264", Vendor::Apple) == expected);
+		EncoderSettings hevc = expected;
+		hevc["bitrate"] = int64_t{17'982};
+		CHECK(settingsFor("com.apple.videotoolbox.videoencoder.ave.hevc", "hevc", Vendor::Apple) == hevc);
 	}
 
 	SECTION("x264")
@@ -422,10 +472,16 @@ TEST_CASE("replay settings keep the QSV bitrate within 16 bits")
 	const EncoderSettings intel =
 		tapeloop::buildReplaySettings(encoder("obs_qsv11_v2", "h264", Vendor::Intel, true), params);
 	CHECK(intel.at("bitrate") == tapeloop::SettingValue(int64_t{50'000}));
+	const EncoderSettings intelHevc =
+		tapeloop::buildReplaySettings(encoder("obs_qsv11_hevc", "hevc", Vendor::Intel, true), params);
+	CHECK(intelHevc.at("bitrate") == tapeloop::SettingValue(int64_t{50'000}));
 
 	const EncoderSettings nvidia =
 		tapeloop::buildReplaySettings(encoder("obs_nvenc_h264_tex", "h264", Vendor::Nvidia, true), params);
 	CHECK(nvidia.at("bitrate") == tapeloop::SettingValue(int64_t{100'000}));
+	const EncoderSettings nvidiaHevc =
+		tapeloop::buildReplaySettings(encoder("obs_nvenc_hevc_tex", "hevc", Vendor::Nvidia, true), params);
+	CHECK(nvidiaHevc.at("bitrate") == tapeloop::SettingValue(int64_t{72'000}));
 }
 
 TEST_CASE("replay settings stay within what OBS accepts on odd input")

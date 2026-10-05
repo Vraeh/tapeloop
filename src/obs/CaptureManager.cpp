@@ -6,8 +6,10 @@
 #include "obs/ObsEncoders.hpp"
 #include "obs/SettingsData.hpp"
 
+#include <obs.hpp>
 #include <util/base.h>
 
+#include <cstring>
 #include <utility>
 
 namespace tapeloop::obs {
@@ -27,6 +29,33 @@ bool addInput(void *param, obs_source_t *source) noexcept
 		return false;
 	}
 	return true;
+}
+
+// Sources that restart when they become active. Holding one active off air would keep it
+// from restarting when it is cut to air, so activation leaves them out. The ids and
+// settings are those of OBS 32's media source, VLC source, image slideshow and image
+// source.
+bool restartsWhenActivated(obs_source_t *source)
+{
+	const char *id = obs_source_get_unversioned_id(source);
+	if (!id) {
+		return false;
+	}
+	// An animated image starts over. Holding gives an image nothing else: it runs while
+	// shown, which its capture already does.
+	if (std::strcmp(id, "image_source") == 0) {
+		return true;
+	}
+	OBSDataAutoRelease settings = obs_source_get_settings(source);
+	if (std::strcmp(id, "ffmpeg_source") == 0) {
+		return obs_data_get_bool(settings, "restart_on_activate");
+	}
+	if (std::strcmp(id, "vlc_source") == 0 || std::strcmp(id, "slideshow") == 0) {
+		// Anything but these two behaves as stop and restart.
+		const char *behavior = obs_data_get_string(settings, "playback_behavior");
+		return std::strcmp(behavior, "pause_unpause") != 0 && std::strcmp(behavior, "always_play") != 0;
+	}
+	return false;
 }
 
 } // namespace
@@ -50,6 +79,9 @@ void CaptureManager::setSettings(BufferSettings settings)
 	settings_ = std::move(settings);
 	lifecycle_.setStartWithOutputs(settings_.startWithOutputs);
 	reconcile();
+	if (!foreignSettings_) {
+		host_.requestSave();
+	}
 }
 
 bool CaptureManager::manualStart()
@@ -138,6 +170,9 @@ void CaptureManager::poll()
 			blog(LOG_INFO, "[tapeloop] A captured source changed size, restarting its capture");
 			stop(entry);
 			outcome = start(uuid, entry, true, false, candidates);
+		} else {
+			// The restart setting of a media source can change while it is captured.
+			updateActivation(uuid, entry, entry.source);
 		}
 		// A failed entry stays, so that only what poll is meant to retry is tried again.
 		if (outcome == StartOutcome::SourceRemoved) {
@@ -217,6 +252,7 @@ SourceStatus CaptureManager::status(const std::string &uuid) const
 	const auto found = entries_.find(uuid);
 	if (found != entries_.end()) {
 		status.stats = found->second->capture.stats();
+		status.activationLeftOut = found->second->activationLeftOut;
 	}
 	return status;
 }
@@ -255,8 +291,10 @@ void CaptureManager::reconcile()
 		if (found == entries_.end()) {
 			found = entries_.emplace(uuid, std::make_unique<Entry>()).first;
 		}
-		if (!found->second->capture.active() &&
-		    start(uuid, *found->second, false, false, candidates) == StartOutcome::SourceRemoved) {
+		Entry &entry = *found->second;
+		if (entry.capture.active()) {
+			updateActivation(uuid, entry, entry.source);
+		} else if (start(uuid, entry, false, false, candidates) == StartOutcome::SourceRemoved) {
 			entries_.erase(found);
 		}
 	}
@@ -276,6 +314,9 @@ CaptureManager::StartOutcome CaptureManager::start(const std::string &uuid, Entr
 		entry.retry = true;
 		return StartOutcome::Failed;
 	}
+	// Before the size: a media source that plays only while active has no size until it
+	// is.
+	updateActivation(uuid, entry, source);
 	if (quiet && (obs_source_get_width(source) == 0 || obs_source_get_height(source) == 0)) {
 		entry.capture.hold(source);
 		entry.retry = true;
@@ -283,7 +324,8 @@ CaptureManager::StartOutcome CaptureManager::start(const std::string &uuid, Entr
 	}
 
 	if (!candidates) {
-		candidates = replayEncoderCandidates(registeredVideoEncoders(), renderAdapterVendor(), {});
+		candidates = replayEncoderCandidates(registeredVideoEncoders(), renderAdapterVendor(),
+						     settings_.encoderPreferences());
 	}
 	CaptureSettings settings;
 	settings.resolution = settings_.resolutionFor(uuid);
@@ -292,6 +334,9 @@ CaptureManager::StartOutcome CaptureManager::start(const std::string &uuid, Entr
 	const StartResult result = entry.capture.start(source, settings, keepBuffer);
 	if (result != StartResult::Started) {
 		entry.retry = result == StartResult::NoSourceSize;
+		if (!entry.retry) {
+			entry.activation.reset();
+		}
 		return StartOutcome::Failed;
 	}
 
@@ -309,6 +354,42 @@ void CaptureManager::stop(Entry &entry)
 		entry.source = nullptr;
 	}
 	entry.capture.stop();
+	entry.activation.reset();
+	entry.activationLeftOut = false;
+}
+
+void CaptureManager::updateActivation(const std::string &uuid, Entry &entry, obs_source_t *source)
+{
+	if (!source) {
+		return;
+	}
+	const bool wanted = settings_.activateFor(uuid);
+	entry.activationLeftOut = wanted && restartsWhenActivated(source);
+	if (wanted && !entry.activationLeftOut) {
+		entry.activation.hold(source);
+	} else {
+		entry.activation.reset();
+	}
+}
+
+void CaptureManager::Activation::hold(obs_source_t *source)
+{
+	if (source_) {
+		return;
+	}
+	source_ = obs_source_get_ref(source);
+	if (source_) {
+		obs_source_inc_active(source_);
+	}
+}
+
+void CaptureManager::Activation::reset() noexcept
+{
+	if (source_) {
+		obs_source_dec_active(source_);
+		obs_source_release(source_);
+		source_ = nullptr;
+	}
 }
 
 void CaptureManager::releaseAll()

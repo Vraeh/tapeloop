@@ -4,10 +4,14 @@
 #include "TestPattern.hpp"
 
 #include <obs-module.h>
+#include <util/platform.h>
 
 #include <algorithm>
 #include <atomic>
+#include <cmath>
+#include <initializer_list>
 #include <new>
+#include <vector>
 
 namespace tapeloop::test {
 namespace {
@@ -25,9 +29,14 @@ struct TestPattern {
 	std::atomic<uint32_t> width{0};
 	std::atomic<uint32_t> height{0};
 	std::atomic<bool> sizeOnlyWhenShown{false};
+	std::atomic<bool> sizeOnlyWhenActive{false};
 	uint32_t frame = 0;
 
-	bool hidden() const noexcept { return sizeOnlyWhenShown && !obs_source_showing(source); }
+	bool hidden() const noexcept
+	{
+		return (sizeOnlyWhenShown && !obs_source_showing(source)) ||
+		       (sizeOnlyWhenActive && !obs_source_active(source));
+	}
 };
 
 // The bar fills the top three quarters, the frame number the bottom quarter.
@@ -56,6 +65,17 @@ void update(void *data, obs_data_t *settings) noexcept
 	pattern->width = static_cast<uint32_t>(std::max<long long>(obs_data_get_int(settings, "width"), 0));
 	pattern->height = static_cast<uint32_t>(std::max<long long>(obs_data_get_int(settings, "height"), 0));
 	pattern->sizeOnlyWhenShown = obs_data_get_bool(settings, "size_only_when_shown");
+	pattern->sizeOnlyWhenActive = obs_data_get_bool(settings, "size_only_when_active");
+}
+
+const char *mediaName(void *) noexcept
+{
+	return "Tapeloop test media";
+}
+
+void mediaDefaults(obs_data_t *settings) noexcept
+{
+	obs_data_set_default_bool(settings, "restart_on_activate", true);
 }
 
 void *create(obs_data_t *settings, obs_source_t *source) noexcept
@@ -114,6 +134,71 @@ void render(void *data, gs_effect_t *) noexcept
 	}
 }
 
+// A white frame with a steady tone, written as one block of audio per tick.
+constexpr uint32_t kToneWidth = 320;
+constexpr uint32_t kToneHeight = 180;
+constexpr uint32_t kToneRate = 48000;
+constexpr float kToneLevel = 0.5f;
+
+struct Tone {
+	obs_source_t *source = nullptr;
+	std::vector<float> samples = std::vector<float>(kToneRate / 10, kToneLevel);
+};
+
+const char *toneName(void *) noexcept
+{
+	return "Tapeloop test tone";
+}
+
+void *createTone(obs_data_t *, obs_source_t *source) noexcept
+{
+	auto *tone = new (std::nothrow) Tone;
+	if (tone) {
+		tone->source = source;
+	}
+	return tone;
+}
+
+void destroyTone(void *data) noexcept
+{
+	delete static_cast<Tone *>(data);
+}
+
+uint32_t toneWidth(void *) noexcept
+{
+	return kToneWidth;
+}
+
+uint32_t toneHeight(void *) noexcept
+{
+	return kToneHeight;
+}
+
+void toneTick(void *data, float seconds) noexcept
+{
+	Tone &tone = *static_cast<Tone *>(data);
+	const auto frames =
+		std::min<size_t>(static_cast<size_t>(std::lround(seconds * kToneRate)), tone.samples.size());
+	obs_source_audio audio = {};
+	audio.data[0] = reinterpret_cast<const uint8_t *>(tone.samples.data());
+	audio.data[1] = audio.data[0];
+	audio.frames = static_cast<uint32_t>(frames);
+	audio.speakers = SPEAKERS_STEREO;
+	audio.format = AUDIO_FORMAT_FLOAT_PLANAR;
+	audio.samples_per_sec = kToneRate;
+	audio.timestamp = os_gettime_ns();
+	obs_source_output_audio(tone.source, &audio);
+}
+
+void toneRender(void *, gs_effect_t *) noexcept
+{
+	gs_effect_t *solid = obs_get_base_effect(OBS_EFFECT_SOLID);
+	gs_eparam_t *color = gs_effect_get_param_by_name(solid, "color");
+	while (gs_effect_loop(solid, "Solid")) {
+		fill(color, kWhite, 0, 0, kToneWidth, kToneHeight);
+	}
+}
+
 const char *silenceName(void *) noexcept
 {
 	return "Tapeloop test silence";
@@ -157,6 +242,35 @@ void registerTestPattern()
 	info.get_height = height;
 	info.video_tick = tick;
 	info.video_render = render;
+	obs_register_source(&info);
+
+	obs_source_info media = info;
+	media.id = kMediaStandInId;
+	media.get_name = mediaName;
+	media.get_defaults = mediaDefaults;
+	obs_register_source(&media);
+
+	for (const char *id : {kVlcStandInId, kSlideshowStandInId, kImageStandInId}) {
+		obs_source_info other = info;
+		other.id = id;
+		other.get_name = mediaName;
+		obs_register_source(&other);
+	}
+}
+
+void registerTone()
+{
+	obs_source_info info = {};
+	info.id = kToneId;
+	info.type = OBS_SOURCE_TYPE_INPUT;
+	info.output_flags = OBS_SOURCE_VIDEO | OBS_SOURCE_AUDIO | OBS_SOURCE_CUSTOM_DRAW;
+	info.get_name = toneName;
+	info.create = createTone;
+	info.destroy = destroyTone;
+	info.get_width = toneWidth;
+	info.get_height = toneHeight;
+	info.video_tick = toneTick;
+	info.video_render = toneRender;
 	obs_register_source(&info);
 }
 
