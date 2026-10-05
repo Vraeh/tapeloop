@@ -82,6 +82,9 @@ void checkAlways(const DecodePlanner &planner, const FakeDecoder &decoder, const
 	require(decoder.outstanding.size() == planner.heldFrames());
 	require(planner.keptGopCount() <= config.keptGops);
 	require(planner.heldFrames() <= config.keptGops * static_cast<size_t>(model.gopLength));
+	// Within the cap, but for the one frame asked for when it alone is larger.
+	require(planner.heldBytes() == planner.heldFrames() * decoder.frameBytes);
+	require(planner.heldBytes() <= std::max(config.maxBytes, decoder.frameBytes));
 }
 
 } // namespace
@@ -91,8 +94,13 @@ extern "C" int LLVMFuzzerTestOneInput(const uint8_t *data, size_t size)
 	FuzzInput input(data, size);
 	DecodePlannerConfig config;
 	config.keptGops = 1 + input.byte() % 3;
+	// Mostly a cap that holds a few frames or none at all.
+	if (input.byte() % 4 != 0) {
+		config.maxBytes = input.byte() % 16 * 10;
+	}
 	auto gopLength = std::make_shared<int64_t>(1);
 	FakeDecoder decoder([gopLength](int64_t pts) { return pts % *gopLength == 0; }, input.byte() % 4);
+	decoder.frameBytes = 1 + input.byte() % 40;
 	{
 		DecodePlanner planner(decoder, config);
 		Model model = readClip(input);

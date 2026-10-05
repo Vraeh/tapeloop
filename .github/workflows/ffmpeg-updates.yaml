@@ -61,7 +61,7 @@ jobs:
           fi
 
           title="FFmpeg ${newest} is available"
-          body="Tapeloop builds FFmpeg ${pinned} (\`cmake/ffmpeg/BuildFFmpeg.cmake\`), and FFmpeg ${newest} is out: https://ffmpeg.org/releases/ffmpeg-${newest}.tar.xz. Check its signature, pin its SHA-256 and see whether its changes reach the H.264 and HEVC decoders."
+          body="Tapeloop builds FFmpeg ${pinned} (\`cmake/ffmpeg/BuildFFmpeg.cmake\`), and FFmpeg ${newest} is out: https://ffmpeg.org/releases/ffmpeg-${newest}.tar.xz. Check its signature, pin its SHA-256 and see whether its changes reach the H.264 and HEVC decoders. Its build stops when a file it compiles or includes carries a license that neither \`other_licenses\` nor \`reviewed_licenses\` names; check what it names before adding it."
           # A run by hand with "pinned" opens an issue of its own, which no scheduled run
           # matches, and never touches the real one.
           if [[ -n "${PINNED}" ]]; then

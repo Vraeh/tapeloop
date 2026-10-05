@@ -52,6 +52,10 @@ public:
 	std::set<int64_t> dropped;
 	// After this packet, a frame of a pts no packet has comes out too.
 	std::optional<int64_t> strayAfter;
+	// The frame of this packet comes out twice.
+	std::optional<int64_t> twice;
+	// The memory each frame reports holding.
+	size_t frameBytes = 0;
 	int closes = 0;
 	std::vector<Session> sessions;
 	std::map<uint64_t, Made> made;
@@ -88,6 +92,11 @@ public:
 			made[id] = {pts, sessions.size() - 1};
 			inside_.push_back(id);
 		}
+		if (twice == pts) {
+			const uint64_t id = nextId_++;
+			made[id] = {pts, sessions.size() - 1};
+			inside_.push_back(id);
+		}
 		if (strayAfter == pts) {
 			strayAfter.reset();
 			const uint64_t id = nextId_++;
@@ -108,7 +117,7 @@ public:
 		const uint64_t id = inside_.front();
 		inside_.pop_front();
 		outstanding.insert(id);
-		frame = {id, made[id].pts, Nanoseconds{0}};
+		frame = {id, made[id].pts, Nanoseconds{0}, frameBytes};
 		return DecodeStatus::Ok;
 	}
 

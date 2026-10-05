@@ -20,6 +20,7 @@
 #include <cstddef>
 #include <cstdint>
 #include <cstring>
+#include <functional>
 #include <optional>
 #include <vector>
 
@@ -202,6 +203,17 @@ TEST_CASE_METHOD(ObsFixture, "the picture renderer takes no picture it cannot dr
 		Picture empty;
 		CHECK_FALSE(renderer.upload(empty));
 
+		// A plane missing, or a row longer than its stride.
+		Picture noU = pattern.picture;
+		noU.planes[1] = nullptr;
+		CHECK_FALSE(renderer.upload(noU));
+		Picture shortLuma = pattern.picture;
+		shortLuma.strides[0] = kWidth - 1;
+		CHECK_FALSE(renderer.upload(shortLuma));
+		Picture shortV = pattern.picture;
+		shortV.strides[2] = kWidth / 2 - 1;
+		CHECK_FALSE(renderer.upload(shortV));
+
 		// A picture of the other layout after one that could not be taken.
 		PatternPicture next = makePattern(2, PixelLayout::Nv12, false);
 		REQUIRE(renderer.upload(next.picture));
@@ -251,7 +263,7 @@ TEST_CASE_METHOD(ObsFixture, "the picture renderer draws NV12 planes held elsewh
 		// The uploaded picture keeps its own colors: full range leaves grey at 126.
 		const std::vector<uint8_t> uploaded = drawAndRead(renderer);
 		CHECK(numberIn(uploaded) == 0x0042u);
-		CHECK(red(uploaded, kWidth / 2, 10) <= 129);
+		CHECK(red(uploaded, kWidth / 2, 10) <= 127);
 
 		CHECK_FALSE(renderer.drawNv12(nullptr, chroma, limited.picture, kWidth, kHeight));
 		gs_texture_destroy(chroma);
@@ -368,11 +380,20 @@ double encodeSrgb(double linear)
 	return linear <= 0.0031308 ? linear * 12.92 : 1.055 * std::pow(linear, 1.0 / 2.4) - 0.055;
 }
 
-// The 8-bit sRGB color the renderer draws at (x, y) of a picture drawn at its own size,
-// into an 8-bit target or, on a 16-bit SDR canvas, a half-float one in linear light.
-std::array<double, 3> drawnAt(PictureRenderer &renderer, uint32_t width, uint32_t height, uint32_t x, uint32_t y,
-			      bool halfFloat)
+enum class Target {
+	// An 8-bit canvas, as OBS's default one.
+	Rgba,
+	// The same with linear light asked for, as OBS does for sources that handle sRGB.
+	RgbaLinear,
+	// A 16-bit SDR canvas, as OBS's with P010 or I010 output, in linear light.
+	Rgba16f,
+};
+
+// The 8-bit sRGB color that `draw` puts at (x, y) when it draws at width x height.
+std::array<double, 3> drawnWith(const std::function<bool(uint32_t, uint32_t)> &draw, uint32_t width, uint32_t height,
+				uint32_t x, uint32_t y, Target mode)
 {
+	const bool halfFloat = mode == Target::Rgba16f;
 	const gs_color_format format = halfFloat ? GS_RGBA16F : GS_RGBA;
 	gs_texrender_t *target = gs_texrender_create(format, GS_ZS_NONE);
 	REQUIRE(target);
@@ -382,8 +403,11 @@ std::array<double, 3> drawnAt(PictureRenderer &renderer, uint32_t width, uint32_
 	gs_clear(GS_CLEAR_COLOR, &clear, 0.0f, 0);
 	gs_ortho(0.0f, static_cast<float>(width), 0.0f, static_cast<float>(height), -100.0f, 100.0f);
 	drawState();
-	REQUIRE(renderer.draw(width, height));
+	const bool linear = gs_set_linear_srgb(mode == Target::RgbaLinear);
+	const bool drawn = draw(width, height);
+	gs_set_linear_srgb(linear);
 	gs_texrender_end(target);
+	REQUIRE(drawn);
 
 	std::array<double, 3> rgb{};
 	gs_stagesurf_t *stage = gs_stagesurface_create(width, height, format);
@@ -407,6 +431,12 @@ std::array<double, 3> drawnAt(PictureRenderer &renderer, uint32_t width, uint32_
 	return rgb;
 }
 
+std::array<double, 3> drawnAt(PictureRenderer &renderer, uint32_t width, uint32_t height, uint32_t x, uint32_t y,
+			      Target mode)
+{
+	return drawnWith([&](uint32_t w, uint32_t h) { return renderer.draw(w, h); }, width, height, x, y, mode);
+}
+
 void checkClose(const std::array<double, 3> &drawn, const std::array<double, 3> &expected)
 {
 	for (size_t channel = 0; channel < 3; ++channel) {
@@ -423,12 +453,12 @@ TEST_CASE_METHOD(ObsFixture, "the picture renderer turns YUV into the RGB of eac
 	obs_enter_graphics();
 	{
 		PictureRenderer renderer;
-		for (const bool halfFloat : {false, true}) {
+		for (const Target mode : {Target::Rgba, Target::RgbaLinear, Target::Rgba16f}) {
 			for (const PixelLayout layout : {PixelLayout::I420, PixelLayout::Nv12}) {
 				for (const ColorMatrix matrix :
 				     {ColorMatrix::Bt601, ColorMatrix::Bt709, ColorMatrix::Unspecified}) {
 					for (const bool fullRange : {false, true}) {
-						CAPTURE(halfFloat, layout == PixelLayout::Nv12,
+						CAPTURE(static_cast<int>(mode), layout == PixelLayout::Nv12,
 							static_cast<int>(matrix), fullRange);
 						// Odd sizes, and rows padded past their width.
 						FlatPicture flat =
@@ -438,11 +468,22 @@ TEST_CASE_METHOD(ObsFixture, "the picture renderer turns YUV into the RGB of eac
 						const ColorMatrix meant = matrix == ColorMatrix::Unspecified
 										  ? ColorMatrix::Bt709
 										  : matrix;
-						checkClose(drawnAt(renderer, 63, 35, 31, 17, halfFloat),
+						checkClose(drawnAt(renderer, 63, 35, 31, 17, mode),
 							   expectedRgb(color, meant, fullRange));
 					}
 				}
 			}
+		}
+
+		// Another size and layout, and then another size of the same layout, each in
+		// textures of its own size.
+		const Yuv other{90.0, 160.0, 110.0};
+		for (const PixelLayout layout : {PixelLayout::I420, PixelLayout::I420, PixelLayout::Nv12}) {
+			const uint32_t width = layout == PixelLayout::Nv12 ? 32 : 48;
+			FlatPicture flat = makeFlat(width, 18, layout, ColorMatrix::Bt709, false, other, other, 0);
+			REQUIRE(renderer.upload(flat.picture));
+			checkClose(drawnAt(renderer, width, 18, width - 1, 17, Target::Rgba),
+				   expectedRgb(other, ColorMatrix::Bt709, false));
 		}
 	}
 	obs_leave_graphics();
@@ -451,21 +492,36 @@ TEST_CASE_METHOD(ObsFixture, "the picture renderer turns YUV into the RGB of eac
 TEST_CASE_METHOD(ObsFixture, "the picture renderer sites chroma left of its luma pairs as OBS does", "[obs][picture]")
 {
 	const Yuv grey{120.0, 128.0, 128.0};
-	const Yuv red{120.0, 128.0, 200.0};
+	const Yuv colored{120.0, 60.0, 200.0};
+	// Chroma column 16 is the first colored one; it is sited at luma column 32, which
+	// shows it alone, and luma column 31 sits halfway between it and the one before.
+	const auto check = [&](const std::function<bool(uint32_t, uint32_t)> &draw) {
+		checkClose(drawnWith(draw, 64, 16, 32, 8, Target::Rgba),
+			   expectedRgb(colored, ColorMatrix::Bt709, false));
+		checkClose(drawnWith(draw, 64, 16, 31, 8, Target::Rgba),
+			   expectedRgb({120.0, 94.0, 164.0}, ColorMatrix::Bt709, false));
+	};
 	obs_enter_graphics();
 	{
 		PictureRenderer renderer;
 		for (const PixelLayout layout : {PixelLayout::I420, PixelLayout::Nv12}) {
 			CAPTURE(layout == PixelLayout::Nv12);
-			// Chroma column 16 is the first red one; it is sited at luma column 32, which
-			// shows it alone, and luma column 31 sits halfway between it and the one before.
-			FlatPicture flat = makeFlat(64, 16, layout, ColorMatrix::Bt709, false, grey, red, 16);
+			FlatPicture flat = makeFlat(64, 16, layout, ColorMatrix::Bt709, false, grey, colored, 16);
 			REQUIRE(renderer.upload(flat.picture));
-			checkClose(drawnAt(renderer, 64, 16, 32, 8, false),
-				   expectedRgb(red, ColorMatrix::Bt709, false));
-			checkClose(drawnAt(renderer, 64, 16, 31, 8, false),
-				   expectedRgb({120.0, 128.0, 164.0}, ColorMatrix::Bt709, false));
+			check([&](uint32_t w, uint32_t h) { return renderer.draw(w, h); });
 		}
+
+		// The same through planes held elsewhere, as the shared textures are.
+		FlatPicture flat = makeFlat(64, 16, PixelLayout::Nv12, ColorMatrix::Bt709, false, grey, colored, 16);
+		gs_texture_t *luma = gs_texture_create(64, 16, GS_R8, 1, nullptr, GS_DYNAMIC);
+		gs_texture_t *chroma = gs_texture_create(32, 8, GS_R8G8, 1, nullptr, GS_DYNAMIC);
+		REQUIRE(luma);
+		REQUIRE(chroma);
+		gs_texture_set_image(luma, flat.picture.planes[0], flat.picture.strides[0], false);
+		gs_texture_set_image(chroma, flat.picture.planes[1], flat.picture.strides[1], false);
+		check([&](uint32_t w, uint32_t h) { return renderer.drawNv12(luma, chroma, flat.picture, w, h); });
+		gs_texture_destroy(chroma);
+		gs_texture_destroy(luma);
 	}
 	obs_leave_graphics();
 }

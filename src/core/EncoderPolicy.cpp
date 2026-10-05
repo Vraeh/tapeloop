@@ -126,6 +126,23 @@ std::string lowercase(std::string_view text)
 
 } // namespace
 
+EncoderPath encoderPathOf(const EncoderInfo &encoder, Vendor renderVendor, bool nv12Textures) noexcept
+{
+	if (encoder.vendor == Vendor::Software) {
+		return EncoderPath::Software;
+	}
+	if (encoder.vendor == Vendor::Apple && renderVendor == Vendor::Apple) {
+		return EncoderPath::Texture;
+	}
+	// An Unknown render vendor tells nothing about where the encoder runs.
+	const bool otherAdapter = renderVendor != Vendor::Unknown && renderVendor != Vendor::Software &&
+				  encoder.vendor != renderVendor;
+	if (!encoder.passTexture || otherAdapter || !nv12Textures) {
+		return EncoderPath::Readback;
+	}
+	return EncoderPath::Texture;
+}
+
 Vendor encoderVendor(std::string_view id)
 {
 	if (startsWith(id, "obs_nvenc_") || startsWith(id, "jim_") || id == "ffmpeg_nvenc" ||

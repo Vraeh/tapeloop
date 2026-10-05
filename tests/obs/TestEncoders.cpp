@@ -70,6 +70,15 @@ bool encodeKeyframe(void *, encoder_frame *frame, encoder_packet *packet, bool *
 	return true;
 }
 
+bool encodeTextureKeyframe(void *data, encoder_texture *, int64_t pts, uint64_t lockKey, uint64_t *nextKey,
+			   encoder_packet *packet, bool *received) noexcept
+{
+	*nextKey = lockKey;
+	encoder_frame frame = {};
+	frame.pts = pts;
+	return encodeKeyframe(data, &frame, packet, received);
+}
+
 obs_encoder_info videoEncoder(const char *id, const char *codec)
 {
 	obs_encoder_info info = {};
@@ -106,6 +115,12 @@ void registerTestEncoders()
 	hevc.create = createSomething;
 	hevc.encode = encodeKeyframe;
 	obs_register_encoder(&hevc);
+
+	obs_encoder_info texture = hevc;
+	texture.id = kHevcTextureEncoderId;
+	texture.caps = OBS_ENCODER_CAP_PASS_TEXTURE;
+	texture.encode_texture2 = encodeTextureKeyframe;
+	obs_register_encoder(&texture);
 }
 
 int av1EncoderInitializations()

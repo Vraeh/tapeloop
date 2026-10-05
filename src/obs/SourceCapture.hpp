@@ -43,6 +43,8 @@ enum class StartResult {
 struct CaptureStats {
 	CaptureState state = CaptureState::Stopped;
 	std::string encoderId;
+	// Of the encoder running; Texture while none is.
+	EncoderPath encoderPath = EncoderPath::Texture;
 	FrameSize outputSize;
 	SourceBufferStats buffer;
 	// From the oldest frame held to the newest.
@@ -106,6 +108,7 @@ private:
 	obs_encoder_t *encoder_ = nullptr;
 	obs_output_t *output_ = nullptr;
 	std::string encoderId_;
+	EncoderPath encoderPath_ = EncoderPath::Texture;
 };
 
 } // namespace tapeloop::obs
