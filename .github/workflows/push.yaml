@@ -110,6 +110,12 @@ jobs:
             done
           done
 
+      # The exact FFmpeg source the packages were built from goes with the release, as
+      # the LGPL asks of a static link; the build script checks its SHA-256.
+      - name: Attach the FFmpeg source
+        if: fromJSON(steps.check.outputs.validTag)
+        run: cmake -DDOWNLOAD_SOURCE="${GITHUB_WORKSPACE}" -P cmake/ffmpeg/BuildFFmpeg.cmake
+
       - name: Generate Checksums 🪪
         if: fromJSON(steps.check.outputs.validTag)
         run: |
@@ -133,7 +139,7 @@ jobs:
             echo
             echo "### Third-party code"
             echo
-            echo "The Windows and Linux packages include FFmpeg ${version}, linked statically, under the LGPL 2.1 or later. Source: ${url}"
+            echo "The Windows and Linux packages include FFmpeg ${version}, linked statically, under the LGPL 2.1 or later. Its source, the tarball they were built from (${url}), is attached as ffmpeg-${version}.tar.xz; with it and Tapeloop's own source, Tapeloop can be built again against a modified FFmpeg."
           } >> "${GITHUB_WORKSPACE}/CHECKSUMS.txt"
 
       - name: Create Release 🛫

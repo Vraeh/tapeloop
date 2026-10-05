@@ -75,6 +75,19 @@ if(PRINT_SOURCE)
   return()
 endif()
 
+# -DDOWNLOAD_SOURCE=<dir> puts the source tarball, checked against its SHA-256, into
+# that directory, for the release to carry, and builds nothing.
+if(DOWNLOAD_SOURCE)
+  set(archive "${DOWNLOAD_SOURCE}/ffmpeg-${version}.tar.xz")
+  file(DOWNLOAD "${url}" "${archive}" EXPECTED_HASH SHA256=${sha256} TLS_VERIFY ON STATUS status)
+  list(GET status 0 code)
+  if(NOT code EQUAL 0)
+    message(FATAL_ERROR "Downloading ${url} failed: ${status}")
+  endif()
+  message("${archive}")
+  return()
+endif()
+
 foreach(variable IN ITEMS PREFIX WORK_DIR)
   if(NOT ${variable})
     message(FATAL_ERROR "BuildFFmpeg.cmake needs -D${variable}=<path>")
