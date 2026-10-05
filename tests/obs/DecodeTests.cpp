@@ -239,7 +239,7 @@ TEST_CASE_METHOD(ObsFixture, "the FFmpeg decoder shows every frame of a capture,
 	DecodePlanner planner(decoder);
 	planner.load(clip);
 
-	// The baseline of D-056 on the CPU; the real numbers come from the PC.
+	// A baseline of what decoding costs on the CPU; the real numbers come from the PC.
 	const auto started = std::chrono::steady_clock::now();
 	for (const Expected &frame : expected) {
 		checkFrame(planner, decoder, frame);
