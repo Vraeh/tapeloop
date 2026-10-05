@@ -6,6 +6,7 @@
 
 #include "decode/Picture.hpp"
 #include "obs/PictureRenderer.hpp"
+#include "obs/RenderAdapter.hpp"
 
 #include <catch2/catch_test_macros.hpp>
 #include <obs.h>
@@ -240,5 +241,12 @@ TEST_CASE_METHOD(ObsFixture, "the picture renderer draws NV12 planes held elsewh
 		gs_texture_destroy(chroma);
 		gs_texture_destroy(luma);
 	}
+	obs_leave_graphics();
+}
+
+TEST_CASE_METHOD(ObsFixture, "only Direct3D 11 names an adapter for the decoder", "[obs][picture]")
+{
+	obs_enter_graphics();
+	CHECK_FALSE(tapeloop::obs::renderAdapterLuid());
 	obs_leave_graphics();
 }

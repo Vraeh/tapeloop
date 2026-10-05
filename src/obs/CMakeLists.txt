@@ -17,6 +17,8 @@ target_sources(
     ObsEncoders.hpp
     PictureRenderer.cpp
     PictureRenderer.hpp
+    RenderAdapter.cpp
+    RenderAdapter.hpp
     SettingsData.cpp
     SettingsData.hpp
     SourceCapture.cpp
