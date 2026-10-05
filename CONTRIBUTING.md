@@ -56,7 +56,8 @@ takes about a minute on Linux and four on Windows, and needs nasm; on Windows it
 needs MSYS2 with make, nasm and diffutils (`pacman -S make nasm diffutils`) and uses the
 Visual Studio, SDK and toolset the plugin builds with. FFmpeg's configure cannot build
 under a path with spaces, so the checkout must not be in one. A Debug build on Windows
-links FFmpeg's release runtime (`-MD`) with the debug one and stops on LNK4098; build
+would link FFmpeg's release runtime (`-MD`) with the debug one, which MSVC warns about
+(LNK4098) and warnings as errors would stop; it has not been tried, so build
 RelWithDebInfo or Release. The tarball is pinned by SHA-256,
 and its signature was checked against FFmpeg's release key when the version was pinned:
 
