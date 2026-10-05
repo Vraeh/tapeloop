@@ -6,7 +6,7 @@ add_library(tapeloop-decode STATIC)
 
 target_sources(
   tapeloop-decode
-  PRIVATE FFmpegDecoder.cpp FFmpegDecoder.hpp FFmpegVersion.cpp FFmpegVersion.hpp Picture.hpp
+  PRIVATE FFmpegDecoder.cpp FFmpegDecoder.hpp FFmpegHeaders.hpp FFmpegVersion.cpp FFmpegVersion.hpp Picture.hpp
 )
 
 target_include_directories(tapeloop-decode PUBLIC "${CMAKE_CURRENT_SOURCE_DIR}/..")
