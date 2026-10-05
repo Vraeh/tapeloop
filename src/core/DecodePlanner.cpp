@@ -76,9 +76,9 @@ DecodeResult DecodePlanner::frameAt(Nanoseconds t)
 	lastGop_ = at.gop;
 
 	KeptGop *kept = find(at.gop);
-	// A frame a pass went past without the decoder giving it needs no second pass, nor
-	// does any frame of a GOP the decoder has given all it will give; only one given back
-	// to stay within maxBytes does.
+	// A frame no pass has reached in a GOP the decoder has not given all it will give
+	// needs decoding, and so does one given back to stay within maxBytes; any other frame
+	// not held is one the decoder does not give.
 	if (!kept || (!kept->frames[at.packet] &&
 		      ((!kept->complete && at.packet >= kept->reached) || kept->dropped[at.packet]))) {
 		const DecodeStatus status = decode(at.gop, at.packet);

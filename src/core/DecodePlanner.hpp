@@ -96,8 +96,9 @@ private:
 		// brings back; by packet index, as frames.
 		std::vector<char> dropped;
 		size_t received = 0;
-		// The furthest any pass over this GOP has gone, as a packet index: a frame before
-		// it that is neither held nor given back is one the decoder does not give.
+		// The packet after the last frame any pass over this GOP brought out: a frame
+		// before it that is neither held nor given back is one the decoder does not give,
+		// since a decoder skips the same frames on every pass.
 		size_t reached = 0;
 		// Every frame the decoder gives for this GOP came out: all of them, or what was
 		// left once it was flushed at the end of the GOP.
