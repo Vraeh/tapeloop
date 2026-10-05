@@ -39,7 +39,8 @@ set(
 if(CMAKE_HOST_WIN32)
   # -MD: the C runtime OBS and the plugin use. The d3d11va2 hwaccels, which decode into
   # AV_PIX_FMT_D3D11, live in the objects FFmpeg's Makefile builds only for the older
-  # d3d11va ones, so those are enabled too.
+  # d3d11va ones, and the H.264 and HEVC decoders offer AV_PIX_FMT_D3D11 at all only when
+  # those are enabled (h264_slice.c, hevcdec.c), so they are enabled too.
   list(
     APPEND
     options
