@@ -438,3 +438,27 @@ TEST_CASE("dock screenshots", "[.screenshots]")
 	dialog.adjustSize();
 	CHECK(dialog.grab().save(out.filePath("dock-source-settings.png")));
 }
+
+TEST_CASE("every kind of edit in the dock writes the settings once")
+{
+	FakeBackend backend = backendWithSources();
+	TapeloopDock dock(backend, localeText());
+	auto *table = child<QTableWidget>(dock, "sources");
+
+	const auto writesOnce = [&](const auto &edit) {
+		const int before = backend.settingsChanges;
+		edit();
+		return backend.settingsChanges == before + 1;
+	};
+	CHECK(writesOnce([&] { table->item(0, 0)->setCheckState(Qt::Checked); }));
+	CHECK(writesOnce([&] { child<QSpinBox>(dock, "length")->setValue(45); }));
+	CHECK(writesOnce([&] { child<QComboBox>(dock, "resolution")->setCurrentIndex(4); }));
+	CHECK(writesOnce([&] { child<QCheckBox>(dock, "startWithOutputs")->setChecked(false); }));
+	CHECK(writesOnce([&] {
+		table->setCurrentCell(0, 0);
+		child<QPushButton>(dock, "sourceSettings")->click();
+		auto *dialog = sourceDialog(dock);
+		child<QCheckBox>(*dialog, "ownLength")->setChecked(true);
+		dialog->accept();
+	}));
+}
