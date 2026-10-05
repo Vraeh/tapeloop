@@ -70,6 +70,29 @@ std::optional<size_t> nextShown(const ReplayPlayerState &player, size_t from, co
 	return std::nullopt;
 }
 
+// The first shown entry with a clip at or after `from`, in a copy of the list.
+std::optional<size_t> firstPlayable(const std::vector<SequenceEntry> &entries, size_t from,
+				    const std::vector<std::string> &sources)
+{
+	for (size_t i = from; i < entries.size(); ++i) {
+		if (entries[i].shown &&
+		    std::find(sources.begin(), sources.end(), entries[i].sourceKey) != sources.end()) {
+			return i;
+		}
+	}
+	return std::nullopt;
+}
+
+std::optional<size_t> placeOf(const std::vector<SequenceEntry> &entries, const std::string &key)
+{
+	for (size_t i = 0; i < entries.size(); ++i) {
+		if (entries[i].sourceKey == key) {
+			return i;
+		}
+	}
+	return std::nullopt;
+}
+
 // What follows the sources: the outro if the replay has one, else live.
 AirPhase afterSources(const AirConfig &airing)
 {
@@ -83,20 +106,45 @@ extern "C" int LLVMFuzzerTestOneInput(const uint8_t *data, size_t size)
 	FuzzInput input(data, size);
 	AirConfig config{input.flag(), input.flag()};
 	ReplayPlayerState player(config);
-	// The model's view of the replay on air: its sources and its configuration.
+	// The model's view of the replay on air: its sources, its configuration and its speed.
 	std::vector<std::string> sources;
 	AirConfig airing;
+	double speed = 1.0;
 
 	while (!input.empty()) {
 		const uint64_t token = player.token();
 		const AirPhase phase = player.phase();
 		const std::string source(player.source());
 		const std::optional<size_t> index = player.sequence().indexOf(source);
+		const std::vector<SequenceEntry> before(player.sequence().entries().begin(),
+							player.sequence().entries().end());
+		// Where the rules say the replay goes when the source on air leaves the list or is
+		// hidden: from `from` in the list as it is after the edit. Empty to stay as it is.
+		std::optional<size_t> expectedFrom;
 
 		switch (choose(input, 8)) {
-		case 0:
+		case 0: {
 			player.setEntries(readEntries(input));
+			const std::vector<SequenceEntry> after(player.sequence().entries().begin(),
+							       player.sequence().entries().end());
+			if (phase == AirPhase::Source) {
+				if (const std::optional<size_t> now = placeOf(after, source)) {
+					if (!after[*now].shown) {
+						expectedFrom = *now + 1;
+					}
+				} else {
+					expectedFrom = after.size();
+					for (size_t i = *index + 1; i < before.size(); ++i) {
+						if (const std::optional<size_t> kept =
+							    placeOf(after, before[i].sourceKey)) {
+							expectedFrom = *kept;
+							break;
+						}
+					}
+				}
+			}
 			break;
+		}
 		case 1: {
 			const size_t from = choose(input, kKeys + 1);
 			const size_t to = choose(input, kKeys + 1);
@@ -108,8 +156,12 @@ extern "C" int LLVMFuzzerTestOneInput(const uint8_t *data, size_t size)
 		}
 		case 2: {
 			const std::string key = keyOf(choose(input, kKeys));
-			const bool known = player.sequence().indexOf(key).has_value();
-			require(player.setShown(key, input.flag()) == known);
+			const bool known = placeOf(before, key).has_value();
+			const bool shown = input.flag();
+			require(player.setShown(key, shown) == known);
+			if (phase == AirPhase::Source && key == source && !shown) {
+				expectedFrom = *index + 1;
+			}
 			break;
 		}
 		case 3: {
@@ -120,6 +172,7 @@ extern "C" int LLVMFuzzerTestOneInput(const uint8_t *data, size_t size)
 			if (started) {
 				sources = offered;
 				airing = config;
+				speed = 1.0;
 				require(player.speed() == 1.0);
 				require(player.phase() == (airing.intro ? AirPhase::Intro : AirPhase::Source));
 			} else {
@@ -129,8 +182,8 @@ extern "C" int LLVMFuzzerTestOneInput(const uint8_t *data, size_t size)
 		}
 		case 4: {
 			if (input.flag()) {
-				// A late report for a part already gone changes nothing.
-				player.ended(token == 0 ? 1 : token - 1);
+				// A report for a part already gone, or for one yet to come, changes nothing.
+				player.ended(input.flag() ? token + 1 : token - 1);
 				require(player.token() == token);
 				break;
 			}
@@ -162,10 +215,13 @@ extern "C" int LLVMFuzzerTestOneInput(const uint8_t *data, size_t size)
 			}
 			break;
 		case 6: {
-			const double speed = static_cast<double>(static_cast<int8_t>(input.byte())) / 16.0;
-			const double before = player.speed();
-			require(player.setSpeed(speed) == (speed > 0.0));
-			require(player.speed() == (speed > 0.0 ? speed : before));
+			const double wanted = static_cast<double>(static_cast<int8_t>(input.byte())) / 4.0;
+			const bool valid = wanted >= ReplayPlayerState::kMinSpeed &&
+					   wanted <= ReplayPlayerState::kMaxSpeed;
+			require(player.setSpeed(wanted) == valid);
+			if (valid) {
+				speed = wanted;
+			}
 			break;
 		}
 		case 7:
@@ -175,12 +231,22 @@ extern "C" int LLVMFuzzerTestOneInput(const uint8_t *data, size_t size)
 			break;
 		}
 
-		// A part on air is always one the caller can play, and nothing changes without a
-		// new token.
-		require(player.token() >= token);
-		if (player.phase() != phase || player.source() != source) {
-			require(player.token() != token);
+		if (expectedFrom) {
+			const std::vector<SequenceEntry> after(player.sequence().entries().begin(),
+							       player.sequence().entries().end());
+			if (const std::optional<size_t> next = firstPlayable(after, *expectedFrom, sources)) {
+				require(player.phase() == AirPhase::Source);
+				require(player.source() == after[*next].sourceKey);
+			} else {
+				require(player.phase() == afterSources(airing));
+			}
 		}
+
+		// A part on air is always one the caller can play, and the token changes exactly
+		// when the part on air does.
+		require(player.token() >= token);
+		require((player.phase() != phase || player.source() != source) == (player.token() != token));
+		require(player.speed() == speed);
 		if (player.phase() == AirPhase::Source) {
 			const std::optional<size_t> playing = player.sequence().indexOf(player.source());
 			require(playing.has_value());
