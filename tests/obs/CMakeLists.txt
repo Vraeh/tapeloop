@@ -104,6 +104,10 @@ target_link_libraries(
   tapeloop-obs-tests
   PRIVATE tapeloop-core tapeloop-obs tapeloop-decode OBS::libobs FFmpeg::avcodec Catch2::Catch2WithMain
 )
+# On Windows obs-deps, which libobs brings in for SIMDe, also holds the headers of OBS's
+# own FFmpeg, and they must not shadow the headers of ours.
+get_target_property(_ffmpeg_include_dirs FFmpeg::avcodec INTERFACE_INCLUDE_DIRECTORIES)
+target_include_directories(tapeloop-obs-tests SYSTEM BEFORE PRIVATE ${_ffmpeg_include_dirs})
 # libobs loads the system's FFmpeg; the static one stays inside the test binary. Only
 # FFmpeg's archives: Clang links the sanitizer runtimes as archives that must stay
 # exported. A Windows executable exports nothing unless asked to.
