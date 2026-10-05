@@ -72,7 +72,8 @@ public:
 	bool tagReplay(uint64_t id, const std::string &tag) override
 	{
 		for (auto &replay : captured) {
-			if (replay.id == id && tag.find_first_not_of(' ') != std::string::npos) {
+			if (replay.id == id && tag.find_first_not_of(' ') != std::string::npos &&
+			    std::find(replay.tags.begin(), replay.tags.end(), tag) == replay.tags.end()) {
 				replay.tags.push_back(tag);
 				if (std::find(tags.begin(), tags.end(), tag) == tags.end()) {
 					tags.push_back(tag);

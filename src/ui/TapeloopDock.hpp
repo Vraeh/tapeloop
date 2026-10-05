@@ -78,6 +78,8 @@ private:
 	std::vector<uint64_t> shownReplays_;
 	std::vector<QString> shownReplayTexts_;
 	std::vector<std::string> shownTags_;
+	// The newest replay seen current, to tell a new capture from a pick.
+	uint64_t newestReplay_ = 0;
 };
 
 } // namespace tapeloop::ui

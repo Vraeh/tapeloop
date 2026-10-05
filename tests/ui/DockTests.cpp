@@ -258,8 +258,15 @@ TEST_CASE("the dock captures replays and picks the one that goes on air")
 	CHECK(list->item(0)->text().contains("2 sources"));
 	CHECK(list->currentRow() == 0);
 
-	// Picking an older one makes it the one on air next, and selects it.
-	Q_EMIT list->itemClicked(list->item(1));
+	// Picking an older one, from the keyboard as with the mouse, makes it the one on air
+	// next, and selects it.
+	QKeyEvent down(QEvent::KeyPress, Qt::Key_Down, Qt::NoModifier);
+	QApplication::sendEvent(list, &down);
+	CHECK(backend.picked == 1u);
+	QKeyEvent up(QEvent::KeyPress, Qt::Key_Up, Qt::NoModifier);
+	QApplication::sendEvent(list, &up);
+	CHECK(backend.picked == 2u);
+	list->setCurrentRow(1);
 	CHECK(backend.picked == 1u);
 	dock.refresh();
 	CHECK(list->currentRow() == 1);
@@ -282,6 +289,38 @@ TEST_CASE("the dock captures replays and picks the one that goes on air")
 	name->setText(" ");
 	Q_EMIT name->returnPressed();
 	CHECK(name->text() == " ");
+	// Enter tags as the button does.
+	name->setText("save");
+	Q_EMIT name->returnPressed();
+	CHECK(name->text().isEmpty());
+	CHECK(list->item(1)->text().endsWith("#goal #save"));
+
+	// A replay the filter hides takes no tag.
+	list->setCurrentRow(0);
+	REQUIRE(backend.picked == 2u);
+	filter->setCurrentIndex(1);
+	REQUIRE(list->count() == 1);
+	CHECK(list->currentRow() == -1);
+	CHECK_FALSE(child<QPushButton>(dock, "addTag")->isEnabled());
+	CHECK_FALSE(name->isEnabled());
+	// A capture shows every replay again, since the new one carries no tag yet.
+	capture->click();
+	CHECK(filter->currentIndex() == 0);
+	REQUIRE(list->count() == 3);
+	CHECK(list->currentRow() == 0);
+	CHECK(child<QPushButton>(dock, "addTag")->isEnabled());
+	// So does one made away from the dock, by the hotkey.
+	filter->setCurrentIndex(1);
+	backend.captureReplay();
+	dock.refresh();
+	CHECK(filter->currentIndex() == 0);
+	CHECK(list->count() == 4);
+	// Picking an older replay keeps the filter.
+	filter->setCurrentIndex(1);
+	REQUIRE(list->count() == 1);
+	list->setCurrentRow(0);
+	CHECK(backend.picked == 1u);
+	CHECK(filter->currentIndex() == 1);
 
 	// Buffers and settings are left alone.
 	CHECK(backend.settingsChanges == 0);
@@ -453,16 +492,18 @@ TEST_CASE("every control of the dock can be reached with the keyboard")
 	size_t controls = 0;
 	for (QWidget *widget : dock.findChildren<QWidget *>()) {
 		const bool control = qobject_cast<QAbstractButton *>(widget) || qobject_cast<QSpinBox *>(widget) ||
-				     qobject_cast<QComboBox *>(widget) || qobject_cast<QTableWidget *>(widget);
-		// Qt's own parts, such as the table's corner button, have no name.
-		if (!control || widget->objectName().isEmpty()) {
+				     qobject_cast<QComboBox *>(widget) || qobject_cast<QAbstractItemView *>(widget) ||
+				     qobject_cast<QLineEdit *>(widget);
+		// Qt's own parts, such as the table's corner button or a spin box's line edit,
+		// have no name or one of Qt's.
+		if (!control || widget->objectName().isEmpty() || widget->objectName().startsWith("qt_")) {
 			continue;
 		}
 		++controls;
 		CAPTURE(widget->objectName().toStdString());
 		CHECK((widget->focusPolicy() & Qt::TabFocus) != 0);
 	}
-	CHECK(controls == 14);
+	CHECK(controls == 16);
 }
 
 TEST_CASE("every string the dock asks for is in the locale file")

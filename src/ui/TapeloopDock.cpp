@@ -233,9 +233,12 @@ TapeloopDock::TapeloopDock(DockBackend &backend, TextLookup text, QWidget *paren
 	};
 	connect(addTag_, &QPushButton::clicked, this, addTag);
 	connect(tagName_, &QLineEdit::returnPressed, this, addTag);
-	connect(replays_, &QListWidget::itemClicked, this, [this](QListWidgetItem *item) {
-		guarded([&] { backend_.pickReplay(item->data(Qt::UserRole).toULongLong()); });
-		refresh();
+	// Moving through the list with the keyboard picks as a click does.
+	connect(replays_, &QListWidget::currentItemChanged, this, [this](QListWidgetItem *item) {
+		if (item) {
+			guarded([&] { backend_.pickReplay(item->data(Qt::UserRole).toULongLong()); });
+			refresh();
+		}
 	});
 	connect(startStop_, &QPushButton::clicked, this, [this] {
 		guarded([this] { backend_.toggleRunning(); });
@@ -429,6 +432,14 @@ void TapeloopDock::updateReplays()
 		tagFilter_->setCurrentIndex(std::max(tagFilter_->findData(chosen), 0));
 		shownTags_ = tags;
 	}
+	// A replay just captured is the one to show next and carries no tag yet, so a filter
+	// would hide it.
+	const uint64_t current = backend_.currentReplay();
+	if (current > newestReplay_) {
+		newestReplay_ = current;
+		const QSignalBlocker block(tagFilter_);
+		tagFilter_->setCurrentIndex(0);
+	}
 
 	const std::vector<DockReplay> replays = backend_.replays(tagFilter_->currentData().toString().toStdString());
 	std::vector<uint64_t> ids;
@@ -456,13 +467,14 @@ void TapeloopDock::updateReplays()
 		shownReplays_ = std::move(ids);
 		shownReplayTexts_ = std::move(texts);
 	}
-	// The replay that goes on air next is the one selected, and the one a tag goes on.
-	const uint64_t current = backend_.currentReplay();
+	// The replay that goes on air next is the one selected, and the one a tag goes on,
+	// which has to be in sight.
 	const auto shown = std::find(shownReplays_.begin(), shownReplays_.end(), current);
+	const bool listed = shown != shownReplays_.end();
 	const QSignalBlocker block(replays_);
-	replays_->setCurrentRow(shown != shownReplays_.end() ? static_cast<int>(shown - shownReplays_.begin()) : -1);
-	addTag_->setEnabled(current != 0);
-	tagName_->setEnabled(current != 0);
+	replays_->setCurrentRow(listed ? static_cast<int>(shown - shownReplays_.begin()) : -1);
+	addTag_->setEnabled(listed);
+	tagName_->setEnabled(listed);
 }
 
 void TapeloopDock::updateEncoders(const std::string &chosen)
