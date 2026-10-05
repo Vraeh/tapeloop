@@ -55,6 +55,10 @@ private:
 	QCheckBox *startWithOutputs_;
 	QCheckBox *activateOffAir_;
 	QCheckBox *forceH264_;
+	QCheckBox *advanced_;
+	QWidget *advancedSettings_;
+	QComboBox *replayEncoder_;
+	QCheckBox *otherAdapters_;
 	QLabel *note_;
 	QPushButton *startStop_;
 	QLabel *followsOutputs_;

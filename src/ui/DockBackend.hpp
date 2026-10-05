@@ -28,6 +28,13 @@ struct DockSource {
 	bool activationLeftOut = false;
 };
 
+// An encoder a user may choose for replays.
+struct EncoderChoice {
+	std::string id;
+	// As OBS names it.
+	std::string name;
+};
+
 // What the dock reads and changes. The plugin implements it on top of the capture
 // manager; tests replace it, so the widgets run without OBS.
 class DockBackend {
@@ -37,6 +44,7 @@ public:
 	virtual std::vector<DockSource> sources() const = 0;
 	virtual BufferSettings settings() const = 0;
 	virtual void setSettings(const BufferSettings &settings) = 0;
+	virtual std::vector<EncoderChoice> encoderChoices() const = 0;
 
 	virtual bool running() const = 0;
 	virtual bool manualControlEnabled() const = 0;
