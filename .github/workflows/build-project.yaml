@@ -228,17 +228,11 @@ jobs:
       # The plugin links FFmpeg statically while OBS loads its own; none of ours may be
       # visible outside the plugin.
       - name: Check exported symbols
-        run: |
-          plugin="$(find build_x86_64 -name tapeloop.so -print -quit)"
-          test -n "${plugin}"
-          if nm -D --defined-only "${plugin}" | grep -E ' (av|ff|avcodec|avutil|avpriv)_'; then
-            echo "::error::${plugin} exports FFmpeg symbols"
-            exit 1
-          fi
-          echo "${plugin}: $(stat -c %s "${plugin}") bytes, no FFmpeg symbol exported"
+        run: .github/scripts/check-ffmpeg-exports "$(find build_x86_64 -name tapeloop.so -print -quit)"
 
+      # Kept even when the plugin fails to build, once FFmpeg itself was complete.
       - name: Save FFmpeg
-        if: steps.ffmpeg-cache.outputs.cache-hit != 'true'
+        if: always() && steps.ffmpeg-cache.outputs.cache-hit != 'true' && hashFiles('.deps/ffmpeg-*/configure-line.txt') != ''
         uses: actions/cache/save@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
         with:
           path: ${{ github.workspace }}/.deps/ffmpeg-*
@@ -323,8 +317,9 @@ jobs:
           target: x64
           config: ${{ needs.check-event.outputs.config }}
 
+      # Kept even when the plugin fails to build, once FFmpeg itself was complete.
       - name: Save FFmpeg
-        if: steps.ffmpeg-cache.outputs.cache-hit != 'true'
+        if: always() && steps.ffmpeg-cache.outputs.cache-hit != 'true' && hashFiles('.deps/ffmpeg-*/configure-line.txt') != ''
         uses: actions/cache/save@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
         with:
           path: ${{ github.workspace }}/.deps/ffmpeg-*

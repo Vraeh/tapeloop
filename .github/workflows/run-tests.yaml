@@ -188,7 +188,7 @@ jobs:
         run: cmake --preset linux-obs-asan
 
       - name: Save FFmpeg
-        if: steps.restore-ffmpeg.outputs.cache-hit != 'true'
+        if: always() && steps.restore-ffmpeg.outputs.cache-hit != 'true' && hashFiles('.deps/ffmpeg-*/configure-line.txt') != ''
         uses: actions/cache/save@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
         with:
           path: ${{ github.workspace }}/.deps/ffmpeg-*
@@ -197,6 +197,10 @@ jobs:
       - name: Build
         working-directory: tests/obs
         run: cmake --build --preset linux-obs-asan
+
+      # libobs loads the system's FFmpeg into the test binary as well.
+      - name: Check exported symbols
+        run: .github/scripts/check-ffmpeg-exports build_tests/linux-obs-asan/tapeloop-obs-tests
 
       - name: Test
         working-directory: tests/obs
