@@ -18,7 +18,7 @@ enum class DecodeStatus {
 	NeedMore,
 	// receive() after flush(): every frame has come out.
 	Drained,
-	// open(): this codec or configuration cannot be decoded here.
+	// This codec, configuration or picture format cannot be decoded here.
 	Unsupported,
 	// The stream could not be decoded.
 	InvalidData,
