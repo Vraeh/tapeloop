@@ -6,8 +6,10 @@
 #include "obs/ObsEncoders.hpp"
 #include "obs/SettingsData.hpp"
 
+#include <obs.hpp>
 #include <util/base.h>
 
+#include <cstring>
 #include <utility>
 
 namespace tapeloop::obs {
@@ -27,6 +29,27 @@ bool addInput(void *param, obs_source_t *source) noexcept
 		return false;
 	}
 	return true;
+}
+
+// Media sources that restart when they become active. Holding one active off air would
+// keep it from restarting when it is cut to air, so activation leaves them out. The ids
+// and settings are those of OBS 32's media source, VLC source and image slideshow.
+bool restartsWhenActivated(obs_source_t *source)
+{
+	const char *id = obs_source_get_unversioned_id(source);
+	if (!id) {
+		return false;
+	}
+	OBSDataAutoRelease settings = obs_source_get_settings(source);
+	if (std::strcmp(id, "ffmpeg_source") == 0) {
+		return obs_data_get_bool(settings, "restart_on_activate");
+	}
+	if (std::strcmp(id, "vlc_source") == 0 || std::strcmp(id, "slideshow") == 0) {
+		// Anything but these two behaves as stop and restart.
+		const char *behavior = obs_data_get_string(settings, "playback_behavior");
+		return std::strcmp(behavior, "pause_unpause") != 0 && std::strcmp(behavior, "always_play") != 0;
+	}
+	return false;
 }
 
 } // namespace
@@ -220,6 +243,7 @@ SourceStatus CaptureManager::status(const std::string &uuid) const
 	const auto found = entries_.find(uuid);
 	if (found != entries_.end()) {
 		status.stats = found->second->capture.stats();
+		status.activationLeftOut = found->second->activationLeftOut;
 	}
 	return status;
 }
@@ -280,9 +304,12 @@ CaptureManager::StartOutcome CaptureManager::start(const std::string &uuid, Entr
 		return StartOutcome::Failed;
 	}
 	// Before the size: a media source that plays only while active has no size until it
-	// is.
-	if (settings_.activateFor(uuid)) {
+	// is. A retry also lets go of a hold the settings no longer ask for.
+	entry.activationLeftOut = settings_.activateFor(uuid) && restartsWhenActivated(source);
+	if (settings_.activateFor(uuid) && !entry.activationLeftOut) {
 		entry.activation.hold(source);
+	} else {
+		entry.activation.reset();
 	}
 	if (quiet && (obs_source_get_width(source) == 0 || obs_source_get_height(source) == 0)) {
 		entry.capture.hold(source);

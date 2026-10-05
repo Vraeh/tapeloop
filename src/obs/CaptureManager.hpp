@@ -33,6 +33,9 @@ public:
 struct SourceStatus {
 	bool selected = false;
 	CaptureStats stats;
+	// The settings ask to keep it active off air, but it restarts when it becomes active,
+	// so it is not held.
+	bool activationLeftOut = false;
 };
 
 // Every selected source with its capture and buffer, started and stopped as the buffer
@@ -112,8 +115,10 @@ private:
 		// with the same keepBuffer.
 		bool retry = false;
 		bool retryKeepsBuffer = false;
-		// Held while the capture runs or waits, when the settings ask for it.
+		// Held while the capture runs or waits, when the settings ask for it and the source
+		// does not restart when it becomes active.
 		Activation activation;
+		bool activationLeftOut = false;
 	};
 
 	// What a start found out about the source.

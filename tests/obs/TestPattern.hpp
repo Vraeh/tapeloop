@@ -14,10 +14,14 @@ namespace tapeloop::test {
 // A video source drawn on the GPU: a white bar that moves one step per frame over a
 // grey background, and under it the number of the frame in binary, one black or white
 // cell per bit, most significant first, so a decoded frame can be traced back to the
-// frame rendered. Settings: "width" and "height", which may change while it runs, and
+// frame rendered. Settings: "width" and "height", which may change while it runs,
 // "size_only_when_shown", which makes it report 0x0 while nothing shows it, as display,
-// window and game captures do.
+// window and game captures do, and "size_only_when_active", as a media source that
+// plays only while active.
 inline constexpr const char *kTestPatternId = "tapeloop_test_pattern";
+// The same pattern under the id of OBS's media source, which the harness does not load,
+// with its "restart_on_activate" setting, on by default as there.
+inline constexpr const char *kMediaStandInId = "ffmpeg_source";
 inline constexpr int kFrameNumberBits = 16;
 
 void registerTestPattern();

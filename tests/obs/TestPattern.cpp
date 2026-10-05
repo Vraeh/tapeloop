@@ -28,9 +28,14 @@ struct TestPattern {
 	std::atomic<uint32_t> width{0};
 	std::atomic<uint32_t> height{0};
 	std::atomic<bool> sizeOnlyWhenShown{false};
+	std::atomic<bool> sizeOnlyWhenActive{false};
 	uint32_t frame = 0;
 
-	bool hidden() const noexcept { return sizeOnlyWhenShown && !obs_source_showing(source); }
+	bool hidden() const noexcept
+	{
+		return (sizeOnlyWhenShown && !obs_source_showing(source)) ||
+		       (sizeOnlyWhenActive && !obs_source_active(source));
+	}
 };
 
 // The bar fills the top three quarters, the frame number the bottom quarter.
@@ -59,6 +64,17 @@ void update(void *data, obs_data_t *settings) noexcept
 	pattern->width = static_cast<uint32_t>(std::max<long long>(obs_data_get_int(settings, "width"), 0));
 	pattern->height = static_cast<uint32_t>(std::max<long long>(obs_data_get_int(settings, "height"), 0));
 	pattern->sizeOnlyWhenShown = obs_data_get_bool(settings, "size_only_when_shown");
+	pattern->sizeOnlyWhenActive = obs_data_get_bool(settings, "size_only_when_active");
+}
+
+const char *mediaName(void *) noexcept
+{
+	return "Tapeloop test media";
+}
+
+void mediaDefaults(obs_data_t *settings) noexcept
+{
+	obs_data_set_default_bool(settings, "restart_on_activate", true);
 }
 
 void *create(obs_data_t *settings, obs_source_t *source) noexcept
@@ -226,6 +242,12 @@ void registerTestPattern()
 	info.video_tick = tick;
 	info.video_render = render;
 	obs_register_source(&info);
+
+	obs_source_info media = info;
+	media.id = kMediaStandInId;
+	media.get_name = mediaName;
+	media.get_defaults = mediaDefaults;
+	obs_register_source(&media);
 }
 
 void registerTone()

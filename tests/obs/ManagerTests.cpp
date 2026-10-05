@@ -376,9 +376,10 @@ TEST_CASE_METHOD(ObsFixture, "settings are saved with the scene collection and l
 	settings.length = 90s;
 	settings.resolution = {ResolutionMode::Fixed, 720};
 	settings.startWithOutputs = false;
+	settings.activateOffAir = true;
 	settings.sources[uuidOf(camera)] = {true, 30s, std::nullopt, std::nullopt};
 	settings.sources[uuidOf(wide)] =
-		SourceSettings{false, std::nullopt, ReplayResolution{ResolutionMode::Output, 1080}, std::nullopt};
+		SourceSettings{false, std::nullopt, ReplayResolution{ResolutionMode::Output, 1080}, false};
 
 	OBSDataAutoRelease collection = obs_data_create();
 	{
@@ -855,4 +856,107 @@ TEST_CASE_METHOD(ObsFixture, "a removed source that was waiting for its size is 
 	OBSSourceAutoRelease left = obs_weak_source_get_source(weak);
 	CHECK(left == nullptr);
 	manager.manualStop();
+}
+
+namespace {
+
+// A test pattern by settings, for the sizes and the behaviour of the cases below.
+OBSSourceAutoRelease patternWith(const char *id, const char *name, uint32_t width, uint32_t height,
+				 bool sizeOnlyWhenActive)
+{
+	OBSDataAutoRelease settings = obs_data_create();
+	obs_data_set_int(settings, "width", width);
+	obs_data_set_int(settings, "height", height);
+	obs_data_set_bool(settings, "size_only_when_active", sizeOnlyWhenActive);
+	return obs_source_create(id, name, settings, nullptr);
+}
+
+BufferSettings activating(const std::string &uuid)
+{
+	BufferSettings settings = selecting(uuid);
+	settings.startWithOutputs = false;
+	settings.activateOffAir = true;
+	return settings;
+}
+
+} // namespace
+
+TEST_CASE_METHOD(ObsFixture, "a media source that restarts when activated is not kept active", "[obs][manager]")
+{
+	OBSSourceAutoRelease media = patternWith(tapeloop::test::kMediaStandInId, "Clip", 640, 360, false);
+	const std::string uuid = uuidOf(media);
+	FakeHost host;
+	CaptureManager manager(host);
+	manager.setSettings(activating(uuid));
+	REQUIRE(manager.manualStart());
+	CHECK(manager.status(uuid).stats.state == CaptureState::Running);
+	CHECK(manager.status(uuid).activationLeftOut);
+	CHECK_FALSE(obs_source_active(media));
+	REQUIRE(manager.manualStop());
+
+	// Without the restart it is kept active like any other source.
+	OBSDataAutoRelease noRestart = obs_data_create();
+	obs_data_set_bool(noRestart, "restart_on_activate", false);
+	obs_source_update(media, noRestart);
+	REQUIRE(manager.manualStart());
+	CHECK_FALSE(manager.status(uuid).activationLeftOut);
+	CHECK(obs_source_active(media));
+	REQUIRE(manager.manualStop());
+	CHECK_FALSE(obs_source_active(media));
+}
+
+TEST_CASE_METHOD(ObsFixture, "a source with a size only while active starts once activated", "[obs][manager]")
+{
+	OBSSourceAutoRelease media = patternWith(tapeloop::test::kTestPatternId, "Media", 640, 360, true);
+	const std::string uuid = uuidOf(media);
+	REQUIRE(obs_source_get_width(media) == 0);
+	FakeHost host;
+	CaptureManager manager(host);
+	manager.setSettings(activating(uuid));
+	REQUIRE(manager.manualStart());
+	manager.poll();
+	CHECK(manager.status(uuid).stats.state == CaptureState::Running);
+	REQUIRE(manager.manualStop());
+	CHECK_FALSE(obs_source_active(media));
+}
+
+TEST_CASE_METHOD(ObsFixture, "a waiting source keeps one activation and gives it back when asked", "[obs][manager]")
+{
+	OBSSourceAutoRelease never = patternWith(tapeloop::test::kTestPatternId, "Never", 0, 0, false);
+	const std::string uuid = uuidOf(never);
+	FakeHost host;
+	CaptureManager manager(host);
+	BufferSettings settings = activating(uuid);
+	manager.setSettings(settings);
+	REQUIRE(manager.manualStart());
+	REQUIRE(manager.status(uuid).stats.state == CaptureState::Waiting);
+	REQUIRE(obs_source_active(never));
+
+	SECTION("retries take no second activation")
+	{
+		manager.poll();
+		manager.poll();
+		manager.setSettings(settings);
+		REQUIRE(manager.manualStop());
+		CHECK_FALSE(obs_source_active(never));
+	}
+	SECTION("turning activation off lets go of it at the next retry")
+	{
+		settings.activateOffAir = false;
+		manager.setSettings(settings);
+		manager.poll();
+		CHECK(manager.status(uuid).stats.state == CaptureState::Waiting);
+		CHECK_FALSE(obs_source_active(never));
+		REQUIRE(manager.manualStop());
+	}
+	SECTION("removing the source lets go of it")
+	{
+		OBSWeakSourceAutoRelease weak = obs_source_get_weak_source(never);
+		obs_source_remove(never);
+		never = nullptr;
+		manager.poll();
+		OBSSourceAutoRelease left = obs_weak_source_get_source(weak);
+		CHECK(left == nullptr);
+		manager.manualStop();
+	}
 }
