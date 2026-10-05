@@ -43,7 +43,8 @@ struct DecodeResult {
 // decoded frames of the last GOPs are kept so that stepping back costs nothing, a new
 // run opens the decoder again, and reverse play can have the previous GOP decoded ahead.
 // A frame the decoder never gives is reported as InvalidData, without decoding its
-// GOP again. Everything runs on the caller's thread.
+// GOP again. Once warm, deciding allocates nothing unless a GOP is longer than any kept
+// before. Everything runs on the caller's thread.
 class DecodePlanner {
 public:
 	explicit DecodePlanner(FrameDecoder &decoder, DecodePlannerConfig config = {});

@@ -3,13 +3,17 @@
 
 #include "core/DecodePlanner.hpp"
 
+#include "AllocationCounter.hpp"
 #include "FakeDecoder.hpp"
 #include "SyntheticEncoder.hpp"
 
 #include <catch2/catch_test_macros.hpp>
 
+#include <cstddef>
 #include <cstdint>
 #include <memory>
+#include <optional>
+#include <span>
 #include <vector>
 
 using tapeloop::Clip;
@@ -18,10 +22,12 @@ using tapeloop::DecodePlanner;
 using tapeloop::DecodePlannerConfig;
 using tapeloop::DecodeResult;
 using tapeloop::DecodeStatus;
+using tapeloop::DecodedFrame;
 using tapeloop::GopBuilder;
 using tapeloop::Nanoseconds;
 using tapeloop::PlayDirection;
 using tapeloop::VideoCodec;
+using tapeloop::test::AllocationCounter;
 using tapeloop::test::FakeDecoder;
 using tapeloop::test::SyntheticEncoder;
 
@@ -79,6 +85,50 @@ bool shows(DecodePlanner &planner, const FakeDecoder &decoder, int64_t frame)
 	return result.status == DecodeStatus::Ok && result.frame.pts == frame &&
 	       decoder.made.at(result.frame.id).pts == frame && decoder.violations == 0;
 }
+
+// Hands every frame back at once and allocates nothing, so that only the planner's own
+// allocations are counted.
+class PassThroughDecoder : public tapeloop::FrameDecoder {
+public:
+	DecodeStatus open(VideoCodec, std::span<const uint8_t>) noexcept override { return restart(); }
+	DecodeStatus send(std::span<const uint8_t>, int64_t pts, int64_t) noexcept override
+	{
+		if (pending_) {
+			return DecodeStatus::InvalidData;
+		}
+		pending_ = pts;
+		return DecodeStatus::Ok;
+	}
+	DecodeStatus receive(DecodedFrame &frame) noexcept override
+	{
+		if (!pending_) {
+			return flushed_ ? DecodeStatus::Drained : DecodeStatus::NeedMore;
+		}
+		frame = {nextId_++, *pending_};
+		pending_.reset();
+		return DecodeStatus::Ok;
+	}
+	DecodeStatus flush() noexcept override
+	{
+		flushed_ = true;
+		return DecodeStatus::Ok;
+	}
+	void reset() noexcept override { restart(); }
+	void release(const DecodedFrame &) noexcept override {}
+	void close() noexcept override { restart(); }
+
+private:
+	DecodeStatus restart() noexcept
+	{
+		pending_.reset();
+		flushed_ = false;
+		return DecodeStatus::Ok;
+	}
+
+	std::optional<int64_t> pending_;
+	bool flushed_ = false;
+	uint64_t nextId_ = 1;
+};
 
 } // namespace
 
@@ -324,4 +374,94 @@ TEST_CASE("DecodePlanner gives back a frame no packet of the GOP has")
 	CHECK(shows(planner, decoder, 5));
 	CHECK(decoder.outstanding.size() == planner.heldFrames());
 	CHECK(planner.heldFrames() == 6);
+}
+
+TEST_CASE("DecodePlanner never lets go of the GOP on screen to decode ahead")
+{
+	FakeDecoder decoder = makeDecoder();
+	DecodePlanner planner(decoder);
+	planner.load(makeClip({{VideoCodec::H264, {1}, 6}}));
+	REQUIRE(shows(planner, decoder, 4 * kGopLength + 5));
+	REQUIRE(shows(planner, decoder, 2 * kGopLength + 5));
+	REQUIRE(shows(planner, decoder, 4 * kGopLength + 5));
+
+	// GOPs 2 and 4 are equally far from GOP 3; GOP 4 is on screen.
+	REQUIRE(planner.prefetch(PlayDirection::Backward) == DecodeStatus::Ok);
+	const uint64_t sent = planner.work().packetsSent;
+	CHECK(shows(planner, decoder, 4 * kGopLength + 4));
+	CHECK(shows(planner, decoder, 3 * kGopLength + 20));
+	CHECK(planner.work().packetsSent == sent);
+}
+
+TEST_CASE("DecodePlanner lets the farthest GOP go first")
+{
+	FakeDecoder decoder = makeDecoder();
+	DecodePlanner planner(decoder);
+	planner.load(makeClip({{VideoCodec::H264, {1}, 5}}));
+	REQUIRE(shows(planner, decoder, 3 * kGopLength + 1));
+	REQUIRE(shows(planner, decoder, 1));
+	// GOP 0 came last but is farther from GOP 4 than GOP 3 is.
+	REQUIRE(shows(planner, decoder, 4 * kGopLength + 1));
+	const uint64_t sent = planner.work().packetsSent;
+	CHECK(shows(planner, decoder, 3 * kGopLength + 1));
+	CHECK(planner.work().packetsSent == sent);
+}
+
+TEST_CASE("DecodePlanner keeps what it holds when a run cannot be opened")
+{
+	FakeDecoder decoder = makeDecoder();
+	DecodePlanner planner(decoder, DecodePlannerConfig{1});
+	planner.load(makeClip({{VideoCodec::H264, {1}, 1}, {VideoCodec::H264, {2}, 1}}));
+	REQUIRE(shows(planner, decoder, 10));
+	const size_t held = planner.heldFrames();
+
+	decoder.openStatus = DecodeStatus::Unsupported;
+	CHECK(planner.frameAt(timeOf(kGopLength + 3)).status == DecodeStatus::Unsupported);
+	CHECK(planner.heldFrames() == held);
+	decoder.openStatus = DecodeStatus::Ok;
+	const uint64_t sent = planner.work().packetsSent;
+	CHECK(shows(planner, decoder, 9));
+	CHECK(planner.work().packetsSent == sent);
+}
+
+TEST_CASE("DecodePlanner keeps at least one GOP")
+{
+	FakeDecoder decoder = makeDecoder();
+	DecodePlanner planner(decoder, DecodePlannerConfig{0});
+	planner.load(makeClip({{VideoCodec::H264, {1}, 3}}));
+	REQUIRE(shows(planner, decoder, 1));
+	REQUIRE(shows(planner, decoder, 2 * kGopLength + 1));
+	CHECK(planner.keptGopCount() == 1);
+	CHECK(planner.prefetch(PlayDirection::Backward) == DecodeStatus::Ok);
+	CHECK(planner.keptGopCount() == 1);
+}
+
+TEST_CASE("DecodePlanner allocates nothing per frame or GOP once warm")
+{
+	PassThroughDecoder decoder;
+	DecodePlanner planner(decoder);
+	constexpr int64_t kGops = 8;
+	planner.load(makeClip({{VideoCodec::H264, {1}, kGops}}));
+	for (int64_t frame = 0; frame < 2 * kGopLength; ++frame) {
+		REQUIRE(planner.frameAt(timeOf(frame)).status == DecodeStatus::Ok);
+	}
+
+	// Assertions allocate, so the answers are counted and checked afterwards.
+	int wrong = 0;
+	size_t allocations = 0;
+	{
+		AllocationCounter counter;
+		for (int64_t frame = 2 * kGopLength; frame < kGops * kGopLength; ++frame) {
+			const DecodeResult result = planner.frameAt(timeOf(frame));
+			wrong += result.status != DecodeStatus::Ok || result.frame.pts != frame;
+		}
+		for (int64_t frame = kGops * kGopLength - 1; frame >= 0; --frame) {
+			const DecodeResult result = planner.frameAt(timeOf(frame));
+			wrong += result.status != DecodeStatus::Ok || result.frame.pts != frame;
+			wrong += planner.prefetch(PlayDirection::Backward) != DecodeStatus::Ok;
+		}
+		allocations = counter.count();
+	}
+	CHECK(wrong == 0);
+	CHECK(allocations == 0);
 }

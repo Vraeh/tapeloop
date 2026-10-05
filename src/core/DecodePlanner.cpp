@@ -33,6 +33,7 @@ size_t distance(size_t a, size_t b) noexcept
 DecodePlanner::DecodePlanner(FrameDecoder &decoder, DecodePlannerConfig config) : decoder_(decoder), config_(config)
 {
 	config_.keptGops = std::max<size_t>(config_.keptGops, 1);
+	kept_.reserve(config_.keptGops);
 }
 
 DecodePlanner::~DecodePlanner()
@@ -110,19 +111,26 @@ DecodePlanner::KeptGop &DecodePlanner::keep(size_t gop)
 	if (KeptGop *kept = find(gop)) {
 		return *kept;
 	}
-	while (kept_.size() >= config_.keptGops) {
-		const auto farthest =
-			std::max_element(kept_.begin(), kept_.end(), [gop](const KeptGop &a, const KeptGop &b) {
-				return distance(a.gop, gop) < distance(b.gop, gop);
-			});
-		release(*farthest);
-		kept_.erase(farthest);
+	KeptGop *slot = nullptr;
+	if (kept_.size() < config_.keptGops) {
+		slot = &kept_.emplace_back();
+	} else {
+		// The farthest from the GOP asked for goes, never the one on screen while another
+		// can. Its vector is reused, so a GOP no longer than the ones before allocates
+		// nothing.
+		for (KeptGop &kept : kept_) {
+			const bool shown = kept.gop == lastGop_ && kept_.size() > 1;
+			if (!shown && (!slot || distance(kept.gop, gop) > distance(slot->gop, gop))) {
+				slot = &kept;
+			}
+		}
+		release(*slot);
 	}
-	KeptGop kept;
-	kept.gop = gop;
-	kept.frames.resize(clip_.gops()[gop]->packets().size());
-	kept_.push_back(std::move(kept));
-	return kept_.back();
+	slot->gop = gop;
+	slot->frames.assign(clip_.gops()[gop]->packets().size(), std::nullopt);
+	slot->received = 0;
+	slot->complete = false;
+	return *slot;
 }
 
 DecodePlanner::KeptGop *DecodePlanner::find(size_t gop) noexcept
@@ -153,17 +161,18 @@ void DecodePlanner::releaseAll() noexcept
 
 DecodeStatus DecodePlanner::decode(size_t gop, size_t packet)
 {
-	KeptGop &kept = keep(gop);
 	const Gop &source = *clip_.gops()[gop];
 	const size_t count = source.packets().size();
 	// Frames come out in presentation order, so within one uninterrupted pass over a GOP
-	// a frame not out yet comes after every frame already out.
+	// a frame not out yet comes after every frame already out. The decoder is opened
+	// before a kept GOP makes room, so a run that cannot be opened costs nothing kept.
 	if (streamGop_ != gop || flushed_) {
 		const DecodeStatus status = startAt(gop);
 		if (status != DecodeStatus::Ok) {
 			return fail(status);
 		}
 	}
+	KeptGop &kept = keep(gop);
 
 	const auto done = [&] {
 		return packet < count ? kept.frames[packet].has_value() : kept.received == count;
