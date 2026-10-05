@@ -264,6 +264,7 @@ DecodeStatus DecodePlanner::receiveAll(KeptGop &kept)
 			decoder_.release(frame);
 			continue;
 		}
+		frame.time = source.packets()[*index].time;
 		kept.frames[*index] = frame;
 		if (++kept.received == kept.frames.size()) {
 			kept.complete = true;

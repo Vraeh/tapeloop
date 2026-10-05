@@ -108,7 +108,7 @@ public:
 		const uint64_t id = inside_.front();
 		inside_.pop_front();
 		outstanding.insert(id);
-		frame = {id, made[id].pts};
+		frame = {id, made[id].pts, Nanoseconds{0}};
 		return DecodeStatus::Ok;
 	}
 

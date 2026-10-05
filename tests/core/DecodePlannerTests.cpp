@@ -104,7 +104,7 @@ public:
 		if (!pending_) {
 			return flushed_ ? DecodeStatus::Drained : DecodeStatus::NeedMore;
 		}
-		frame = {nextId_++, *pending_};
+		frame = {nextId_++, *pending_, Nanoseconds{0}};
 		pending_.reset();
 		return DecodeStatus::Ok;
 	}
@@ -464,4 +464,16 @@ TEST_CASE("DecodePlanner allocates nothing per frame or GOP once warm")
 	}
 	CHECK(wrong == 0);
 	CHECK(allocations == 0);
+}
+
+TEST_CASE("DecodePlanner gives each frame the time of its packet")
+{
+	FakeDecoder decoder = makeDecoder();
+	DecodePlanner planner(decoder);
+	planner.load(makeClip({{VideoCodec::H264, {1}, 2}}));
+	for (const int64_t frame : {int64_t{0}, int64_t{17}, kGopLength + 3}) {
+		const DecodeResult result = planner.frameAt(timeOf(frame));
+		REQUIRE(result.status == DecodeStatus::Ok);
+		CHECK(result.frame.time == timeOf(frame));
+	}
 }

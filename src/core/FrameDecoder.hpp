@@ -35,6 +35,9 @@ enum class DecodeStatus {
 struct DecodedFrame {
 	uint64_t id = 0;
 	int64_t pts = 0;
+	// When the frame shows, on the shared clock. The decoder leaves it zero; the planner
+	// fills it in from the packet the frame came from.
+	Nanoseconds time{0};
 };
 
 // Turns the packets of one run at a time into pictures. Packets go in decode order,
