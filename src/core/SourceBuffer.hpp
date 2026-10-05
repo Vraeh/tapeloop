@@ -76,6 +76,7 @@ public:
 
 	// Replaces the configured byte budget; eviction applies it at the next keyframe.
 	void setByteBudget(size_t maxBytes);
+	size_t byteBudget() const;
 
 private:
 	std::vector<std::shared_ptr<const Gop>> collectLocked(Nanoseconds from, Nanoseconds to) const;

@@ -3,6 +3,7 @@
 
 #pragma once
 
+#include "core/EncoderPolicy.hpp"
 #include "core/MediaTime.hpp"
 #include "core/ReplaySize.hpp"
 
@@ -38,11 +39,15 @@ struct BufferSettings {
 	Nanoseconds length = kDefaultBufferLength;
 	ReplayResolution resolution;
 	bool startWithOutputs = true;
+	// Encode replays in H.264 even where the hardware encodes HEVC.
+	bool forceH264 = false;
 	std::map<std::string, SourceSettings> sources;
 
 	Nanoseconds lengthFor(const std::string &uuid) const;
 	ReplayResolution resolutionFor(const std::string &uuid) const;
 	std::vector<std::string> selectedSources() const;
+	// What the encoder candidates are chosen by.
+	EncoderPreferences encoderPreferences() const;
 
 	bool operator==(const BufferSettings &) const = default;
 };
@@ -68,6 +73,7 @@ struct SavedSettings {
 	std::string resolution;
 	int64_t height = 0;
 	bool startWithOutputs = true;
+	bool forceH264 = false;
 	std::vector<SavedSource> sources;
 };
 

@@ -158,6 +158,12 @@ void SourceBuffer::setByteBudget(size_t maxBytes)
 	maxBytes_ = maxBytes;
 }
 
+size_t SourceBuffer::byteBudget() const
+{
+	std::lock_guard lock(mutex_);
+	return maxBytes_;
+}
+
 std::vector<std::shared_ptr<const Gop>> SourceBuffer::collectLocked(Nanoseconds from, Nanoseconds to) const
 {
 	std::vector<std::shared_ptr<const Gop>> gops;

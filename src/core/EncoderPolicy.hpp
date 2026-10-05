@@ -42,8 +42,9 @@ Vendor encoderVendor(std::string_view id);
 Vendor adapterVendor(std::string_view name);
 
 struct EncoderPreferences {
-	// Try each vendor's HEVC encoder before its H.264 one.
-	bool preferHevc = false;
+	// Try each vendor's HEVC encoder before its H.264 one. HEVC gives the same picture at
+	// a lower bitrate, so less memory per buffer and less disk per replay.
+	bool preferHevc = true;
 };
 
 // The encoders to try for a replay buffer, best first. Texture encoders of the vendor
@@ -64,8 +65,10 @@ struct ReplayEncoderParams {
 	// How long one frame lasts, in seconds: {1001, 60000} is 59.94 fps.
 	Rational frameDuration{1, 60};
 
-	// The bitrate at 1080p60, scaled by pixel rate and capped.
+	// The H.264 bitrate at 1080p60, scaled by pixel rate and capped. HEVC gets this share
+	// of it, for now: the picture HEVC gives at it is still to be measured.
 	int32_t referenceBitrateKbps = 30'000;
+	int32_t hevcBitratePercent = 60;
 	int32_t maxBitrateKbps = 100'000;
 	// GOP length where the encoder takes it in frames through free-form options, and
 	// in whole seconds elsewhere. Both are kept within ten seconds.
@@ -81,7 +84,8 @@ using EncoderSettings = std::map<std::string, SettingValue>;
 
 EncoderSettings buildReplaySettings(const EncoderInfo &encoder, const ReplayEncoderParams &params);
 
-int64_t replayBitrateKbps(const ReplayEncoderParams &params);
+// For an encoder of that codec, as obs_get_encoder_codec names it.
+int64_t replayBitrateKbps(const ReplayEncoderParams &params, std::string_view codec);
 // The packet bytes a buffer of the given length may hold at the given bitrate, with
 // room for the bitrate to run over its target: half as much again, for now.
 size_t replayByteBudget(int64_t bitrateKbps, Nanoseconds length);

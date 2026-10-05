@@ -309,6 +309,58 @@ TEST_CASE_METHOD(ObsFixture, "the capture output refuses another codec before it
 	obs_output_set_video_encoder(output, nullptr);
 }
 
+TEST_CASE_METHOD(ObsFixture, "a capture sizes its buffer for the codec of the encoder that starts", "[obs][capture]")
+{
+	OBSSourceAutoRelease pattern = createTestPattern(640, 360);
+	tapeloop::ReplayEncoderParams params;
+	params.width = 640;
+	params.height = 360;
+	params.frameDuration = {1, 30};
+	const auto budgetFor = [&params](const char *codec) {
+		return tapeloop::replayByteBudget(tapeloop::replayBitrateKbps(params, codec), 30s);
+	};
+	REQUIRE(budgetFor("hevc") < budgetFor("h264"));
+
+	CaptureSettings hevc;
+	hevc.bufferLength = 30s;
+	hevc.candidates = {testEncoder(tapeloop::test::kHevcEncoderId, "hevc")};
+	CaptureSettings h264 = hevc;
+	h264.candidates = {testEncoder("obs_x264")};
+
+	SECTION("the encoder that starts sets it")
+	{
+		SourceCapture capture;
+		REQUIRE(capture.start(pattern, hevc) == StartResult::Started);
+		CHECK(capture.buffer()->byteBudget() == budgetFor("hevc"));
+		capture.stop();
+	}
+	SECTION("not the first candidate, when it does not start")
+	{
+		SourceCapture capture;
+		CaptureSettings settings = hevc;
+		settings.candidates = {testEncoder(tapeloop::test::kAv1EncoderId, "hevc"), testEncoder("obs_x264")};
+		REQUIRE(capture.start(pattern, settings) == StartResult::Started);
+		CHECK(capture.stats().encoderId == "obs_x264");
+		CHECK(capture.buffer()->byteBudget() == budgetFor("h264"));
+		capture.stop();
+	}
+	SECTION("a kept buffer keeps the larger budget until it is emptied")
+	{
+		SourceCapture capture;
+		REQUIRE(capture.start(pattern, h264) == StartResult::Started);
+		capture.stop();
+		REQUIRE(capture.start(pattern, hevc, true) == StartResult::Started);
+		CHECK(capture.buffer()->byteBudget() == budgetFor("h264"));
+		capture.stop();
+		REQUIRE(capture.start(pattern, hevc) == StartResult::Started);
+		CHECK(capture.buffer()->byteBudget() == budgetFor("hevc"));
+		capture.stop();
+		REQUIRE(capture.start(pattern, h264, true) == StartResult::Started);
+		CHECK(capture.buffer()->byteBudget() == budgetFor("h264"));
+		capture.stop();
+	}
+}
+
 TEST_CASE_METHOD(ObsFixture, "a capture reports an encoder that fails while running", "[obs][capture]")
 {
 	OBSSourceAutoRelease pattern = createTestPattern(640, 360);
