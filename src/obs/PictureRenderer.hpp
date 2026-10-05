@@ -51,6 +51,16 @@ private:
 			uint32_t width, uint32_t height) noexcept;
 
 	gs_effect_t *effect_ = nullptr;
+	// The effect's parameters, looked up once when it is made.
+	struct Params {
+		gs_eparam_t *luma = nullptr;
+		gs_eparam_t *chroma = nullptr;
+		gs_eparam_t *chromaV = nullptr;
+		std::array<gs_eparam_t *, 3> toRgb{};
+		gs_eparam_t *rangeMin = nullptr;
+		gs_eparam_t *rangeMax = nullptr;
+		gs_eparam_t *chromaShift = nullptr;
+	} params_;
 	std::array<gs_texture_t *, 3> planes_{};
 	decode::PixelLayout layout_ = decode::PixelLayout::I420;
 	uint32_t width_ = 0;

@@ -176,6 +176,32 @@ TEST_CASE("a chosen encoder goes first, and other adapters can be left out")
 	CHECK(unknown == Ids{"obs_nvenc_h264_tex", "obs_qsv11_v2", "obs_x264"});
 }
 
+TEST_CASE("a hidden or deprecated choice, and a software render vendor, leave the order alone")
+{
+	const std::vector<EncoderInfo> encoders = combined({x264(), intel(), nvidia()});
+	const auto order = [&](Vendor render, const EncoderPreferences &preferences) {
+		Ids ids;
+		for (const EncoderInfo &info : tapeloop::replayEncoderCandidates(encoders, render, preferences)) {
+			ids.push_back(info.id);
+		}
+		return ids;
+	};
+	EncoderPreferences preferences;
+	preferences.preferHevc = false;
+	const Ids automatic = {"obs_nvenc_h264_tex", "obs_qsv11_v2", "obs_x264"};
+	preferences.chosen = "jim_nvenc";
+	CHECK(order(Vendor::Nvidia, preferences) == automatic);
+	preferences.chosen = "obs_nvenc_h264_soft";
+	CHECK(order(Vendor::Nvidia, preferences) == automatic);
+
+	// A Software render vendor is no adapter an encoder could share, so no hardware
+	// encoder counts as another adapter's. Adapters that render in software come out as
+	// Unknown, which the test above covers.
+	preferences.chosen.clear();
+	preferences.otherAdapters = false;
+	CHECK(order(Vendor::Software, preferences) == automatic);
+}
+
 TEST_CASE("the encoders to choose from are those whose replays the buffer can hold")
 {
 	std::vector<EncoderInfo> encoders = combined({x264(), intel(), nvidia()});
