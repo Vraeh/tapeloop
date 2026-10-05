@@ -77,9 +77,7 @@ struct FFmpegDecoder::Device {
 	bool lost() const noexcept { return device->GetDeviceRemovedReason() != S_OK; }
 };
 
-namespace {
-
-std::unique_ptr<FFmpegDecoder::Device> createDevice(uint64_t luid) noexcept
+std::unique_ptr<FFmpegDecoder::Device> FFmpegDecoder::createDevice(uint64_t luid) noexcept
 {
 	ComPtr<IDXGIFactory4> factory;
 	if (FAILED(CreateDXGIFactory1(IID_PPV_ARGS(&factory)))) {
@@ -122,6 +120,8 @@ std::unique_ptr<FFmpegDecoder::Device> createDevice(uint64_t luid) noexcept
 	}
 	return device;
 }
+
+namespace {
 
 AVPixelFormat chooseFormat(AVCodecContext *, const AVPixelFormat *formats) noexcept
 {
