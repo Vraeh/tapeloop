@@ -82,7 +82,9 @@ struct EncoderPreferences {
 // order is the fixed one: NVIDIA, Intel and AMD texture encoders, VideoToolbox, x264.
 // Only H.264 encoders qualify, and HEVC ones when preferred; never deprecated or
 // internal ones, nor those of an Unknown vendor. Between equals the first listed
-// comes first.
+// comes first. Without other adapters, hardware encoders of another vendor than a known
+// render vendor are left out. An encoder the user chose goes before all of them, even
+// one this order leaves out, as long as a replay can hold what it encodes.
 std::vector<EncoderInfo> replayEncoderCandidates(std::span<const EncoderInfo> encoders, Vendor renderVendor,
 						 const EncoderPreferences &preferences);
 
