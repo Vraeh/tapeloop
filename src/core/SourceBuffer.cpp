@@ -56,7 +56,7 @@ void SourceBuffer::push(const EncodedPacket &packet)
 	synced_ = true;
 }
 
-void SourceBuffer::setCodecConfig(std::span<const uint8_t> codecConfig)
+void SourceBuffer::setCodecConfig(VideoCodec codec, std::span<const uint8_t> codecConfig)
 {
 	// The copy is made before locking, so the encoder thread never waits for it.
 	std::shared_ptr<const CodecConfig> shared;
@@ -66,7 +66,7 @@ void SourceBuffer::setCodecConfig(std::span<const uint8_t> codecConfig)
 
 	std::lock_guard lock(mutex_);
 	sealLocked();
-	builder_.setCodecConfig(std::move(shared));
+	builder_.setCodecConfig(codec, std::move(shared));
 	if (synced_) {
 		++discontinuities_;
 	}

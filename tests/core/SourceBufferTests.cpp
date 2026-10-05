@@ -27,6 +27,7 @@ using tapeloop::Nanoseconds;
 using tapeloop::SourceBuffer;
 using tapeloop::SourceBufferConfig;
 using tapeloop::SourceBufferStats;
+using tapeloop::VideoCodec;
 using tapeloop::test::AllocationCounter;
 using tapeloop::test::SyntheticEncoder;
 
@@ -484,7 +485,7 @@ TEST_CASE("SourceBuffer does not allocate per packet in steady state")
 
 	SyntheticEncoder encoder({});
 	SourceBuffer buffer(makeConfig(encoder, 2s, kUnlimited));
-	buffer.setCodecConfig(runConfig(0));
+	buffer.setCodecConfig(VideoCodec::H264, runConfig(0));
 	pushFrames(buffer, encoder, 300);
 
 	for (int frame = 0; frame < 600; ++frame) {
@@ -549,7 +550,7 @@ TEST_CASE("SourceBuffer can be read while the encoder pushes")
 		// A new run every 600 frames, each starting on a keyframe.
 		for (int frame = 0; frame < 20'000; ++frame) {
 			if (frame % 600 == 0) {
-				buffer.setCodecConfig(runConfig(frame));
+				buffer.setCodecConfig(VideoCodec::H264, runConfig(frame));
 			}
 			buffer.push(encoder.next());
 		}
@@ -582,7 +583,7 @@ TEST_CASE("SourceBuffer gives every GOP of a run the same codec configuration")
 	SyntheticEncoder encoder({});
 	SourceBuffer buffer(makeConfig(encoder, 1h, kUnlimited));
 	pushFrames(buffer, encoder, 30);
-	buffer.setCodecConfig(runConfig(30));
+	buffer.setCodecConfig(VideoCodec::H264, runConfig(30));
 	pushFrames(buffer, encoder, 65);
 
 	const auto gops = heldGops(buffer);
@@ -604,12 +605,12 @@ TEST_CASE("SourceBuffer starts a new run at a new codec configuration")
 {
 	SyntheticEncoder encoder({});
 	SourceBuffer buffer(makeConfig(encoder, 1h, kUnlimited));
-	buffer.setCodecConfig(runConfig(0));
+	buffer.setCodecConfig(VideoCodec::H264, runConfig(0));
 	pushFrames(buffer, encoder, 45);
 
 	// The open GOP is sealed with the configuration it was encoded with, and the
 	// frames that follow wait for a keyframe of the new run.
-	buffer.setCodecConfig(CodecConfig(100, 0x11));
+	buffer.setCodecConfig(VideoCodec::H264, CodecConfig(100, 0x11));
 	CHECK(buffer.stats().gopCount == 2);
 	pushFrames(buffer, encoder, 15);
 	CHECK(buffer.stats().droppedBeforeKeyframe == 15);
@@ -636,17 +637,17 @@ TEST_CASE("SourceBuffer counts a new codec configuration as a discontinuity only
 	SourceBuffer buffer(makeConfig(encoder, 1h, kUnlimited));
 
 	// Before the first packet, after a clear, or twice in a row, nothing is cut short.
-	buffer.setCodecConfig(runConfig(0));
-	buffer.setCodecConfig(runConfig(0));
+	buffer.setCodecConfig(VideoCodec::H264, runConfig(0));
+	buffer.setCodecConfig(VideoCodec::H264, runConfig(0));
 	CHECK(buffer.stats().discontinuities == 0);
 	pushFrames(buffer, encoder, 30);
 	buffer.clear();
-	buffer.setCodecConfig(runConfig(30));
+	buffer.setCodecConfig(VideoCodec::H264, runConfig(30));
 	CHECK(buffer.stats().discontinuities == 0);
 
 	// A restart that keeps the buffer, after the run stopped cleanly at a GOP boundary.
 	pushFrames(buffer, encoder, 30);
-	buffer.setCodecConfig(runConfig(60));
+	buffer.setCodecConfig(VideoCodec::H264, runConfig(60));
 	CHECK(buffer.stats().discontinuities == 1);
 	pushFrames(buffer, encoder, 30);
 	CHECK(buffer.stats().droppedBeforeKeyframe == 0);
@@ -659,7 +660,7 @@ TEST_CASE("SourceBuffer counts codec configurations in its stats but not its bud
 	SyntheticEncoder configuredEncoder({});
 	SourceBuffer plain(makeConfig(plainEncoder, 1h, 2 * kGopBytes));
 	SourceBuffer configured(makeConfig(configuredEncoder, 1h, 2 * kGopBytes));
-	configured.setCodecConfig(CodecConfig(50'000, 0x22));
+	configured.setCodecConfig(VideoCodec::H264, CodecConfig(50'000, 0x22));
 	pushFrames(plain, plainEncoder, 150);
 	pushFrames(configured, configuredEncoder, 150);
 
@@ -676,9 +677,9 @@ TEST_CASE("SourceBuffer stops counting a configuration once its GOPs are gone")
 {
 	SyntheticEncoder encoder({});
 	SourceBuffer buffer(makeConfig(encoder, 1s, kUnlimited));
-	buffer.setCodecConfig(runConfig(0));
+	buffer.setCodecConfig(VideoCodec::H264, runConfig(0));
 	pushFrames(buffer, encoder, 90);
-	buffer.setCodecConfig(CodecConfig(3, 0x33));
+	buffer.setCodecConfig(VideoCodec::H264, CodecConfig(3, 0x33));
 	pushFrames(buffer, encoder, 30);
 	CHECK(buffer.stats().configBytes == 11);
 
@@ -698,7 +699,7 @@ TEST_CASE("SourceBuffer keeps the codec configuration through clear and disconti
 	SyntheticEncoder::Config encoderConfig;
 	SyntheticEncoder encoder(encoderConfig);
 	SourceBuffer buffer(makeConfig(encoder, 1h, kUnlimited));
-	buffer.setCodecConfig(runConfig(0));
+	buffer.setCodecConfig(VideoCodec::H264, runConfig(0));
 	pushFrames(buffer, encoder, 40);
 	const CodecConfig *config = heldGops(buffer).front()->codecConfig();
 
@@ -721,8 +722,8 @@ TEST_CASE("SourceBuffer takes an empty codec configuration as none")
 {
 	SyntheticEncoder encoder({});
 	SourceBuffer buffer(makeConfig(encoder, 1h, kUnlimited));
-	buffer.setCodecConfig(runConfig(0));
-	buffer.setCodecConfig({});
+	buffer.setCodecConfig(VideoCodec::H264, runConfig(0));
+	buffer.setCodecConfig(VideoCodec::H264, {});
 	pushFrames(buffer, encoder, 30);
 	CHECK(heldGops(buffer).front()->codecConfig() == nullptr);
 	CHECK(buffer.stats().configBytes == 0);
@@ -734,7 +735,7 @@ TEST_CASE("SourceBuffer clips keep the codec configuration after the buffer is g
 	Clip clip;
 	{
 		SourceBuffer buffer(makeConfig(encoder, 1h, kUnlimited));
-		buffer.setCodecConfig(runConfig(0));
+		buffer.setCodecConfig(VideoCodec::H264, runConfig(0));
 		pushFrames(buffer, encoder, 45);
 		clip = buffer.clip(1s);
 	}
@@ -755,7 +756,7 @@ TEST_CASE("SourceBuffer changes nothing when setting a codec configuration fails
 		CAPTURE(skip);
 		SyntheticEncoder encoder({});
 		SourceBuffer buffer(makeConfig(encoder, 1h, kUnlimited));
-		buffer.setCodecConfig(runConfig(0));
+		buffer.setCodecConfig(VideoCodec::H264, runConfig(0));
 		pushFrames(buffer, encoder, 45);
 		const CodecConfig *previous = heldGops(buffer).front()->codecConfig();
 		const CodecConfig next = runConfig(45);
@@ -764,7 +765,7 @@ TEST_CASE("SourceBuffer changes nothing when setting a codec configuration fails
 		{
 			tapeloop::test::AllocationFailure failure(skip);
 			try {
-				buffer.setCodecConfig(next);
+				buffer.setCodecConfig(VideoCodec::H264, next);
 			} catch (const std::bad_alloc &) {
 				failed = true;
 			}
@@ -786,4 +787,65 @@ TEST_CASE("SourceBuffer changes nothing when setting a codec configuration fails
 			CHECK(*gops[2]->codecConfig() == runConfig(45));
 		}
 	}
+}
+
+TEST_CASE("SourceBuffer holds runs of both codecs")
+{
+	SyntheticEncoder encoder({});
+	SourceBuffer buffer(makeConfig(encoder, 1h, kUnlimited));
+	buffer.setCodecConfig(VideoCodec::Hevc, runConfig(0));
+	pushFrames(buffer, encoder, 60);
+	// The fallback from HEVC to H.264 after a restart.
+	buffer.setCodecConfig(VideoCodec::H264, runConfig(60));
+	pushFrames(buffer, encoder, 61);
+
+	const auto gops = heldGops(buffer);
+	REQUIRE(gops.size() == 5);
+	CHECK(gops[0]->codec() == VideoCodec::Hevc);
+	CHECK(gops[1]->codec() == VideoCodec::Hevc);
+	CHECK(gops[2]->codec() == VideoCodec::H264);
+	CHECK(gops[3]->codec() == VideoCodec::H264);
+	CHECK(gops[4]->codec() == VideoCodec::H264);
+	CHECK(*gops[2]->codecConfig() == runConfig(60));
+
+	const Clip both = buffer.clip(1h);
+	CHECK(both.gops().front()->codec() == VideoCodec::Hevc);
+	CHECK(both.gops().back()->codec() == VideoCodec::H264);
+}
+
+TEST_CASE("SourceBuffer starts a new run when only the codec changes")
+{
+	SyntheticEncoder encoder({});
+	SourceBuffer buffer(makeConfig(encoder, 1h, kUnlimited));
+	buffer.setCodecConfig(VideoCodec::H264, {});
+	pushFrames(buffer, encoder, 45);
+	buffer.setCodecConfig(VideoCodec::Hevc, {});
+	pushFrames(buffer, encoder, 31);
+
+	const auto gops = heldGops(buffer);
+	REQUIRE(gops.size() == 3);
+	CHECK(gops[0]->codec() == VideoCodec::H264);
+	CHECK(gops[1]->codec() == VideoCodec::H264);
+	CHECK(gops[1]->packets().size() == 15);
+	CHECK(gops[2]->codec() == VideoCodec::Hevc);
+	CHECK(buffer.stats().discontinuities == 1);
+}
+
+TEST_CASE("SourceBuffer takes a new codec before the first frame of a run")
+{
+	SyntheticEncoder encoder({});
+	SourceBuffer buffer(makeConfig(encoder, 1h, kUnlimited));
+	// As when the first encoder candidate could not start and the next one makes HEVC.
+	buffer.setCodecConfig(VideoCodec::H264, runConfig(0));
+	buffer.setCodecConfig(VideoCodec::Hevc, runConfig(0));
+	pushFrames(buffer, encoder, 30);
+	REQUIRE(heldGops(buffer).size() == 1);
+	CHECK(heldGops(buffer).front()->codec() == VideoCodec::Hevc);
+
+	// As when a restart empties the buffer and falls back to H.264.
+	buffer.clear();
+	buffer.setCodecConfig(VideoCodec::H264, runConfig(0));
+	pushFrames(buffer, encoder, 30);
+	REQUIRE(heldGops(buffer).size() == 1);
+	CHECK(heldGops(buffer).front()->codec() == VideoCodec::H264);
 }

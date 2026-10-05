@@ -6,6 +6,7 @@
 #include "TestEncoders.hpp"
 #include "TestPattern.hpp"
 
+#include "obs/CaptureOutput.hpp"
 #include "obs/SourceCapture.hpp"
 
 #include <catch2/catch_test_macros.hpp>
@@ -17,6 +18,7 @@
 #include <cstdlib>
 #include <map>
 #include <memory>
+#include <string>
 #include <thread>
 #include <vector>
 
@@ -39,9 +41,9 @@ namespace {
 // The canvas of ObsFixture runs at 30 fps.
 constexpr Nanoseconds kFrameInterval{33'333'333};
 
-EncoderInfo testEncoder(const char *id)
+EncoderInfo testEncoder(const char *id, const char *codec = "h264")
 {
-	return {id, "h264", Vendor::Software};
+	return {id, codec, Vendor::Software};
 }
 
 Clip everything(const SourceCapture &capture)
@@ -97,6 +99,10 @@ TEST_CASE_METHOD(ObsFixture, "a capture encodes its source into GOPs that decode
 	CHECK(stopped.buffer.discontinuities == 0);
 
 	const Clip clip = everything(capture);
+	// x264 encodes H.264, and the output read that from the encoder.
+	for (const auto &gop : clip.gops()) {
+		CHECK(gop->codec() == tapeloop::VideoCodec::H264);
+	}
 	const auto decoded = tapeloop::test::decodeGops(clip);
 	REQUIRE(decoded.size() == clip.gops().size());
 	for (size_t gop = 0; gop < decoded.size(); ++gop) {
@@ -262,6 +268,45 @@ TEST_CASE_METHOD(ObsFixture, "a capture falls through to the next encoder candid
 	CHECK(capture.stats().encoderId == "obs_x264");
 	REQUIRE(waitFor([&] { return hasGops(capture, 1); }, 60s));
 	capture.stop();
+}
+
+TEST_CASE_METHOD(ObsFixture, "a capture records the codec its encoder makes", "[obs][capture]")
+{
+	OBSSourceAutoRelease pattern = createTestPattern(640, 360);
+	SourceCapture capture;
+	CaptureSettings settings;
+	settings.candidates = {testEncoder(tapeloop::test::kHevcEncoderId, "hevc")};
+	REQUIRE(capture.start(pattern, settings) == StartResult::Started);
+	REQUIRE(waitFor([&] { return hasGops(capture, 3); }, 30s));
+	capture.stop();
+
+	const Clip clip = everything(capture);
+	REQUIRE(clip.gops().size() >= 3);
+	for (const auto &gop : clip.gops()) {
+		CHECK(gop->codec() == tapeloop::VideoCodec::Hevc);
+	}
+}
+
+TEST_CASE_METHOD(ObsFixture, "the capture output refuses another codec before its encoder opens", "[obs][capture]")
+{
+	tapeloop::SourceBuffer buffer({1s, 1 << 20, kFrameInterval});
+	tapeloop::obs::CaptureTarget target;
+	target.buffer = &buffer;
+	OBSOutputAutoRelease output = tapeloop::obs::createCaptureOutput("refusing", target);
+	REQUIRE(output);
+	OBSEncoderAutoRelease encoder =
+		obs_video_encoder_create(tapeloop::test::kAv1EncoderId, "refused", nullptr, nullptr);
+	REQUIRE(encoder);
+	obs_encoder_set_video(encoder, obs_get_video());
+	obs_output_set_video_encoder(output, encoder);
+
+	CHECK_FALSE(obs_output_start(output));
+	// SourceCapture logs this after the encoder's name and the source's.
+	const char *error = obs_output_get_last_error(output);
+	REQUIRE(error);
+	CHECK(std::string(error) == "A replay cannot hold av1");
+	CHECK(tapeloop::test::av1EncoderInitializations() == 0);
+	obs_output_set_video_encoder(output, nullptr);
 }
 
 TEST_CASE_METHOD(ObsFixture, "a capture reports an encoder that fails while running", "[obs][capture]")
