@@ -1,0 +1,14 @@
+#!/usr/bin/env bash
+# Prints the FFmpeg version and source URL that BuildFFmpeg.cmake pins, as
+# "<version> <url>", and fails when it cannot read them, so that nothing downstream
+# reports a version made of an error message. Usage: ffmpeg-source
+set -euo pipefail
+script="$(dirname "$0")/../../cmake/ffmpeg/BuildFFmpeg.cmake"
+line="$(cmake -DPRINT_SOURCE=ON -P "${script}" 2>&1)" || line="cmake failed: ${line}"
+read -r version url rest <<< "${line}"
+if [[ ! "${version}" =~ ^[0-9]+(\.[0-9]+)+$ || "${url}" != "https://ffmpeg.org/releases/ffmpeg-${version}.tar.xz" ||
+  -n "${rest}" ]]; then
+  echo "Could not read the pinned FFmpeg from BuildFFmpeg.cmake: ${line}" >&2
+  exit 1
+fi
+echo "${version} ${url}"
