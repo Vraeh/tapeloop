@@ -1071,3 +1071,71 @@ TEST_CASE_METHOD(ObsFixture, "a waiting source keeps one activation and gives it
 		manager.manualStop();
 	}
 }
+
+TEST_CASE_METHOD(ObsFixture, "a replay keeps what every captured buffer holds", "[obs][manager][replay]")
+{
+	OBSSourceAutoRelease first = createTestPattern(320, 180, "First");
+	OBSSourceAutoRelease second = createTestPattern(320, 180, "Second");
+	const std::string firstUuid = uuidOf(first);
+	const std::string secondUuid = uuidOf(second);
+	FakeHost host;
+	CaptureManager manager(host);
+	BufferSettings settings = selecting(firstUuid);
+	settings.sources[secondUuid].selected = true;
+	settings.startWithOutputs = false;
+	manager.setSettings(settings);
+
+	// Nothing captured yet, nothing to keep.
+	CHECK(manager.captureReplay() == 0);
+	CHECK(manager.library().size() == 0);
+
+	REQUIRE(manager.manualStart());
+	const auto gops = [&](const std::string &uuid) {
+		const tapeloop::SourceBuffer *buffer = manager.buffer(uuid);
+		return buffer ? buffer->stats().gopCount : 0;
+	};
+	REQUIRE(waitFor([&] { return gops(firstUuid) >= 2 && gops(secondUuid) >= 2; }, 60s));
+
+	const uint64_t id = manager.captureReplay();
+	REQUIRE(id != 0);
+	const tapeloop::Moment *moment = manager.library().find(id);
+	REQUIRE(moment);
+	REQUIRE(moment->clips.size() == 2);
+	// Both sources render on the same video clock, so their clips end together.
+	const auto out = [&](const std::string &uuid) {
+		for (const tapeloop::MomentClip &clip : moment->clips) {
+			if (clip.sourceKey == uuid) {
+				return clip.clip.out();
+			}
+		}
+		FAIL("no clip of " << uuid);
+		return tapeloop::Nanoseconds{0};
+	};
+	const tapeloop::Nanoseconds gap = out(firstUuid) - out(secondUuid);
+	CHECK(std::chrono::abs(gap) <= 100ms);
+	CHECK(moment->end - moment->start == settings.length);
+
+	// The buffers keep recording, and a later capture is a replay of its own.
+	const size_t before = gops(firstUuid);
+	REQUIRE(waitFor([&] { return gops(firstUuid) > before; }, 60s));
+	CHECK(manager.status(firstUuid).stats.state == CaptureState::Running);
+	const uint64_t later = manager.captureReplay();
+	REQUIRE(later != 0);
+	CHECK(manager.library().list() == std::vector<uint64_t>{later, id});
+	CHECK(manager.library().current() == later);
+	CHECK(manager.library().capturedAt(later) >= manager.library().capturedAt(id));
+
+	// Buffers that stopped still hold what they recorded.
+	REQUIRE(manager.manualStop());
+	const uint64_t stopped = manager.captureReplay();
+	REQUIRE(stopped != 0);
+	CHECK(manager.library().find(stopped)->clips.size() == 2);
+
+	// A source no longer selected takes its buffer with it.
+	settings.sources[secondUuid].selected = false;
+	manager.setSettings(settings);
+	const uint64_t alone = manager.captureReplay();
+	REQUIRE(alone != 0);
+	REQUIRE(manager.library().find(alone)->clips.size() == 1);
+	CHECK(manager.library().find(alone)->clips[0].sourceKey == firstUuid);
+}

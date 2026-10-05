@@ -3,17 +3,27 @@
 
 #include "obs/CaptureManager.hpp"
 
+#include "core/MomentCutter.hpp"
+
 #include "obs/ObsEncoders.hpp"
 #include "obs/SettingsData.hpp"
 
 #include <obs.hpp>
 #include <util/base.h>
+#include <util/platform.h>
 
+#include <algorithm>
+#include <chrono>
 #include <cstring>
 #include <utility>
 
 namespace tapeloop::obs {
 namespace {
+
+// Replays live in memory until they are stored on disk. They share their GOPs with the
+// buffers, so only footage the buffers have let go of costs memory of its own; the cap
+// counts each GOP once.
+constexpr MomentListConfig kReplayLimits{200, size_t{2} << 30};
 
 bool addInput(void *param, obs_source_t *source) noexcept
 {
@@ -60,7 +70,7 @@ bool restartsWhenActivated(obs_source_t *source)
 
 } // namespace
 
-CaptureManager::CaptureManager(CaptureHost &host) : host_(host)
+CaptureManager::CaptureManager(CaptureHost &host) : host_(host), library_(kReplayLimits)
 {
 	lifecycle_.reset(settings_.startWithOutputs, host_.streamingActive(), host_.recordingActive());
 }
@@ -261,6 +271,27 @@ const SourceBuffer *CaptureManager::buffer(const std::string &uuid) const
 {
 	const auto found = entries_.find(uuid);
 	return found != entries_.end() ? found->second->capture.buffer() : nullptr;
+}
+
+uint64_t CaptureManager::captureReplay()
+{
+	std::vector<MomentSource> sources;
+	Nanoseconds reach{0};
+	for (const auto &[uuid, entry] : entries_) {
+		if (const SourceBuffer *held = entry->capture.buffer()) {
+			sources.push_back({uuid, *held});
+			reach = std::max(reach, settings_.lengthFor(uuid));
+		}
+	}
+	// Packets carry the time of the frames they encode, on the clock OBS stamps video with.
+	const Nanoseconds now{static_cast<int64_t>(os_gettime_ns())};
+	MomentCut cut = cutMoment(sources, now, reach);
+	const uint64_t id = library_.add(std::move(cut.moment), std::chrono::system_clock::now());
+	if (id != 0) {
+		blog(LOG_INFO, "[tapeloop] Captured replay %llu from %zu sources, %zu of them empty",
+		     static_cast<unsigned long long>(id), sources.size(), cut.skipped.size());
+	}
+	return id;
 }
 
 void CaptureManager::reconcile()
