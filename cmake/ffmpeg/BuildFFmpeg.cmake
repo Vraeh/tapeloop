@@ -50,6 +50,13 @@ else()
   list(APPEND options --enable-pthreads --enable-pic)
 endif()
 
+# -DPRINT_SOURCE=ON prints the version and the source URL, for the release notes, and
+# builds nothing.
+if(PRINT_SOURCE)
+  message("${version} ${url}")
+  return()
+endif()
+
 foreach(variable IN ITEMS PREFIX WORK_DIR)
   if(NOT ${variable})
     message(FATAL_ERROR "BuildFFmpeg.cmake needs -D${variable}=<path>")
