@@ -45,7 +45,7 @@ SourceSettingsDialog::SourceSettingsDialog(const QString &sourceName, const Sour
 	resolution_->setEnabled(current.resolution.has_value());
 
 	activate_->setObjectName("activate");
-	activate_->setToolTip(text("Dock.ActivateOffAir.Tooltip"));
+	activate_->setToolTip(text("SourceSettings.Activate.Tooltip"));
 	activate_->setChecked(current.activateOffAir.value_or(global.activateOffAir));
 	ownActivation_->setObjectName("ownActivation");
 	ownActivation_->setChecked(current.activateOffAir.has_value());

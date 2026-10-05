@@ -40,7 +40,7 @@ struct BufferSettings {
 	ReplayResolution resolution;
 	bool startWithOutputs = true;
 	// Whether a selected source is kept active while it is captured, as if it were on
-	// air: media sources play, captures hook their targets. The program does not change.
+	// air, so that sources that only run on air run. The program does not change.
 	bool activateOffAir = false;
 	std::map<std::string, SourceSettings> sources;
 

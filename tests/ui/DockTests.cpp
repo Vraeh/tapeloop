@@ -113,6 +113,38 @@ TEST_CASE("selected sources show the state of their buffer")
 	CHECK(table->item(2, 1)->text().isEmpty());
 }
 
+TEST_CASE("a media source left out of activation says why")
+{
+	FakeBackend backend = backendWithSources();
+	backend.shown[0].state = SourceState::Waiting;
+	backend.shown[0].activationLeftOut = true;
+	backend.current.sources["uuid-camera-1"].selected = true;
+	TapeloopDock dock(backend, localeText());
+	const QTableWidgetItem *status = child<QTableWidget>(dock, "sources")->item(0, 1);
+	CHECK_FALSE(status->icon().isNull());
+	CHECK(status->toolTip().contains("restarts when it becomes active"));
+
+	// Unselected, it has nothing to explain.
+	backend.current.sources["uuid-camera-1"].selected = false;
+	dock.refresh();
+	const QTableWidgetItem *refreshed = child<QTableWidget>(dock, "sources")->item(0, 1);
+	CHECK(refreshed->icon().isNull());
+	CHECK(refreshed->toolTip().isEmpty());
+}
+
+TEST_CASE("the activation checkbox follows the settings")
+{
+	FakeBackend backend = backendWithSources();
+	TapeloopDock dock(backend, localeText());
+	auto *activate = child<QCheckBox>(dock, "activateOffAir");
+	CHECK_FALSE(activate->isChecked());
+	backend.current.activateOffAir = true;
+	dock.refresh();
+	CHECK(activate->isChecked());
+	CHECK(activate->toolTip().contains("monitor"));
+	CHECK(backend.settingsChanges == 0);
+}
+
 TEST_CASE("a source waiting for a picture says so with an icon and a tooltip")
 {
 	FakeBackend backend = backendWithSources();
@@ -472,6 +504,7 @@ TEST_CASE("every kind of edit in the dock writes the settings once")
 	CHECK(writesOnce([&] { child<QSpinBox>(dock, "length")->setValue(45); }));
 	CHECK(writesOnce([&] { child<QComboBox>(dock, "resolution")->setCurrentIndex(4); }));
 	CHECK(writesOnce([&] { child<QCheckBox>(dock, "startWithOutputs")->setChecked(false); }));
+	CHECK(writesOnce([&] { child<QCheckBox>(dock, "activateOffAir")->setChecked(true); }));
 	CHECK(writesOnce([&] {
 		table->setCurrentCell(0, 0);
 		child<QPushButton>(dock, "sourceSettings")->click();

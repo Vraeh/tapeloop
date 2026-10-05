@@ -255,9 +255,15 @@ void TapeloopDock::updateSources(const std::vector<DockSource> &sources)
 		sources_->item(row, kSourceColumn)->setCheckState(sources[i].selected ? Qt::Checked : Qt::Unchecked);
 		QTableWidgetItem *status = sources_->item(row, kStatusColumn);
 		status->setText(statusText(sources[i]));
-		const bool waiting = sources[i].selected && sources[i].state == SourceState::Waiting;
-		status->setIcon(waiting ? style()->standardIcon(QStyle::SP_MessageBoxInformation) : QIcon());
-		status->setToolTip(waiting ? text_("Dock.Status.Waiting.Tooltip") : QString());
+		// Left out of activation explains waiting too, so it comes first.
+		QString note;
+		if (sources[i].selected && sources[i].activationLeftOut) {
+			note = text_("Dock.Status.NotActivated.Tooltip");
+		} else if (sources[i].selected && sources[i].state == SourceState::Waiting) {
+			note = text_("Dock.Status.Waiting.Tooltip");
+		}
+		status->setIcon(note.isEmpty() ? QIcon() : style()->standardIcon(QStyle::SP_MessageBoxInformation));
+		status->setToolTip(note);
 	}
 }
 
