@@ -21,13 +21,13 @@
 using namespace std::chrono_literals;
 using tapeloop::Clip;
 using tapeloop::CodecConfig;
-using tapeloop::VideoCodec;
 using tapeloop::EncodedPacket;
 using tapeloop::Gop;
 using tapeloop::Nanoseconds;
 using tapeloop::SourceBuffer;
 using tapeloop::SourceBufferConfig;
 using tapeloop::SourceBufferStats;
+using tapeloop::VideoCodec;
 using tapeloop::test::AllocationCounter;
 using tapeloop::test::SyntheticEncoder;
 
@@ -804,6 +804,7 @@ TEST_CASE("SourceBuffer holds runs of both codecs")
 	CHECK(gops[0]->codec() == VideoCodec::Hevc);
 	CHECK(gops[1]->codec() == VideoCodec::Hevc);
 	CHECK(gops[2]->codec() == VideoCodec::H264);
+	CHECK(gops[3]->codec() == VideoCodec::H264);
 	CHECK(gops[4]->codec() == VideoCodec::H264);
 	CHECK(*gops[2]->codecConfig() == runConfig(60));
 
@@ -828,4 +829,23 @@ TEST_CASE("SourceBuffer starts a new run when only the codec changes")
 	CHECK(gops[1]->packets().size() == 15);
 	CHECK(gops[2]->codec() == VideoCodec::Hevc);
 	CHECK(buffer.stats().discontinuities == 1);
+}
+
+TEST_CASE("SourceBuffer takes a new codec before the first frame of a run")
+{
+	SyntheticEncoder encoder({});
+	SourceBuffer buffer(makeConfig(encoder, 1h, kUnlimited));
+	// As when the first encoder candidate could not start and the next one makes HEVC.
+	buffer.setCodecConfig(VideoCodec::H264, runConfig(0));
+	buffer.setCodecConfig(VideoCodec::Hevc, runConfig(0));
+	pushFrames(buffer, encoder, 30);
+	REQUIRE(heldGops(buffer).size() == 1);
+	CHECK(heldGops(buffer).front()->codec() == VideoCodec::Hevc);
+
+	// As when a restart empties the buffer and falls back to H.264.
+	buffer.clear();
+	buffer.setCodecConfig(VideoCodec::H264, runConfig(0));
+	pushFrames(buffer, encoder, 30);
+	REQUIRE(heldGops(buffer).size() == 1);
+	CHECK(heldGops(buffer).front()->codec() == VideoCodec::H264);
 }

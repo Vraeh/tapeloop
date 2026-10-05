@@ -17,12 +17,12 @@
 
 using tapeloop::Clip;
 using tapeloop::CodecConfig;
-using tapeloop::VideoCodec;
 using tapeloop::EncodedPacket;
 using tapeloop::Gop;
 using tapeloop::Nanoseconds;
 using tapeloop::PacketRecord;
 using tapeloop::SourceBuffer;
+using tapeloop::VideoCodec;
 using tapeloop::fuzz::FuzzInput;
 using tapeloop::fuzz::require;
 
@@ -348,9 +348,10 @@ extern "C" int LLVMFuzzerTestOneInput(const uint8_t *data, size_t size)
 		}
 		case 5: {
 			const std::span<const uint8_t> codecConfig = input.bytes(input.below(64));
-			// Taken from the configuration rather than from a new input byte, so the seeds
-			// still read the same.
-			const VideoCodec codec = !codecConfig.empty() && (codecConfig.front() & 1) != 0
+			// Taken from what was already read rather than from a new input byte, so the
+			// seeds still read the same, and not from the bytes alone, so either codec comes
+			// with any configuration, none included.
+			const VideoCodec codec = ((codecConfig.size() + model.configs.size()) & 1) != 0
 							 ? VideoCodec::Hevc
 							 : VideoCodec::H264;
 			buffer.setCodecConfig(codec, codecConfig);
