@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: GPL-2.0-or-later
 // Copyright (C) 2026 Vicente Aedo <ryde1337@gmail.com>
 
+#include "LogCounter.hpp"
 #include "ObsFixture.hpp"
 #include "TestPattern.hpp"
 
@@ -32,6 +33,7 @@ using tapeloop::obs::CaptureState;
 using tapeloop::obs::createSettingsData;
 using tapeloop::obs::readSettingsData;
 using tapeloop::test::createTestPattern;
+using tapeloop::test::LogCounter;
 using tapeloop::test::ObsFixture;
 using tapeloop::test::waitFor;
 
@@ -1193,6 +1195,38 @@ TEST_CASE_METHOD(ObsFixture, "a replay keeps all a buffer holds, whatever the le
 	const uint64_t late = manager.captureReplay();
 	REQUIRE(late != 0);
 	CHECK(inOf(late) == stopped.oldestTime);
+}
+
+TEST_CASE_METHOD(ObsFixture, "the oldest replays go with a warning past the library's limits", "[obs][manager][replay]")
+{
+	OBSSourceAutoRelease pattern = createTestPattern(320, 180, "Pattern");
+	const std::string uuid = uuidOf(pattern);
+	FakeHost host;
+	CaptureManager manager(host);
+	BufferSettings settings = selecting(uuid);
+	settings.startWithOutputs = false;
+	manager.setSettings(settings);
+	REQUIRE(manager.manualStart());
+	REQUIRE(waitFor(
+		[&] {
+			const tapeloop::SourceBuffer *buffer = manager.buffer(uuid);
+			return buffer && buffer->stats().gopCount != 0;
+		},
+		60s));
+
+	LogCounter warned("oldest replays to stay within");
+	const uint64_t first = manager.captureReplay();
+	REQUIRE(first != 0);
+	for (int i = 1; i < 200; ++i) {
+		REQUIRE(manager.captureReplay() != 0);
+	}
+	CHECK(manager.library().size() == 200);
+	CHECK(warned.lines == 0);
+	REQUIRE(manager.captureReplay() != 0);
+	CHECK(manager.library().size() == 200);
+	CHECK_FALSE(manager.library().find(first));
+	CHECK(warned.lines == 1);
+	manager.manualStop();
 }
 
 TEST_CASE("settings saved before the other-adapter setting allow other adapters", "[obs][manager]")

@@ -119,6 +119,7 @@ target_sources(
     ClipDecoder.hpp
     DecodeTests.cpp
     DockBackendTests.cpp
+    LogCounter.hpp
     ManagerTests.cpp
     ObsFixture.cpp
     ObsFixture.hpp

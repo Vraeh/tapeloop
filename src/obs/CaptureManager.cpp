@@ -21,8 +21,8 @@ namespace tapeloop::obs {
 namespace {
 
 // Replays live in memory until they are stored on disk. They share their GOPs with the
-// buffers, so only footage the buffers have let go of costs memory of its own; the cap
-// counts each GOP once.
+// buffers, but the cap counts every GOP a replay holds, once, whether or not a buffer
+// still holds it too.
 constexpr MomentListConfig kReplayLimits{200, size_t{2} << 30};
 
 bool addInput(void *param, obs_source_t *source) noexcept
@@ -293,10 +293,16 @@ uint64_t CaptureManager::captureReplay()
 		}
 	}
 	MomentCut cut = cutMoment(sources, now, reach);
+	const size_t kept = library_.size();
 	const uint64_t id = library_.add(std::move(cut.moment), std::chrono::system_clock::now());
 	if (id != 0) {
 		blog(LOG_INFO, "[tapeloop] Captured replay %llu from %zu sources, %zu of them with nothing in range",
 		     static_cast<unsigned long long>(id), sources.size(), cut.skipped.size());
+		if (const size_t dropped = kept + 1 - library_.size(); dropped != 0) {
+			blog(LOG_WARNING,
+			     "[tapeloop] Dropped the %zu oldest replays to stay within %zu replays and %zu MiB",
+			     dropped, kReplayLimits.maxMoments, kReplayLimits.maxBytes >> 20);
+		}
 	}
 	return id;
 }
