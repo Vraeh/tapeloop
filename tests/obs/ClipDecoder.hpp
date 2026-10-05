@@ -7,6 +7,7 @@
 
 #include <cstdint>
 #include <optional>
+#include <span>
 #include <vector>
 
 namespace tapeloop::test {
@@ -19,11 +20,14 @@ struct DecodedFrame {
 	std::optional<uint32_t> frameNumber;
 };
 
-// Decodes every H.264 GOP of the clip on a fresh libavcodec decoder, opened with the
+// Decodes every GOP of the clip on a fresh libavcodec decoder, opened with the
 // codec configuration that GOP carries and nothing else, as a player starting at that
 // GOP would: parameter sets the encoder repeats in the stream are taken out first. One
 // list of frames per GOP, in output order. Throws std::runtime_error when libavcodec
 // reports an error or hands back a frame it had to conceal damage in.
 std::vector<std::vector<DecodedFrame>> decodeGops(const Clip &clip);
+
+// The packet without the parameter sets of its codec.
+std::vector<uint8_t> withoutParameterSets(std::span<const uint8_t> data, VideoCodec codec);
 
 } // namespace tapeloop::test

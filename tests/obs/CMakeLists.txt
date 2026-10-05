@@ -46,6 +46,8 @@ add_executable(tapeloop-obs-tests)
 target_sources(
   tapeloop-obs-tests
   PRIVATE
+    ../core/AllocationCounter.cpp
+    ../core/AllocationCounter.hpp
     BufferOutput.cpp
     BufferOutput.hpp
     CaptureTests.cpp
@@ -66,8 +68,11 @@ target_compile_definitions(
   tapeloop-obs-tests
   PRIVATE
     TAPELOOP_LIBOBS_PREFIX="${TAPELOOP_LIBOBS_PREFIX}"
+    TAPELOOP_TEST_DATA_DIR="${CMAKE_CURRENT_SOURCE_DIR}/data"
     TAPELOOP_TEST_UNLOAD_MODULE="$<TARGET_FILE:tapeloop-test-unload>"
 )
+# AllocationCounter replaces the global operator new to count what the decoder allocates.
+target_include_directories(tapeloop-obs-tests PRIVATE ../core)
 add_dependencies(tapeloop-obs-tests tapeloop-test-unload)
 target_link_libraries(
   tapeloop-obs-tests
