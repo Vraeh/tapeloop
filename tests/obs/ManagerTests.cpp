@@ -40,6 +40,9 @@ public:
 
 	bool streamingActive() const override { return streaming; }
 	bool recordingActive() const override { return recording; }
+	void requestSave() override { ++saves; }
+
+	int saves = 0;
 };
 
 std::string uuidOf(obs_source_t *source)
@@ -416,6 +419,12 @@ TEST_CASE_METHOD(ObsFixture, "settings of an unknown version are kept as they ca
 	OBSDataAutoRelease written = obs_data_get_obj(saved, tapeloop::obs::kSettingsKey);
 	CHECK(obs_data_get_int(written, "version") == 2);
 	CHECK(std::string(obs_data_get_string(written, "something")) == "new");
+
+	// An edit here would not be saved, so it asks for no save.
+	BufferSettings edited = manager.settings();
+	edited.startWithOutputs = false;
+	manager.setSettings(edited);
+	CHECK(host.saves == 0);
 }
 
 namespace {

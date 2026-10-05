@@ -16,7 +16,7 @@ public:
 
 	std::vector<ui::DockSource> sources() const override;
 	BufferSettings settings() const override { return manager_.settings(); }
-	void setSettings(const BufferSettings &settings) override { manager_.setSettings(settings); }
+	void setSettings(const BufferSettings &settings) override;
 
 	bool running() const override { return manager_.running(); }
 	bool manualControlEnabled() const override { return manager_.manualControlEnabled(); }
