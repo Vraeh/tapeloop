@@ -3,6 +3,7 @@
 
 #pragma once
 
+#include "core/EncoderPolicy.hpp"
 #include "core/MediaTime.hpp"
 #include "core/ReplaySize.hpp"
 
@@ -42,12 +43,16 @@ struct BufferSettings {
 	// Whether a selected source is kept active while it is captured, as if it were on
 	// air, so that sources that only run on air run. The program does not change.
 	bool activateOffAir = false;
+	// Encode replays in H.264 even where the hardware encodes HEVC.
+	bool forceH264 = false;
 	std::map<std::string, SourceSettings> sources;
 
 	Nanoseconds lengthFor(const std::string &uuid) const;
 	ReplayResolution resolutionFor(const std::string &uuid) const;
 	bool activateFor(const std::string &uuid) const;
 	std::vector<std::string> selectedSources() const;
+	// What the encoder candidates are chosen by.
+	EncoderPreferences encoderPreferences() const;
 
 	bool operator==(const BufferSettings &) const = default;
 };
@@ -77,6 +82,7 @@ struct SavedSettings {
 	int64_t height = 0;
 	bool startWithOutputs = true;
 	bool activateOffAir = false;
+	bool forceH264 = false;
 	std::vector<SavedSource> sources;
 };
 

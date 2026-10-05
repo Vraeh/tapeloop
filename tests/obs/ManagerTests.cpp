@@ -378,6 +378,7 @@ TEST_CASE_METHOD(ObsFixture, "settings are saved with the scene collection and l
 	settings.resolution = {ResolutionMode::Fixed, 720};
 	settings.startWithOutputs = false;
 	settings.activateOffAir = true;
+	settings.forceH264 = true;
 	settings.sources[uuidOf(camera)] = {true, 30s, std::nullopt, std::nullopt};
 	settings.sources[uuidOf(wide)] =
 		SourceSettings{false, std::nullopt, ReplayResolution{ResolutionMode::Output, 1080}, false};

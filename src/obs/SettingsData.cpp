@@ -18,6 +18,7 @@ obs_data_t *createSettingsData(const SavedSettings &saved)
 	obs_data_set_int(data, "height", saved.height);
 	obs_data_set_bool(data, "start_with_outputs", saved.startWithOutputs);
 	obs_data_set_bool(data, "activate_offair", saved.activateOffAir);
+	obs_data_set_bool(data, "force_h264", saved.forceH264);
 
 	OBSDataArrayAutoRelease sources = obs_data_array_create();
 	for (const SavedSource &source : saved.sources) {
@@ -55,6 +56,7 @@ SavedSettings readSettingsData(obs_data_t *data)
 	saved.height = obs_data_get_int(data, "height");
 	saved.startWithOutputs = obs_data_get_bool(data, "start_with_outputs");
 	saved.activateOffAir = obs_data_get_bool(data, "activate_offair");
+	saved.forceH264 = obs_data_get_bool(data, "force_h264");
 
 	OBSDataArrayAutoRelease sources = obs_data_get_array(data, "sources");
 	for (size_t i = 0; i < obs_data_array_count(sources); ++i) {

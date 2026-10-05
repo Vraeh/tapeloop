@@ -324,7 +324,8 @@ CaptureManager::StartOutcome CaptureManager::start(const std::string &uuid, Entr
 	}
 
 	if (!candidates) {
-		candidates = replayEncoderCandidates(registeredVideoEncoders(), renderAdapterVendor(), {});
+		candidates = replayEncoderCandidates(registeredVideoEncoders(), renderAdapterVendor(),
+						     settings_.encoderPreferences());
 	}
 	CaptureSettings settings;
 	settings.resolution = settings_.resolutionFor(uuid);

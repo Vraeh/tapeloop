@@ -56,6 +56,7 @@ TapeloopDock::TapeloopDock(DockBackend &backend, TextLookup text, QWidget *paren
 	  resolution_(new QComboBox(this)),
 	  startWithOutputs_(new QCheckBox(text_("Dock.StartWithOutputs"), this)),
 	  activateOffAir_(new QCheckBox(text_("Dock.ActivateOffAir"), this)),
+	  forceH264_(new QCheckBox(text_("Dock.ForceH264"), this)),
 	  note_(new QLabel(text_("Dock.ApplyNote"), this)),
 	  startStop_(new QPushButton(this)),
 	  followsOutputs_(new QLabel(text_("Dock.FollowsOutputs"), this))
@@ -82,6 +83,8 @@ TapeloopDock::TapeloopDock(DockBackend &backend, TextLookup text, QWidget *paren
 	startWithOutputs_->setObjectName("startWithOutputs");
 	activateOffAir_->setObjectName("activateOffAir");
 	activateOffAir_->setToolTip(text_("Dock.ActivateOffAir.Tooltip"));
+	forceH264_->setObjectName("forceH264");
+	forceH264_->setToolTip(text_("Dock.ForceH264.Tooltip"));
 	note_->setObjectName("note");
 	note_->setWordWrap(true);
 	startStop_->setObjectName("startStop");
@@ -94,6 +97,7 @@ TapeloopDock::TapeloopDock(DockBackend &backend, TextLookup text, QWidget *paren
 	form->addRow(text_("Dock.Resolution"), resolution_);
 	form->addRow(startWithOutputs_);
 	form->addRow(activateOffAir_);
+	form->addRow(forceH264_);
 
 	auto *layout = new QVBoxLayout(this);
 	layout->addWidget(sources_, 1);
@@ -140,6 +144,9 @@ TapeloopDock::TapeloopDock(DockBackend &backend, TextLookup text, QWidget *paren
 		changeSettings([](BufferSettings &settings, int on) { settings.activateOffAir = on != 0; },
 			       checked ? 1 : 0);
 	});
+	connect(forceH264_, &QCheckBox::toggled, this, [this](bool checked) {
+		changeSettings([](BufferSettings &settings, int on) { settings.forceH264 = on != 0; }, checked ? 1 : 0);
+	});
 	connect(startStop_, &QPushButton::clicked, this, [this] {
 		guarded([this] { backend_.toggleRunning(); });
 		refresh();
@@ -179,6 +186,7 @@ void TapeloopDock::refresh()
 		const QSignalBlocker blockResolution(resolution_);
 		const QSignalBlocker blockStart(startWithOutputs_);
 		const QSignalBlocker blockActivate(activateOffAir_);
+		const QSignalBlocker blockForceH264(forceH264_);
 		// A value being typed is not overwritten.
 		if (!length_->hasFocus()) {
 			length_->setValue(seconds(settings.length));
@@ -186,6 +194,7 @@ void TapeloopDock::refresh()
 		resolution_->setCurrentIndex(indexOfResolution(settings.resolution));
 		startWithOutputs_->setChecked(settings.startWithOutputs);
 		activateOffAir_->setChecked(settings.activateOffAir);
+		forceH264_->setChecked(settings.forceH264);
 
 		startStop_->setText(backend_.running() ? text_("Dock.Stop") : text_("Dock.Start"));
 		const bool enabled = backend_.manualControlEnabled();

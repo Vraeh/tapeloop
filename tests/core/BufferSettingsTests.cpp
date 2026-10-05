@@ -26,6 +26,7 @@ TEST_CASE("buffer settings start from the defaults")
 	CHECK(settings.length == 60s);
 	CHECK(settings.resolution.mode == ResolutionMode::Canvas);
 	CHECK(settings.startWithOutputs);
+	CHECK_FALSE(settings.forceH264);
 	CHECK(settings.selectedSources().empty());
 }
 
@@ -46,12 +47,21 @@ TEST_CASE("per source overrides take the place of the global settings")
 	CHECK(settings.selectedSources() == std::vector<std::string>{"a", "b"});
 }
 
+TEST_CASE("encoders prefer HEVC unless the settings keep replays in H.264")
+{
+	BufferSettings settings;
+	CHECK(settings.encoderPreferences().preferHevc);
+	settings.forceH264 = true;
+	CHECK_FALSE(settings.encoderPreferences().preferHevc);
+}
+
 TEST_CASE("buffer settings survive a save and a load")
 {
 	BufferSettings settings;
 	settings.length = 45s;
 	settings.resolution = {ResolutionMode::Output, 1080};
 	settings.startWithOutputs = false;
+	settings.forceH264 = true;
 	settings.sources["a"] = {true, 120s, ReplayResolution{ResolutionMode::Fixed, 2160}, std::nullopt};
 	settings.sources["b"] = {false, std::nullopt, ReplayResolution{ResolutionMode::Canvas, 1080}, std::nullopt};
 	settings.sources["c"] = {true, std::nullopt, std::nullopt, std::nullopt};
