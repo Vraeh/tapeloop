@@ -15,10 +15,10 @@
 #include <vector>
 
 using tapeloop::CodecConfig;
-using tapeloop::VideoCodec;
 using tapeloop::EncodedPacket;
 using tapeloop::GopBuilder;
 using tapeloop::Nanoseconds;
+using tapeloop::VideoCodec;
 using tapeloop::test::AllocationCounter;
 using tapeloop::test::SyntheticEncoder;
 

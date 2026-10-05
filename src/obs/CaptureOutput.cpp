@@ -7,6 +7,7 @@
 
 #include <chrono>
 #include <cstdint>
+#include <cstdio>
 #include <new>
 #include <optional>
 #include <span>
@@ -41,16 +42,24 @@ void destroy(void *data) noexcept
 bool start(void *data) noexcept
 {
 	auto &capture = *static_cast<CaptureOutput *>(data);
-	if (!capture.target || !capture.target->buffer || !obs_output_can_begin_data_capture(capture.output, 0) ||
-	    !obs_output_initialize_encoders(capture.output, 0)) {
+	if (!capture.target || !capture.target->buffer || !obs_output_can_begin_data_capture(capture.output, 0)) {
 		return false;
 	}
 
+	// Before the encoder initializes, so a hardware encoder does not open a session only
+	// to be refused. The codec cannot change at initialization: libobs refuses to reroute
+	// an encoder to another codec.
 	obs_encoder_t *encoder = obs_output_get_video_encoder(capture.output);
 	const char *codecName = obs_encoder_get_codec(encoder);
 	const std::optional<VideoCodec> codec = videoCodecFromName(codecName ? codecName : "");
 	if (!codec) {
-		blog(LOG_WARNING, "[tapeloop] A replay cannot hold %s", codecName ? codecName : "an unknown codec");
+		char error[96];
+		std::snprintf(error, sizeof(error), "A replay cannot hold %s",
+			      codecName ? codecName : "an unknown codec");
+		obs_output_set_last_error(capture.output, error);
+		return false;
+	}
+	if (!obs_output_initialize_encoders(capture.output, 0)) {
 		return false;
 	}
 	// Some encoders only know their configuration after the first keyframe; those repeat

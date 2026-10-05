@@ -83,9 +83,10 @@ void check(int result, const char *what)
 
 std::vector<DecodedFrame> decodeGop(const Gop &gop)
 {
-	const AVCodec *decoder = avcodec_find_decoder(AV_CODEC_ID_H264);
+	const AVCodec *decoder =
+		avcodec_find_decoder(gop.codec() == VideoCodec::Hevc ? AV_CODEC_ID_HEVC : AV_CODEC_ID_H264);
 	if (!decoder) {
-		throw std::runtime_error("libavcodec has no H.264 decoder");
+		throw std::runtime_error("libavcodec has no decoder for the codec of the GOP");
 	}
 
 	std::unique_ptr<AVCodecContext, ContextDeleter> context(avcodec_alloc_context3(decoder));
