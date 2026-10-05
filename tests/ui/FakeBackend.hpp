@@ -5,6 +5,8 @@
 
 #include "ui/DockBackend.hpp"
 
+#include <algorithm>
+#include <string>
 #include <vector>
 
 namespace tapeloop::test {
@@ -21,6 +23,7 @@ public:
 	uint64_t captures = 0;
 	uint64_t picked = 0;
 	std::vector<tapeloop::ui::DockReplay> captured;
+	std::vector<std::string> tags;
 
 	std::vector<tapeloop::ui::DockSource> sources() const override
 	{
@@ -50,7 +53,31 @@ public:
 		picked = id;
 		return id;
 	}
-	std::vector<tapeloop::ui::DockReplay> replays() const override { return captured; }
+	std::vector<tapeloop::ui::DockReplay> replays(const std::string &tag = {}) const override
+	{
+		std::vector<tapeloop::ui::DockReplay> listed;
+		for (const auto &replay : captured) {
+			if (tag.empty() ||
+			    std::find(replay.tags.begin(), replay.tags.end(), tag) != replay.tags.end()) {
+				listed.push_back(replay);
+			}
+		}
+		return listed;
+	}
+	std::vector<std::string> replayTags() const override { return tags; }
+	bool tagReplay(uint64_t id, const std::string &tag) override
+	{
+		for (auto &replay : captured) {
+			if (replay.id == id && tag.find_first_not_of(' ') != std::string::npos) {
+				replay.tags.push_back(tag);
+				if (std::find(tags.begin(), tags.end(), tag) == tags.end()) {
+					tags.push_back(tag);
+				}
+				return true;
+			}
+		}
+		return false;
+	}
 	uint64_t currentReplay() const override { return picked; }
 	void pickReplay(uint64_t id) override { picked = id; }
 

@@ -5,6 +5,7 @@
 
 #include <algorithm>
 #include <cctype>
+#include <span>
 
 namespace tapeloop::obs {
 namespace {
@@ -70,11 +71,11 @@ void ManagerDockBackend::setSettings(const BufferSettings &settings)
 	manager_.setSettings(settings);
 }
 
-std::vector<ui::DockReplay> ManagerDockBackend::replays() const
+std::vector<ui::DockReplay> ManagerDockBackend::replays(const std::string &tag) const
 {
 	const ReplayLibrary &library = manager_.library();
 	std::vector<ui::DockReplay> replays;
-	for (const uint64_t id : library.list()) {
+	for (const uint64_t id : library.list(tag)) {
 		ui::DockReplay replay;
 		replay.id = id;
 		replay.capturedAt = library.capturedAt(id);
@@ -86,6 +87,12 @@ std::vector<ui::DockReplay> ManagerDockBackend::replays() const
 		replays.push_back(std::move(replay));
 	}
 	return replays;
+}
+
+std::vector<std::string> ManagerDockBackend::replayTags() const
+{
+	const std::span<const std::string> tags = manager_.library().tags();
+	return {tags.begin(), tags.end()};
 }
 
 } // namespace tapeloop::obs

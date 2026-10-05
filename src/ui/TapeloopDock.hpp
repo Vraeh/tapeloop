@@ -14,6 +14,7 @@
 class QCheckBox;
 class QComboBox;
 class QLabel;
+class QLineEdit;
 class QListWidget;
 class QPushButton;
 class QSpinBox;
@@ -61,9 +62,14 @@ private:
 	QPushButton *startStop_;
 	QLabel *followsOutputs_;
 	QPushButton *captureReplay_;
+	QComboBox *tagFilter_;
 	QListWidget *replays_;
-	// The ids the replay list shows, newest first.
+	QLineEdit *tagName_;
+	QPushButton *addTag_;
+	// The ids the replay list shows, newest first, and the text of each.
 	std::vector<uint64_t> shownReplays_;
+	std::vector<QString> shownReplayTexts_;
+	std::vector<std::string> shownTags_;
 };
 
 } // namespace tapeloop::ui

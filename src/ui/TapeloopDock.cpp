@@ -10,9 +10,11 @@
 #include <QComboBox>
 #include <QDateTime>
 #include <QFormLayout>
+#include <QHBoxLayout>
 #include <QHeaderView>
 #include <QKeyEvent>
 #include <QLabel>
+#include <QLineEdit>
 #include <QListWidget>
 #include <QPushButton>
 #include <QSignalBlocker>
@@ -64,7 +66,10 @@ TapeloopDock::TapeloopDock(DockBackend &backend, TextLookup text, QWidget *paren
 	  startStop_(new QPushButton(this)),
 	  followsOutputs_(new QLabel(text_("Dock.FollowsOutputs"), this)),
 	  captureReplay_(new QPushButton(text_("Dock.CaptureReplay"), this)),
-	  replays_(new QListWidget(this))
+	  tagFilter_(new QComboBox(this)),
+	  replays_(new QListWidget(this)),
+	  tagName_(new QLineEdit(this)),
+	  addTag_(new QPushButton(text_("Dock.AddTag"), this))
 {
 	sources_->setObjectName("sources");
 	sources_->setHorizontalHeaderLabels({text_("Dock.Source"), text_("Dock.Status")});
@@ -98,6 +103,13 @@ TapeloopDock::TapeloopDock(DockBackend &backend, TextLookup text, QWidget *paren
 	replays_->setObjectName("replays");
 	replays_->setToolTip(text_("Dock.Replays.Tooltip"));
 	replays_->setSelectionMode(QAbstractItemView::SingleSelection);
+	tagFilter_->setObjectName("tagFilter");
+	tagFilter_->setToolTip(text_("Dock.TagFilter.Tooltip"));
+	tagFilter_->addItem(text_("Dock.TagFilter.All"), QString());
+	tagName_->setObjectName("tagName");
+	tagName_->setPlaceholderText(text_("Dock.TagName"));
+	addTag_->setObjectName("addTag");
+	addTag_->setToolTip(text_("Dock.AddTag.Tooltip"));
 	followsOutputs_->setObjectName("followsOutputs");
 	followsOutputs_->setWordWrap(true);
 	followsOutputs_->hide();
@@ -117,7 +129,12 @@ TapeloopDock::TapeloopDock(DockBackend &backend, TextLookup text, QWidget *paren
 	layout->addWidget(startStop_);
 	layout->addWidget(followsOutputs_);
 	layout->addWidget(captureReplay_);
+	layout->addWidget(tagFilter_);
 	layout->addWidget(replays_, 1);
+	auto *tagging = new QHBoxLayout;
+	tagging->addWidget(tagName_, 1);
+	tagging->addWidget(addTag_);
+	layout->addLayout(tagging);
 
 	connect(sources_, &QTableWidget::itemChanged, this, [this](QTableWidgetItem *item) {
 		if (item->column() != kSourceColumn) {
@@ -163,6 +180,18 @@ TapeloopDock::TapeloopDock(DockBackend &backend, TextLookup text, QWidget *paren
 		guarded([this] { backend_.captureReplay(); });
 		refresh();
 	});
+	connect(tagFilter_, &QComboBox::currentIndexChanged, this, [this] { refresh(); });
+	const auto addTag = [this] {
+		const std::string tag = tagName_->text().toStdString();
+		bool added = false;
+		guarded([&] { added = backend_.tagReplay(backend_.currentReplay(), tag); });
+		if (added) {
+			tagName_->clear();
+		}
+		refresh();
+	};
+	connect(addTag_, &QPushButton::clicked, this, addTag);
+	connect(tagName_, &QLineEdit::returnPressed, this, addTag);
 	connect(replays_, &QListWidget::itemClicked, this, [this](QListWidgetItem *item) {
 		guarded([&] { backend_.pickReplay(item->data(Qt::UserRole).toULongLong()); });
 		refresh();
@@ -337,35 +366,53 @@ QString TapeloopDock::statusText(const DockSource &source) const
 
 void TapeloopDock::updateReplays()
 {
-	const std::vector<DockReplay> replays = backend_.replays();
-	std::vector<uint64_t> ids;
-	for (const DockReplay &replay : replays) {
-		ids.push_back(replay.id);
+	// The filter offers every tag, rebuilt when they change and never while it is open.
+	const std::vector<std::string> tags = backend_.replayTags();
+	if (tags != shownTags_ && !tagFilter_->view()->isVisible()) {
+		const QString chosen = tagFilter_->currentData().toString();
+		const QSignalBlocker block(tagFilter_);
+		tagFilter_->clear();
+		tagFilter_->addItem(text_("Dock.TagFilter.All"), QString());
+		for (const std::string &tag : tags) {
+			tagFilter_->addItem(QString::fromStdString(tag), QString::fromStdString(tag));
+		}
+		tagFilter_->setCurrentIndex(std::max(tagFilter_->findData(chosen), 0));
+		shownTags_ = tags;
 	}
-	if (ids != shownReplays_) {
+
+	const std::vector<DockReplay> replays = backend_.replays(tagFilter_->currentData().toString().toStdString());
+	std::vector<uint64_t> ids;
+	std::vector<QString> texts;
+	for (const DockReplay &replay : replays) {
+		const QDateTime captured = QDateTime::fromMSecsSinceEpoch(
+			std::chrono::duration_cast<std::chrono::milliseconds>(replay.capturedAt.time_since_epoch())
+				.count());
+		QString text = text_("Dock.Replay")
+				       .arg(captured.toString(QStringLiteral("HH:mm:ss")))
+				       .arg(static_cast<qulonglong>(replay.sources));
+		for (const std::string &tag : replay.tags) {
+			text += QStringLiteral(" #") + QString::fromStdString(tag);
+		}
+		ids.push_back(replay.id);
+		texts.push_back(std::move(text));
+	}
+	if (ids != shownReplays_ || texts != shownReplayTexts_) {
 		const QSignalBlocker block(replays_);
 		replays_->clear();
-		for (const DockReplay &replay : replays) {
-			const QDateTime captured =
-				QDateTime::fromMSecsSinceEpoch(std::chrono::duration_cast<std::chrono::milliseconds>(
-								       replay.capturedAt.time_since_epoch())
-								       .count());
-			QString text = text_("Dock.Replay")
-					       .arg(captured.toString(QStringLiteral("HH:mm:ss")))
-					       .arg(static_cast<qulonglong>(replay.sources));
-			for (const std::string &tag : replay.tags) {
-				text += QStringLiteral(" #") + QString::fromStdString(tag);
-			}
-			auto *item = new QListWidgetItem(text, replays_);
-			item->setData(Qt::UserRole, static_cast<qulonglong>(replay.id));
+		for (size_t i = 0; i < ids.size(); ++i) {
+			auto *item = new QListWidgetItem(texts[i], replays_);
+			item->setData(Qt::UserRole, static_cast<qulonglong>(ids[i]));
 		}
 		shownReplays_ = std::move(ids);
+		shownReplayTexts_ = std::move(texts);
 	}
-	// The replay that goes on air next is the one selected.
-	const auto current = std::find(shownReplays_.begin(), shownReplays_.end(), backend_.currentReplay());
+	// The replay that goes on air next is the one selected, and the one a tag goes on.
+	const uint64_t current = backend_.currentReplay();
+	const auto shown = std::find(shownReplays_.begin(), shownReplays_.end(), current);
 	const QSignalBlocker block(replays_);
-	replays_->setCurrentRow(current != shownReplays_.end() ? static_cast<int>(current - shownReplays_.begin())
-							       : -1);
+	replays_->setCurrentRow(shown != shownReplays_.end() ? static_cast<int>(shown - shownReplays_.begin()) : -1);
+	addTag_->setEnabled(current != 0);
+	tagName_->setEnabled(current != 0);
 }
 
 void TapeloopDock::changeSettings(void (*change)(BufferSettings &, int), int value)

@@ -12,6 +12,7 @@
 
 #include <chrono>
 #include <string>
+#include <vector>
 
 using tapeloop::BufferSettings;
 using tapeloop::obs::CaptureManager;
@@ -191,5 +192,12 @@ TEST_CASE_METHOD(ObsFixture, "the dock captures replays through the manager", "[
 	CHECK(backend.currentReplay() == second);
 	backend.pickReplay(first);
 	CHECK(backend.currentReplay() == first);
+	CHECK(backend.tagReplay(first, "goal"));
+	CHECK_FALSE(backend.tagReplay(first, " "));
+	CHECK(backend.replayTags() == std::vector<std::string>{"goal"});
+	const auto tagged = backend.replays("goal");
+	REQUIRE(tagged.size() == 1);
+	CHECK(tagged[0].id == first);
+	CHECK(tagged[0].tags == std::vector<std::string>{"goal"});
 	REQUIRE(backend.toggleRunning());
 }

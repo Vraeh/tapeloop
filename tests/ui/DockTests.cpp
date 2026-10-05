@@ -13,6 +13,7 @@
 #include <QApplication>
 #include <QKeyEvent>
 #include <QLabel>
+#include <QLineEdit>
 #include <QCheckBox>
 #include <QComboBox>
 #include <QDialog>
@@ -177,6 +178,26 @@ TEST_CASE("the dock captures replays and picks the one that goes on air")
 	CHECK(backend.picked == 1u);
 	dock.refresh();
 	CHECK(list->currentRow() == 1);
+	// A tag goes on the selected replay, and the list can show only the replays with it.
+	auto *name = child<QLineEdit>(dock, "tagName");
+	name->setText("goal");
+	child<QPushButton>(dock, "addTag")->click();
+	CHECK(name->text().isEmpty());
+	REQUIRE(list->count() == 2);
+	CHECK(list->item(1)->text().endsWith("#goal"));
+	CHECK_FALSE(list->item(0)->text().contains("#goal"));
+	auto *filter = child<QComboBox>(dock, "tagFilter");
+	REQUIRE(filter->count() == 2);
+	filter->setCurrentIndex(1);
+	REQUIRE(list->count() == 1);
+	CHECK(list->item(0)->data(Qt::UserRole).toULongLong() == 1u);
+	filter->setCurrentIndex(0);
+	CHECK(list->count() == 2);
+	// A blank name tags nothing and stays to be fixed.
+	name->setText(" ");
+	Q_EMIT name->returnPressed();
+	CHECK(name->text() == " ");
+
 	// Buffers and settings are left alone.
 	CHECK(backend.settingsChanges == 0);
 	CHECK(backend.toggles == 0);
@@ -356,7 +377,7 @@ TEST_CASE("every control of the dock can be reached with the keyboard")
 		CAPTURE(widget->objectName().toStdString());
 		CHECK((widget->focusPolicy() & Qt::TabFocus) != 0);
 	}
-	CHECK(controls == 9);
+	CHECK(controls == 11);
 }
 
 TEST_CASE("every string the dock asks for is in the locale file")

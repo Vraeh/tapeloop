@@ -22,7 +22,9 @@ public:
 	bool manualControlEnabled() const override { return manager_.manualControlEnabled(); }
 	bool toggleRunning() override { return manager_.running() ? manager_.manualStop() : manager_.manualStart(); }
 	uint64_t captureReplay() override { return manager_.captureReplay(); }
-	std::vector<ui::DockReplay> replays() const override;
+	std::vector<ui::DockReplay> replays(const std::string &tag = {}) const override;
+	std::vector<std::string> replayTags() const override;
+	bool tagReplay(uint64_t id, const std::string &tag) override { return manager_.library().addTag(id, tag); }
 	uint64_t currentReplay() const override { return manager_.library().current(); }
 	void pickReplay(uint64_t id) override { manager_.library().pick(id); }
 
