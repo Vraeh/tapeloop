@@ -73,8 +73,10 @@ target_link_libraries(
   tapeloop-obs-tests
   PRIVATE tapeloop-core tapeloop-obs tapeloop-decode OBS::libobs FFmpeg::avcodec Catch2::Catch2WithMain
 )
-# libobs loads the system's FFmpeg; the static one stays inside the test binary.
-target_link_options(tapeloop-obs-tests PRIVATE "LINKER:--exclude-libs,ALL")
+# libobs loads the system's FFmpeg; the static one stays inside the test binary. Only
+# FFmpeg's archives: Clang links the sanitizer runtimes as archives that must stay
+# exported.
+target_link_options(tapeloop-obs-tests PRIVATE "LINKER:--exclude-libs=libavcodec.a:libavutil.a")
 set_target_properties(tapeloop-obs-tests PROPERTIES BUILD_RPATH "${TAPELOOP_LIBOBS_PREFIX}/lib")
 tapeloop_core_warnings(tapeloop-obs-tests)
 

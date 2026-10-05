@@ -27,9 +27,11 @@ if(NOT APPLE)
   add_subdirectory(src/decode)
   target_link_libraries(${CMAKE_PROJECT_NAME} PRIVATE tapeloop-decode)
   target_compile_definitions(${CMAKE_PROJECT_NAME} PRIVATE TAPELOOP_FFMPEG)
-  # OBS loads its own FFmpeg into the same process; ours stays inside the plugin.
+  # OBS loads its own FFmpeg into the same process; ours stays inside the plugin. Only
+  # FFmpeg's archives: hiding every archive would also hide the runtimes some
+  # sanitizers link statically.
   if(CMAKE_SYSTEM_NAME STREQUAL "Linux")
-    target_link_options(${CMAKE_PROJECT_NAME} PRIVATE "LINKER:--exclude-libs,ALL")
+    target_link_options(${CMAKE_PROJECT_NAME} PRIVATE "LINKER:--exclude-libs=libavcodec.a:libavutil.a")
   endif()
 endif()
 
