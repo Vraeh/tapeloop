@@ -8,6 +8,7 @@
 #include <chrono>
 #include <cstdint>
 #include <new>
+#include <optional>
 #include <span>
 
 namespace tapeloop::obs {
@@ -45,18 +46,25 @@ bool start(void *data) noexcept
 		return false;
 	}
 
+	obs_encoder_t *encoder = obs_output_get_video_encoder(capture.output);
+	const char *codecName = obs_encoder_get_codec(encoder);
+	const std::optional<VideoCodec> codec = videoCodecFromName(codecName ? codecName : "");
+	if (!codec) {
+		blog(LOG_WARNING, "[tapeloop] A replay cannot hold %s", codecName ? codecName : "an unknown codec");
+		return false;
+	}
 	// Some encoders only know their configuration after the first keyframe; those repeat
 	// it in the stream.
 	uint8_t *config = nullptr;
 	size_t size = 0;
-	if (!obs_encoder_get_extra_data(obs_output_get_video_encoder(capture.output), &config, &size)) {
+	if (!obs_encoder_get_extra_data(encoder, &config, &size)) {
 		size = 0;
 	}
 	try {
 		if (capture.target->clearOnStart) {
 			capture.target->buffer->clear();
 		}
-		capture.target->buffer->setCodecConfig(std::span<const uint8_t>(config, size));
+		capture.target->buffer->setCodecConfig(*codec, std::span<const uint8_t>(config, size));
 	} catch (...) {
 		return false;
 	}

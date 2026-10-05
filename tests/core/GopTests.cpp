@@ -15,6 +15,7 @@
 #include <vector>
 
 using tapeloop::CodecConfig;
+using tapeloop::VideoCodec;
 using tapeloop::EncodedPacket;
 using tapeloop::GopBuilder;
 using tapeloop::Nanoseconds;
@@ -118,7 +119,7 @@ TEST_CASE("GopBuilder gives every GOP the codec configuration it holds")
 
 	auto first = std::make_shared<const CodecConfig>(CodecConfig{0, 0, 0, 1, 0x67});
 	const CodecConfig *firstAddress = first.get();
-	builder.setCodecConfig(first);
+	builder.setCodecConfig(VideoCodec::H264, first);
 	std::vector<std::shared_ptr<const tapeloop::Gop>> gops;
 	for (int gop = 0; gop < 2; ++gop) {
 		for (int i = 0; i < 3; ++i) {
@@ -135,7 +136,7 @@ TEST_CASE("GopBuilder gives every GOP the codec configuration it holds")
 		CHECK(gop->codecConfig() == firstAddress);
 	}
 
-	builder.setCodecConfig(std::make_shared<const CodecConfig>(CodecConfig{0, 0, 0, 1, 0x40}));
+	builder.setCodecConfig(VideoCodec::H264, std::make_shared<const CodecConfig>(CodecConfig{0, 0, 0, 1, 0x40}));
 	builder.append(encoder.next());
 	const auto next = builder.seal();
 	REQUIRE(next->codecConfig() != nullptr);
@@ -158,7 +159,7 @@ TEST_CASE("GopBuilder does not allocate per packet in steady state")
 	config.frameSize = 5'000;
 	SyntheticEncoder encoder(config);
 	GopBuilder builder(encoder.frameDuration());
-	builder.setCodecConfig(std::make_shared<const CodecConfig>(CodecConfig(40, 0x42)));
+	builder.setCodecConfig(VideoCodec::H264, std::make_shared<const CodecConfig>(CodecConfig(40, 0x42)));
 
 	// The first GOPs size the buffers.
 	for (int i = 0; i < 90; ++i) {
@@ -228,4 +229,34 @@ TEST_CASE("GopBuilder loses nothing when sealing fails")
 		REQUIRE(gop->packets().size() == 5);
 		CHECK(tapeloop::test::hasExpectedBytes(*gop));
 	}
+}
+
+TEST_CASE("GopBuilder gives every GOP the codec of its run")
+{
+	SyntheticEncoder::Config config;
+	config.gopLength = 2;
+	SyntheticEncoder encoder(config);
+	GopBuilder builder(encoder.frameDuration());
+	CHECK(builder.codec() == VideoCodec::H264);
+
+	builder.append(encoder.next());
+	builder.append(encoder.next());
+	CHECK(builder.seal()->codec() == VideoCodec::H264);
+
+	builder.setCodecConfig(VideoCodec::Hevc, nullptr);
+	builder.append(encoder.next());
+	CHECK(builder.snapshot()->codec() == VideoCodec::Hevc);
+	builder.append(encoder.next());
+	const auto hevc = builder.seal();
+	CHECK(hevc->codec() == VideoCodec::Hevc);
+	CHECK(hevc->codecConfig() == nullptr);
+}
+
+TEST_CASE("codec names map to the codecs a replay holds")
+{
+	CHECK(tapeloop::videoCodecFromName("h264") == VideoCodec::H264);
+	CHECK(tapeloop::videoCodecFromName("hevc") == VideoCodec::Hevc);
+	CHECK_FALSE(tapeloop::videoCodecFromName("av1"));
+	CHECK_FALSE(tapeloop::videoCodecFromName("H264"));
+	CHECK_FALSE(tapeloop::videoCodecFromName(""));
 }
