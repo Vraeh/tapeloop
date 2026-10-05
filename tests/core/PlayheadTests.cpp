@@ -417,23 +417,88 @@ TEST_CASE("Playhead stops paused when it lands exactly on a bound")
 	CHECK_FALSE(playhead.playing());
 }
 
-TEST_CASE("Playhead does not start playing at the bound it is heading for")
+TEST_CASE("Playhead starts again from the other end when played at the end")
 {
 	Playhead playhead = loaded(120);
 	playhead.seek(frameTime(119));
 	playhead.play();
+	CHECK(playhead.playing());
+	CHECK(playhead.position() == frameTime(0));
+
+	playhead.advance(frameTime(119) - frameTime(0));
 	CHECK_FALSE(playhead.playing());
 	playhead.togglePause();
-	CHECK_FALSE(playhead.playing());
+	CHECK(playhead.playing());
+	CHECK(playhead.position() == frameTime(0));
 
 	playhead.reverse();
+	playhead.advance(1s);
+	CHECK_FALSE(playhead.playing());
+	CHECK(playhead.atStart());
 	playhead.play();
 	CHECK(playhead.playing());
+	CHECK(playhead.position() == frameTime(119));
 
-	playhead.seek(frameTime(0));
-	playhead.pause();
+	SECTION("from the middle it carries on")
+	{
+		playhead.pause();
+		playhead.seek(frameTime(60));
+		playhead.play();
+		CHECK(playhead.playing());
+		CHECK(playhead.position() == frameTime(60));
+		CHECK(playhead.rate() == -1000);
+	}
+}
+
+TEST_CASE("Playhead starts again from the other end without a leftover fraction")
+{
+	// At half speed a scrub of 201 ns covers 100.5 ns: it ends on the last frame with
+	// half a nanosecond carried over, which a restart must not keep.
+	Playhead playhead;
+	playhead.load({0ns, 100ns});
+	playhead.beginScrub(ScrubDirection::Forward);
+	playhead.advance(201ns);
+	playhead.endScrub();
+	REQUIRE(playhead.position() == 100ns);
+
+	playhead.setRate(500);
+	playhead.play();
+	REQUIRE(playhead.position() == 0ns);
+	playhead.advance(1ns);
+	CHECK(playhead.position() == 0ns);
+	playhead.advance(1ns);
+	CHECK(playhead.position() == 1ns);
+}
+
+TEST_CASE("Playhead starts again from the end without a leftover fraction")
+{
+	// The same in reverse: a backward scrub of 199 ns at half speed ends on the first
+	// frame with half a nanosecond still to go.
+	Playhead playhead;
+	playhead.load({0ns, 100ns});
+	playhead.seek(100ns);
+	playhead.beginScrub(ScrubDirection::Backward);
+	playhead.advance(199ns);
+	playhead.endScrub();
+	REQUIRE(playhead.position() == 0ns);
+
+	playhead.setRate(-500);
+	playhead.play();
+	REQUIRE(playhead.position() == 100ns);
+	playhead.advance(1ns);
+	CHECK(playhead.position() == 99ns);
+}
+
+TEST_CASE("Playhead with a single frame has nowhere to play")
+{
+	Playhead playhead;
+	playhead.load({5s});
+	playhead.play();
+	CHECK_FALSE(playhead.playing());
+	playhead.reverse();
 	playhead.togglePause();
 	CHECK_FALSE(playhead.playing());
+	CHECK(playhead.position() == 5s);
 }
 
 TEST_CASE("Playhead load stops playback and scrubbing")
@@ -448,7 +513,22 @@ TEST_CASE("Playhead load stops playback and scrubbing")
 	CHECK_FALSE(playhead.playing());
 	CHECK_FALSE(playhead.scrubbing());
 	CHECK(playhead.position() == frameTime(0));
-	CHECK(playhead.rate() == -500);
+}
+
+TEST_CASE("Playhead load keeps the speed and plays forward")
+{
+	Playhead playhead = loaded(120);
+	playhead.setRate(-500);
+	playhead.load(frames(30));
+	CHECK(playhead.rate() == 500);
+
+	playhead.setRate(2000);
+	playhead.load(frames(30));
+	CHECK(playhead.rate() == 2000);
+
+	playhead.play();
+	playhead.advance(10ms);
+	CHECK(playhead.position() == frameTime(0) + 20ms);
 }
 
 TEST_CASE("Playhead sorts and deduplicates the frame times it loads")

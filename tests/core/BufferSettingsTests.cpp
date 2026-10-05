@@ -212,3 +212,27 @@ TEST_CASE("activation of sources off air is global with a per source override")
 	CHECK(loaded->sources.at("a").activateOffAir == true);
 	CHECK_FALSE(loaded->sources.at("b").activateOffAir.has_value());
 }
+
+TEST_CASE("only a capturable source takes the settings of a name, but any source counts as present")
+{
+	BufferSettings settings;
+	settings.sources["gone"] = {true, std::nullopt, std::nullopt, std::nullopt};
+	settings.sources["audio"] = {false, 30s, std::nullopt, std::nullopt};
+	const std::map<std::string, std::string> names = {{"gone", "Mic"}, {"audio", "Mic"}};
+
+	SECTION("no capturable source has the name")
+	{
+		const auto moves = tapeloop::matchSourcesByName(settings, names, {{"audio", "Mic", false}});
+		CHECK(moves.empty());
+		CHECK(settings.sources.contains("gone"));
+	}
+	SECTION("a capturable source has it")
+	{
+		// Were the audio input taken as missing, it would claim the camera too and
+		// neither would move.
+		const auto moves = tapeloop::matchSourcesByName(settings, names,
+								{{"audio", "Mic", false}, {"camera", "Mic", true}});
+		CHECK(moves == std::map<std::string, std::string>{{"gone", "camera"}});
+	}
+	CHECK(settings.sources.at("audio").length == 30s);
+}
