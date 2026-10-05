@@ -68,7 +68,6 @@ public:
 	// same object, valid as long as any of them lives. Null when the encoder reported
 	// none.
 	const CodecConfig *codecConfig() const noexcept { return codecConfig_.get(); }
-	// The codec of the run the GOP belongs to.
 	VideoCodec codec() const noexcept { return codec_; }
 
 	Nanoseconds startTime() const noexcept { return packets_.front().time; }
