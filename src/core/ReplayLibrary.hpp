@@ -14,9 +14,8 @@
 
 namespace tapeloop {
 
-// The replays captured so far (D-060, D-065). A replay is a moment: its id, the range it
-// covers, which ends when it was captured, and a clip of every source that held
-// something. The library adds tags, which exist on their own so that one can be made
+// The replays captured so far. A replay is a moment: its id, the range it covers, which
+// ends when it was captured, and a clip of every source that held something. The library adds tags, which exist on their own so that one can be made
 // before any replay carries it, and the replay that goes on air next. Not thread-safe:
 // the caller owns the synchronization.
 class ReplayLibrary {

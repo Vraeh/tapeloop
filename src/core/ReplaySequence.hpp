@@ -18,8 +18,8 @@ struct SequenceEntry {
 	bool shown = true;
 };
 
-// The sources a replay shows, in the order it shows them (D-060). A hidden source keeps its
-// place, so the order survives hiding it for a while.
+// The sources a replay shows, in the order it shows them. A hidden source keeps its place,
+// so the order survives hiding it for a while.
 class ReplaySequence {
 public:
 	std::span<const SequenceEntry> entries() const noexcept { return entries_; }

@@ -20,10 +20,10 @@ struct AirConfig {
 	bool outro = false;
 };
 
-// One replay on air (D-060, D-061, D-064): its intro, then every shown source it has a
-// clip of, in list order, then its outro, then back to live. It only decides: the caller
-// plays each part and reports when it ends, passing back the token of that part, so that
-// a late report for a part already replaced changes nothing.
+// One replay on air: its intro, then every shown source it has a clip of, in list order,
+// then its outro, then back to live. It only decides: the caller plays each part and
+// reports when it ends, passing back the token of that part, so that a late report for a
+// part already replaced changes nothing.
 //
 // Reordering, showing and hiding while a replay plays act on what has not played yet:
 // the source after the one playing is the next shown one below it in the list when it
@@ -56,7 +56,7 @@ public:
 	// Changes every time a part goes on air or the replay goes back to live.
 	uint64_t token() const noexcept { return token_; }
 	// The speed the sources play at. Each replay starts at 1x, and the speed chosen
-	// stays for the next source (D-064).
+	// stays for the next source.
 	double speed() const noexcept { return speed_; }
 	// False, changing nothing, for a speed that is not positive.
 	bool setSpeed(double speed) noexcept;
