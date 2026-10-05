@@ -424,6 +424,9 @@ TEST_CASE("replay settings for each encoder family")
 			{"bframes", false},
 		};
 		CHECK(settingsFor("com.apple.videotoolbox.videoencoder.ave.avc", "h264", Vendor::Apple) == expected);
+		EncoderSettings hevc = expected;
+		hevc["bitrate"] = int64_t{17'982};
+		CHECK(settingsFor("com.apple.videotoolbox.videoencoder.ave.hevc", "hevc", Vendor::Apple) == hevc);
 	}
 
 	SECTION("x264")
@@ -469,10 +472,16 @@ TEST_CASE("replay settings keep the QSV bitrate within 16 bits")
 	const EncoderSettings intel =
 		tapeloop::buildReplaySettings(encoder("obs_qsv11_v2", "h264", Vendor::Intel, true), params);
 	CHECK(intel.at("bitrate") == tapeloop::SettingValue(int64_t{50'000}));
+	const EncoderSettings intelHevc =
+		tapeloop::buildReplaySettings(encoder("obs_qsv11_hevc", "hevc", Vendor::Intel, true), params);
+	CHECK(intelHevc.at("bitrate") == tapeloop::SettingValue(int64_t{50'000}));
 
 	const EncoderSettings nvidia =
 		tapeloop::buildReplaySettings(encoder("obs_nvenc_h264_tex", "h264", Vendor::Nvidia, true), params);
 	CHECK(nvidia.at("bitrate") == tapeloop::SettingValue(int64_t{100'000}));
+	const EncoderSettings nvidiaHevc =
+		tapeloop::buildReplaySettings(encoder("obs_nvenc_hevc_tex", "hevc", Vendor::Nvidia, true), params);
+	CHECK(nvidiaHevc.at("bitrate") == tapeloop::SettingValue(int64_t{72'000}));
 }
 
 TEST_CASE("replay settings stay within what OBS accepts on odd input")

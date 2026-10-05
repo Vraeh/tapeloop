@@ -43,7 +43,7 @@ Vendor adapterVendor(std::string_view name);
 
 struct EncoderPreferences {
 	// Try each vendor's HEVC encoder before its H.264 one. HEVC gives the same picture at
-	// about half the bitrate, so half the memory per buffer and half the disk per replay.
+	// a lower bitrate, so less memory per buffer and less disk per replay.
 	bool preferHevc = true;
 };
 
