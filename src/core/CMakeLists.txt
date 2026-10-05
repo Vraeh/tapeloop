@@ -22,6 +22,7 @@ target_sources(
     Clip.hpp
     EncoderPolicy.cpp
     EncoderPolicy.hpp
+    FrameDecoder.hpp
     Gop.cpp
     Gop.hpp
     MediaTime.cpp
