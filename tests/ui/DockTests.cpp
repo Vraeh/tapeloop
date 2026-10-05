@@ -10,6 +10,7 @@
 #include <catch2/catch_test_macros.hpp>
 
 #include <QAbstractButton>
+#include <QAbstractItemView>
 #include <QApplication>
 #include <QKeyEvent>
 #include <QLabel>
@@ -143,12 +144,54 @@ TEST_CASE("the advanced settings choose the replay encoder and whether other car
 	otherAdapters->setChecked(false);
 	CHECK_FALSE(backend.current.allowOtherAdapters);
 
-	// A choice that is no longer offered stays shown until another is picked.
+	// A choice that is no longer offered stays shown until another is picked, and keeping
+	// replays in H.264 waits while an encoder is chosen.
+	auto *forceH264 = child<QCheckBox>(dock, "forceH264");
+	CHECK(forceH264->isEnabled());
 	backend.current.replayEncoder = "obs_qsv11_v2";
 	dock.refresh();
 	CHECK(encoder->currentData().toString() == "obs_qsv11_v2");
 	CHECK(encoder->count() == 4);
-	CHECK(child<QCheckBox>(dock, "forceH264")->parentWidget() == settings);
+	CHECK(forceH264->parentWidget() == settings);
+	CHECK_FALSE(forceH264->isEnabled());
+
+	// The list follows what OBS offers.
+	backend.choices.push_back({"obs_qsv11_v2", "QuickSync H.264"});
+	dock.refresh();
+	CHECK(encoder->count() == 4);
+	CHECK(encoder->currentText() == "QuickSync H.264");
+
+	// Tab goes through the advanced settings in the order they show.
+	const auto nextFocus = [](QWidget *from) {
+		QWidget *next = from->nextInFocusChain();
+		while (next != from && (!(next->focusPolicy() & Qt::TabFocus) || next->objectName().isEmpty())) {
+			next = next->nextInFocusChain();
+		}
+		return next->objectName();
+	};
+	CHECK(nextFocus(advanced) == "replayEncoder");
+	CHECK(nextFocus(encoder) == "otherAdapters");
+	CHECK(nextFocus(otherAdapters) == "forceH264");
+	CHECK(nextFocus(forceH264) == "startStop");
+}
+
+TEST_CASE("the encoder list holds still while it is open")
+{
+	FakeBackend backend = backendWithSources();
+	TapeloopDock dock(backend, localeText());
+	dock.show();
+	child<QCheckBox>(dock, "advanced")->setChecked(true);
+	auto *encoder = child<QComboBox>(dock, "replayEncoder");
+	encoder->showPopup();
+	REQUIRE(encoder->view()->isVisible());
+	encoder->view()->setCurrentIndex(encoder->model()->index(2, 0));
+	backend.choices.push_back({"obs_qsv11_v2", "QuickSync H.264"});
+	dock.refresh();
+	CHECK(encoder->view()->currentIndex().row() == 2);
+	CHECK(encoder->count() == 3);
+	encoder->hidePopup();
+	dock.refresh();
+	CHECK(encoder->count() == 4);
 }
 
 TEST_CASE("a source on an encoder path that is not the optimal one says so")

@@ -5,6 +5,7 @@
 
 #include "ui/SourceSettingsDialog.hpp"
 
+#include <QAbstractItemView>
 #include <QCheckBox>
 #include <QComboBox>
 #include <QFormLayout>
@@ -166,14 +167,18 @@ TapeloopDock::TapeloopDock(DockBackend &backend, TextLookup text, QWidget *paren
 	});
 	connect(advanced_, &QCheckBox::toggled, advancedSettings_, &QWidget::setVisible);
 	connect(replayEncoder_, &QComboBox::currentIndexChanged, this, [this](int index) {
-		const std::string id = replayEncoder_->itemData(index).toString().toStdString();
 		guarded([&] {
 			BufferSettings settings = backend_.settings();
-			settings.replayEncoder = id;
+			settings.replayEncoder = replayEncoder_->itemData(index).toString().toStdString();
 			backend_.setSettings(settings);
 		});
 		refresh();
 	});
+	// The advanced settings follow the switch, before the controls after them.
+	setTabOrder(advanced_, replayEncoder_);
+	setTabOrder(replayEncoder_, otherAdapters_);
+	setTabOrder(otherAdapters_, forceH264_);
+	setTabOrder(forceH264_, startStop_);
 	connect(otherAdapters_, &QCheckBox::toggled, this, [this](bool checked) {
 		changeSettings([](BufferSettings &settings, int on) { settings.allowOtherAdapters = on != 0; },
 			       checked ? 1 : 0);
@@ -231,19 +236,10 @@ void TapeloopDock::refresh()
 		startWithOutputs_->setChecked(settings.startWithOutputs);
 		activateOffAir_->setChecked(settings.activateOffAir);
 		forceH264_->setChecked(settings.forceH264);
+		// A chosen encoder decides the codec itself.
+		forceH264_->setEnabled(settings.replayEncoder.empty());
 		otherAdapters_->setChecked(settings.allowOtherAdapters);
-		// The encoders are listed afresh each time, since OBS may load more; a choice no
-		// longer offered stays, under its id, until the user picks another.
-		replayEncoder_->clear();
-		replayEncoder_->addItem(text_("Dock.ReplayEncoder.Automatic"), QString());
-		for (const EncoderChoice &choice : backend_.encoderChoices()) {
-			replayEncoder_->addItem(QString::fromStdString(choice.name), QString::fromStdString(choice.id));
-		}
-		const QString chosen = QString::fromStdString(settings.replayEncoder);
-		if (replayEncoder_->findData(chosen) < 0) {
-			replayEncoder_->addItem(chosen, chosen);
-		}
-		replayEncoder_->setCurrentIndex(replayEncoder_->findData(chosen));
+		updateEncoders(settings.replayEncoder);
 
 		startStop_->setText(backend_.running() ? text_("Dock.Stop") : text_("Dock.Start"));
 		const bool enabled = backend_.manualControlEnabled();
@@ -360,6 +356,35 @@ QString TapeloopDock::statusText(const DockSource &source) const
 		break;
 	}
 	return text_("Dock.Status.Stopped");
+}
+
+void TapeloopDock::updateEncoders(const std::string &chosen)
+{
+	// Not while its list is open, which would move the user off the row they are on.
+	if (replayEncoder_->view()->isVisible()) {
+		return;
+	}
+	// OBS may load more encoders, so the list is checked each time and rebuilt when it
+	// changes; a choice no longer offered stays, under its id, until another is picked.
+	std::vector<std::pair<std::string, std::string>> encoders;
+	for (EncoderChoice &choice : backend_.encoderChoices()) {
+		encoders.emplace_back(std::move(choice.id), std::move(choice.name));
+	}
+	const bool offered = chosen.empty() || std::any_of(encoders.begin(), encoders.end(), [&](const auto &encoder) {
+				     return encoder.first == chosen;
+			     });
+	if (!offered) {
+		encoders.emplace_back(chosen, chosen);
+	}
+	if (encoders != shownEncoders_) {
+		replayEncoder_->clear();
+		replayEncoder_->addItem(text_("Dock.ReplayEncoder.Automatic"), QString());
+		for (const auto &[id, name] : encoders) {
+			replayEncoder_->addItem(QString::fromStdString(name), QString::fromStdString(id));
+		}
+		shownEncoders_ = std::move(encoders);
+	}
+	replayEncoder_->setCurrentIndex(replayEncoder_->findData(QString::fromStdString(chosen)));
 }
 
 void TapeloopDock::changeSettings(void (*change)(BufferSettings &, int), int value)

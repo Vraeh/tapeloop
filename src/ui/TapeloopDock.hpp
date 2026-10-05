@@ -9,6 +9,7 @@
 #include <QWidget>
 
 #include <string>
+#include <utility>
 #include <vector>
 
 class QCheckBox;
@@ -40,6 +41,7 @@ private:
 	void rebuildSources(const std::vector<DockSource> &sources);
 	void updateSources(const std::vector<DockSource> &sources);
 	QString statusText(const DockSource &source) const;
+	void updateEncoders(const std::string &chosen);
 	void changeSettings(void (*change)(BufferSettings &, int), int value);
 	void openSourceSettings(int row);
 	void applySourceSettings(const std::string &uuid, const SourceSettings &chosen);
@@ -47,6 +49,8 @@ private:
 	DockBackend &backend_;
 	TextLookup text_;
 	std::vector<std::string> shownUuids_;
+	// What the encoder list holds, as id and name pairs.
+	std::vector<std::pair<std::string, std::string>> shownEncoders_;
 	std::vector<std::string> shownNames_;
 	QTableWidget *sources_;
 	QPushButton *sourceSettings_;
