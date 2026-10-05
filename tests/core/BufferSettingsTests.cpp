@@ -35,9 +35,9 @@ TEST_CASE("per source overrides take the place of the global settings")
 	BufferSettings settings;
 	settings.length = 90s;
 	settings.resolution = {ResolutionMode::Fixed, 720};
-	settings.sources["a"] = {true, 30s, ReplayResolution{ResolutionMode::Output, 1080}};
-	settings.sources["b"] = {true, std::nullopt, std::nullopt};
-	settings.sources["c"] = {false, 120s, std::nullopt};
+	settings.sources["a"] = {true, 30s, ReplayResolution{ResolutionMode::Output, 1080}, std::nullopt};
+	settings.sources["b"] = {true, std::nullopt, std::nullopt, std::nullopt};
+	settings.sources["c"] = {false, 120s, std::nullopt, std::nullopt};
 
 	CHECK(settings.lengthFor("a") == 30s);
 	CHECK(settings.resolutionFor("a").mode == ResolutionMode::Output);
@@ -62,9 +62,9 @@ TEST_CASE("buffer settings survive a save and a load")
 	settings.resolution = {ResolutionMode::Output, 1080};
 	settings.startWithOutputs = false;
 	settings.forceH264 = true;
-	settings.sources["a"] = {true, 120s, ReplayResolution{ResolutionMode::Fixed, 2160}};
-	settings.sources["b"] = {false, std::nullopt, ReplayResolution{ResolutionMode::Canvas, 1080}};
-	settings.sources["c"] = {true, std::nullopt, std::nullopt};
+	settings.sources["a"] = {true, 120s, ReplayResolution{ResolutionMode::Fixed, 2160}, std::nullopt};
+	settings.sources["b"] = {false, std::nullopt, ReplayResolution{ResolutionMode::Canvas, 1080}, std::nullopt};
+	settings.sources["c"] = {true, std::nullopt, std::nullopt, std::nullopt};
 
 	const SavedSettings saved = tapeloop::saveSettings(settings);
 	CHECK(saved.version == tapeloop::kSettingsVersion);
@@ -96,9 +96,9 @@ TEST_CASE("loaded settings are brought back into range")
 	saved.lengthSeconds = 5;
 	saved.resolution = "sideways";
 	saved.height = 1080;
-	saved.sources.push_back({"a", "Camera", true, 100'000, std::string("fixed"), 999});
-	saved.sources.push_back({"b", "", true, -40, std::string("fixed"), std::nullopt});
-	saved.sources.push_back({"", "Nameless", true, std::nullopt, std::nullopt, std::nullopt});
+	saved.sources.push_back({"a", "Camera", true, 100'000, std::string("fixed"), 999, std::nullopt});
+	saved.sources.push_back({"b", "", true, -40, std::string("fixed"), std::nullopt, std::nullopt});
+	saved.sources.push_back({"", "Nameless", true, std::nullopt, std::nullopt, std::nullopt, std::nullopt});
 
 	const std::optional<BufferSettings> loaded = tapeloop::loadSettings(saved);
 	REQUIRE(loaded);
@@ -131,9 +131,10 @@ TEST_CASE("buffer lengths and fixed heights stay within what the dock offers")
 TEST_CASE("settings of a UUID that is gone move to the one source with its saved name")
 {
 	BufferSettings settings;
-	settings.sources["old-camera"] = {true, 30s, std::nullopt};
-	settings.sources["old-wide"] = {false, std::nullopt, ReplayResolution{ResolutionMode::Fixed, 720}};
-	settings.sources["kept"] = {true, std::nullopt, std::nullopt};
+	settings.sources["old-camera"] = {true, 30s, std::nullopt, std::nullopt};
+	settings.sources["old-wide"] = {false, std::nullopt, ReplayResolution{ResolutionMode::Fixed, 720},
+					std::nullopt};
+	settings.sources["kept"] = {true, std::nullopt, std::nullopt, std::nullopt};
 	const std::map<std::string, std::string> names = {{"old-camera", "Camera"},
 							  {"old-wide", "Wide"},
 							  {"kept", "Kept"}};
@@ -145,7 +146,7 @@ TEST_CASE("settings of a UUID that is gone move to the one source with its saved
 	const auto moves = tapeloop::matchSourcesByName(settings, names, sources);
 	CHECK(moves == std::map<std::string, std::string>{{"old-camera", "new-camera"}, {"old-wide", "new-wide"}});
 	CHECK(settings.sources.size() == 3);
-	CHECK(settings.sources.at("new-camera") == SourceSettings{true, 30s, std::nullopt});
+	CHECK(settings.sources.at("new-camera") == SourceSettings{true, 30s, std::nullopt, std::nullopt});
 	CHECK(settings.sources.at("new-wide").resolution == ReplayResolution{ResolutionMode::Fixed, 720});
 	CHECK(settings.sources.at("kept").selected);
 }
@@ -160,7 +161,7 @@ TEST_CASE("a saved name matches nothing when the choice is not clear")
 	SECTION("two sources share the name")
 	{
 		BufferSettings settings;
-		settings.sources["gone"] = {true, std::nullopt, std::nullopt};
+		settings.sources["gone"] = {true, std::nullopt, std::nullopt, std::nullopt};
 		const auto moves =
 			tapeloop::matchSourcesByName(settings, names, {{"first", "Camera"}, {"second", "Camera"}});
 		CHECK(moves.empty());
@@ -170,8 +171,8 @@ TEST_CASE("a saved name matches nothing when the choice is not clear")
 	SECTION("two missing UUIDs claim the same source")
 	{
 		BufferSettings settings;
-		settings.sources["gone"] = {true, std::nullopt, std::nullopt};
-		settings.sources["also-gone"] = {false, 30s, std::nullopt};
+		settings.sources["gone"] = {true, std::nullopt, std::nullopt, std::nullopt};
+		settings.sources["also-gone"] = {false, 30s, std::nullopt, std::nullopt};
 		const auto moves = tapeloop::matchSourcesByName(settings, names, {{"camera", "Camera"}});
 		CHECK(moves.empty());
 		CHECK(settings.sources.size() == 2);
@@ -180,8 +181,8 @@ TEST_CASE("a saved name matches nothing when the choice is not clear")
 	SECTION("the source with the name has settings of its own")
 	{
 		BufferSettings settings;
-		settings.sources["gone"] = {true, 30s, std::nullopt};
-		settings.sources["camera"] = {false, std::nullopt, std::nullopt};
+		settings.sources["gone"] = {true, 30s, std::nullopt, std::nullopt};
+		settings.sources["camera"] = {false, std::nullopt, std::nullopt, std::nullopt};
 		const auto moves = tapeloop::matchSourcesByName(settings, names, {{"camera", "Camera"}});
 		CHECK(moves.empty());
 		CHECK_FALSE(settings.sources.at("camera").selected);
@@ -191,20 +192,42 @@ TEST_CASE("a saved name matches nothing when the choice is not clear")
 	SECTION("no name was saved, or no source has it")
 	{
 		BufferSettings settings;
-		settings.sources["unnamed"] = {true, std::nullopt, std::nullopt};
-		settings.sources["lost"] = {true, std::nullopt, std::nullopt};
-		settings.sources["unknown"] = {true, std::nullopt, std::nullopt};
+		settings.sources["unnamed"] = {true, std::nullopt, std::nullopt, std::nullopt};
+		settings.sources["lost"] = {true, std::nullopt, std::nullopt, std::nullopt};
+		settings.sources["unknown"] = {true, std::nullopt, std::nullopt, std::nullopt};
 		const auto moves = tapeloop::matchSourcesByName(settings, names, {{"camera", ""}, {"x", "Camera"}});
 		CHECK(moves.empty());
 		CHECK(settings.sources.size() == 3);
 	}
 }
 
+TEST_CASE("activation of sources off air is global with a per source override")
+{
+	BufferSettings settings;
+	CHECK_FALSE(settings.activateFor("a"));
+	settings.sources["a"].activateOffAir = true;
+	settings.sources["b"].selected = true;
+	CHECK(settings.activateFor("a"));
+	CHECK_FALSE(settings.activateFor("b"));
+
+	settings.activateOffAir = true;
+	settings.sources["c"].activateOffAir = false;
+	CHECK(settings.activateFor("b"));
+	CHECK_FALSE(settings.activateFor("c"));
+	CHECK(settings.activateFor("unknown"));
+
+	const auto loaded = tapeloop::loadSettings(tapeloop::saveSettings(settings));
+	REQUIRE(loaded);
+	CHECK(*loaded == settings);
+	CHECK(loaded->sources.at("a").activateOffAir == true);
+	CHECK_FALSE(loaded->sources.at("b").activateOffAir.has_value());
+}
+
 TEST_CASE("only a capturable source takes the settings of a name, but any source counts as present")
 {
 	BufferSettings settings;
-	settings.sources["gone"] = {true, std::nullopt, std::nullopt};
-	settings.sources["audio"] = {false, 30s, std::nullopt};
+	settings.sources["gone"] = {true, std::nullopt, std::nullopt, std::nullopt};
+	settings.sources["audio"] = {false, 30s, std::nullopt, std::nullopt};
 	const std::map<std::string, std::string> names = {{"gone", "Mic"}, {"audio", "Mic"}};
 
 	SECTION("no capturable source has the name")

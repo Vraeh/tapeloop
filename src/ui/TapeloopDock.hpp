@@ -53,6 +53,7 @@ private:
 	QSpinBox *length_;
 	QComboBox *resolution_;
 	QCheckBox *startWithOutputs_;
+	QCheckBox *activateOffAir_;
 	QCheckBox *forceH264_;
 	QLabel *note_;
 	QPushButton *startStop_;

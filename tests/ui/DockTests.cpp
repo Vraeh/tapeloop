@@ -113,6 +113,38 @@ TEST_CASE("selected sources show the state of their buffer")
 	CHECK(table->item(2, 1)->text().isEmpty());
 }
 
+TEST_CASE("a media source left out of activation says why")
+{
+	FakeBackend backend = backendWithSources();
+	backend.shown[0].state = SourceState::Waiting;
+	backend.shown[0].activationLeftOut = true;
+	backend.current.sources["uuid-camera-1"].selected = true;
+	TapeloopDock dock(backend, localeText());
+	const QTableWidgetItem *status = child<QTableWidget>(dock, "sources")->item(0, 1);
+	CHECK_FALSE(status->icon().isNull());
+	CHECK(status->toolTip().contains("restarts when it becomes active"));
+
+	// Unselected, it has nothing to explain.
+	backend.current.sources["uuid-camera-1"].selected = false;
+	dock.refresh();
+	const QTableWidgetItem *refreshed = child<QTableWidget>(dock, "sources")->item(0, 1);
+	CHECK(refreshed->icon().isNull());
+	CHECK(refreshed->toolTip().isEmpty());
+}
+
+TEST_CASE("the activation checkbox follows the settings")
+{
+	FakeBackend backend = backendWithSources();
+	TapeloopDock dock(backend, localeText());
+	auto *activate = child<QCheckBox>(dock, "activateOffAir");
+	CHECK_FALSE(activate->isChecked());
+	backend.current.activateOffAir = true;
+	dock.refresh();
+	CHECK(activate->isChecked());
+	CHECK(activate->toolTip().contains("monitor"));
+	CHECK(backend.settingsChanges == 0);
+}
+
 TEST_CASE("a source waiting for a picture says so with an icon and a tooltip")
 {
 	FakeBackend backend = backendWithSources();
@@ -189,6 +221,11 @@ TEST_CASE("the global settings in the dock reach the backend")
 	startWithOutputs->setChecked(false);
 	CHECK_FALSE(backend.current.startWithOutputs);
 
+	auto *activate = child<QCheckBox>(dock, "activateOffAir");
+	CHECK_FALSE(activate->isChecked());
+	CHECK_FALSE(activate->toolTip().isEmpty());
+	activate->setChecked(true);
+	CHECK(backend.current.activateOffAir);
 	auto *forceH264 = child<QCheckBox>(dock, "forceH264");
 	CHECK_FALSE(forceH264->isChecked());
 	CHECK_FALSE(forceH264->toolTip().isEmpty());
@@ -214,15 +251,24 @@ TEST_CASE("the source settings dialog sets and clears a source's own settings")
 	child<QCheckBox>(dialog, "ownResolution")->setChecked(true);
 	child<QComboBox>(dialog, "resolution")->setCurrentIndex(6);
 
+	auto *activate = child<QCheckBox>(dialog, "activate");
+	CHECK_FALSE(activate->isEnabled());
+	child<QCheckBox>(dialog, "ownActivation")->setChecked(true);
+	CHECK(activate->isEnabled());
+	activate->setChecked(true);
+
 	SourceSettings result = dialog.result();
 	CHECK(result.length == 30s);
 	CHECK(result.resolution == ReplayResolution{ResolutionMode::Fixed, 2160});
+	CHECK(result.activateOffAir == true);
 
 	child<QCheckBox>(dialog, "ownLength")->setChecked(false);
 	child<QCheckBox>(dialog, "ownResolution")->setChecked(false);
+	child<QCheckBox>(dialog, "ownActivation")->setChecked(false);
 	result = dialog.result();
 	CHECK_FALSE(result.length);
 	CHECK_FALSE(result.resolution);
+	CHECK_FALSE(result.activateOffAir);
 }
 
 TEST_CASE("every control of the dock can be reached with the keyboard")
@@ -241,7 +287,7 @@ TEST_CASE("every control of the dock can be reached with the keyboard")
 		CAPTURE(widget->objectName().toStdString());
 		CHECK((widget->focusPolicy() & Qt::TabFocus) != 0);
 	}
-	CHECK(controls == 7);
+	CHECK(controls == 8);
 }
 
 TEST_CASE("every string the dock asks for is in the locale file")
@@ -303,6 +349,8 @@ TEST_CASE("the dock's source settings change only that source's own settings")
 	CHECK(dialog->windowTitle() == "Settings for Scoreboard");
 	child<QCheckBox>(*dialog, "ownLength")->setChecked(true);
 	child<QSpinBox>(*dialog, "length")->setValue(30);
+	child<QCheckBox>(*dialog, "ownActivation")->setChecked(true);
+	child<QCheckBox>(*dialog, "activate")->setChecked(true);
 	// A change made elsewhere while the dialog is open is not undone.
 	backend.current.sources["uuid-scoreboard"].selected = false;
 	dialog->accept();
@@ -310,6 +358,7 @@ TEST_CASE("the dock's source settings change only that source's own settings")
 	const SourceSettings &scoreboard = backend.current.sources.at("uuid-scoreboard");
 	CHECK(scoreboard.length == 30s);
 	CHECK_FALSE(scoreboard.resolution);
+	CHECK(scoreboard.activateOffAir == true);
 	CHECK_FALSE(scoreboard.selected);
 }
 
@@ -462,6 +511,7 @@ TEST_CASE("every kind of edit in the dock writes the settings once")
 	CHECK(writesOnce([&] { child<QSpinBox>(dock, "length")->setValue(45); }));
 	CHECK(writesOnce([&] { child<QComboBox>(dock, "resolution")->setCurrentIndex(4); }));
 	CHECK(writesOnce([&] { child<QCheckBox>(dock, "startWithOutputs")->setChecked(false); }));
+	CHECK(writesOnce([&] { child<QCheckBox>(dock, "activateOffAir")->setChecked(true); }));
 	CHECK(writesOnce([&] { child<QCheckBox>(dock, "forceH264")->setChecked(true); }));
 	CHECK(writesOnce([&] {
 		table->setCurrentCell(0, 0);
