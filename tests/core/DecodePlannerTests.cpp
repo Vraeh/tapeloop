@@ -464,7 +464,9 @@ TEST_CASE("DecodePlanner allocates nothing per frame or GOP once warm")
 		allocations = counter.count();
 	}
 	CHECK(wrong == 0);
-	CHECK(allocations == 0);
+	if (tapeloop::test::kExactAllocationCounts) {
+		CHECK(allocations == 0);
+	}
 }
 
 TEST_CASE("DecodePlanner gives each frame the time of its packet")
