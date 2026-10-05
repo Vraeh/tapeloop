@@ -289,3 +289,39 @@ TEST_CASE("DecodePlanner opens the decoder again after its device is lost")
 	CHECK(planner.work().opens == opens + 1);
 	CHECK(planner.work().packetsSent == sent + 6);
 }
+
+TEST_CASE("DecodePlanner reports a frame the decoder never gives without decoding again")
+{
+	FakeDecoder decoder = makeDecoder();
+	decoder.dropped = {kGopLength + 10, 10};
+	DecodePlanner planner(decoder);
+	planner.load(makeClip({{VideoCodec::H264, {1}, 3}}));
+
+	CHECK(planner.frameAt(timeOf(kGopLength + 10)).status == DecodeStatus::InvalidData);
+	const uint64_t sent = planner.work().packetsSent;
+	CHECK(planner.frameAt(timeOf(kGopLength + 10)).status == DecodeStatus::InvalidData);
+	CHECK(shows(planner, decoder, kGopLength + 11));
+	CHECK(planner.work().packetsSent == sent);
+
+	// Ahead of reverse play, the GOP with the missing frame is decoded once however
+	// often it is asked for.
+	REQUIRE(planner.prefetch(PlayDirection::Backward) == DecodeStatus::Ok);
+	const tapeloop::DecodeWork once = planner.work();
+	REQUIRE(planner.prefetch(PlayDirection::Backward) == DecodeStatus::Ok);
+	CHECK(planner.work().packetsSent == once.packetsSent);
+	CHECK(planner.work().resets == once.resets);
+	CHECK(planner.work().flushes == once.flushes);
+	CHECK(planner.frameAt(timeOf(10)).status == DecodeStatus::InvalidData);
+	CHECK(planner.work().packetsSent == once.packetsSent);
+}
+
+TEST_CASE("DecodePlanner gives back a frame no packet of the GOP has")
+{
+	FakeDecoder decoder = makeDecoder();
+	decoder.strayAfter = 2;
+	DecodePlanner planner(decoder);
+	planner.load(makeClip({{VideoCodec::H264, {1}, 1}}));
+	CHECK(shows(planner, decoder, 5));
+	CHECK(decoder.outstanding.size() == planner.heldFrames());
+	CHECK(planner.heldFrames() == 6);
+}

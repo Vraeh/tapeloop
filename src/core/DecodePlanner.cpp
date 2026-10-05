@@ -64,7 +64,9 @@ DecodeResult DecodePlanner::frameAt(Nanoseconds t)
 	lastGop_ = at.gop;
 
 	KeptGop *kept = find(at.gop);
-	if (!kept || !kept->frames[at.packet]) {
+	// A GOP the decoder has given every frame it will give needs no second pass for a
+	// frame it never gave.
+	if (!kept || (!kept->frames[at.packet] && !kept->complete)) {
 		const DecodeStatus status = decode(at.gop, at.packet);
 		if (status != DecodeStatus::Ok) {
 			return {status, {}};
@@ -88,7 +90,7 @@ DecodeStatus DecodePlanner::prefetch(PlayDirection direction)
 	}
 	const size_t previous = current - 1;
 	const KeptGop *kept = find(previous);
-	if (kept && kept->received == kept->frames.size()) {
+	if (kept && kept->complete) {
 		return DecodeStatus::Ok;
 	}
 	return decode(previous, kWholeGop);
@@ -188,6 +190,9 @@ DecodeStatus DecodePlanner::decode(size_t gop, size_t packet)
 		if (status != DecodeStatus::Ok) {
 			return fail(status);
 		}
+		if (flushed_) {
+			kept.complete = true;
+		}
 	}
 	return DecodeStatus::Ok;
 }
@@ -251,7 +256,9 @@ DecodeStatus DecodePlanner::receiveAll(KeptGop &kept)
 			continue;
 		}
 		kept.frames[*index] = frame;
-		++kept.received;
+		if (++kept.received == kept.frames.size()) {
+			kept.complete = true;
+		}
 	}
 }
 
