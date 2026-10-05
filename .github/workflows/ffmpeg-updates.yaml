@@ -2,10 +2,17 @@ name: FFmpeg Updates
 # The plugin links FFmpeg statically, so a fix in FFmpeg reaches users only through a
 # Tapeloop release. Once a week this compares the pinned version with the newest 8.1
 # point release and opens an issue, or updates the open one, when a newer one exists.
+# Only issues this workflow opened are touched, and a closed one for a release means it
+# was looked at. Run by hand with an older "pinned" to try the issue path.
 on:
   schedule:
     - cron: '17 6 * * 1'
   workflow_dispatch:
+    inputs:
+      pinned:
+        description: Compare as if this 8.1 version were pinned (for example 8.1.2)
+        required: false
+        type: string
 permissions:
   contents: read
 jobs:
@@ -28,9 +35,18 @@ jobs:
         shell: bash
         env:
           GH_TOKEN: ${{ github.token }}
+          PINNED: ${{ inputs.pinned }}
         run: |
           source_line="$(.github/scripts/ffmpeg-source)"
           read -r pinned url <<< "${source_line}"
+          if [[ -n "${PINNED}" ]]; then
+            if [[ ! "${PINNED}" =~ ^8\.1(\.[0-9]+)*$ ]]; then
+              echo "::error::pinned must be an 8.1 version"
+              exit 1
+            fi
+            pinned="${PINNED}"
+            url="https://ffmpeg.org/releases/ffmpeg-${pinned}.tar.xz"
+          fi
           tags="$(gh api repos/FFmpeg/FFmpeg/git/matching-refs/tags/n8.1 --jq '.[].ref')"
           newest="$(sed -n 's|^refs/tags/n\(8\.1\(\.[0-9]*\)*\)$|\1|p' <<< "${tags}" | sort -V | tail -1)"
           # The tag of 8.1 itself always exists, so finding none means the lookup broke.
@@ -45,10 +61,20 @@ jobs:
 
           title="FFmpeg ${newest} is available"
           body="Tapeloop builds FFmpeg ${pinned} (\`cmake/ffmpeg/BuildFFmpeg.cmake\`), and FFmpeg ${newest} is out: https://ffmpeg.org/releases/ffmpeg-${newest}.tar.xz. Check its signature, pin its SHA-256 and see whether its changes reach the H.264 and HEVC decoders."
-          number="$(gh issue list --repo "${GITHUB_REPOSITORY}" --state open --search 'FFmpeg in:title' \
-            --json number,title --jq '.[] | select(.title | test("^FFmpeg [0-9.]+ is available$")) | .number' | head -1)"
+          seen="$(gh issue list --repo "${GITHUB_REPOSITORY}" --app github-actions --state all \
+            --search "\"${title}\" in:title" --json number,title \
+            --jq "[.[] | select(.title == \"${title}\") | .number][0] // empty")"
+          if [[ -n "${seen}" ]]; then
+            echo "Issue #${seen} is about FFmpeg ${newest} already"
+            exit 0
+          fi
+          number="$(gh issue list --repo "${GITHUB_REPOSITORY}" --app github-actions --state open \
+            --search 'is available in:title' --json number,title \
+            --jq '[.[] | select(.title | test("^FFmpeg [0-9.]+ is available$")) | .number][0] // empty')"
           if [[ -n "${number}" ]]; then
             gh issue edit "${number}" --repo "${GITHUB_REPOSITORY}" --title "${title}" --body "${body}"
+            # Editing notifies no one; a comment does.
+            gh issue comment "${number}" --repo "${GITHUB_REPOSITORY}" --body "FFmpeg ${newest} is out; this issue now names it."
           else
             gh issue create --repo "${GITHUB_REPOSITORY}" --title "${title}" --body "${body}"
           fi
