@@ -477,3 +477,46 @@ TEST_CASE("DecodePlanner gives each frame the time of its packet")
 		CHECK(result.frame.time == timeOf(frame));
 	}
 }
+
+TEST_CASE("DecodePlanner decodes the whole previous GOP once ahead of reverse play")
+{
+	FakeDecoder decoder = makeDecoder();
+	DecodePlanner planner(decoder);
+	planner.load(makeClip({{VideoCodec::H264, {1}, 3}}));
+	REQUIRE(shows(planner, decoder, 2 * kGopLength + 5));
+	REQUIRE(planner.prefetch(PlayDirection::Backward) == DecodeStatus::Ok);
+	const tapeloop::DecodeWork ahead = planner.work();
+	REQUIRE(planner.prefetch(PlayDirection::Backward) == DecodeStatus::Ok);
+	CHECK(planner.work().packetsSent == ahead.packetsSent);
+	CHECK(planner.work().resets == ahead.resets);
+
+	for (int64_t frame = 2 * kGopLength - 1; frame >= kGopLength; --frame) {
+		REQUIRE(shows(planner, decoder, frame));
+	}
+	CHECK(planner.work().packetsSent == ahead.packetsSent);
+}
+
+TEST_CASE("DecodePlanner reports a frame it could not receive and starts over after it")
+{
+	FakeDecoder decoder = makeDecoder();
+	DecodePlanner planner(decoder);
+	planner.load(makeClip({{VideoCodec::H264, {1}, 1}}));
+	decoder.receiveFailure = DecodeStatus::InvalidData;
+	CHECK(planner.frameAt(timeOf(3)).status == DecodeStatus::InvalidData);
+	CHECK(shows(planner, decoder, 3));
+	CHECK(shows(planner, decoder, 4));
+}
+
+TEST_CASE("DecodePlanner closes the decoder when it loads another clip")
+{
+	FakeDecoder decoder = makeDecoder();
+	DecodePlanner planner(decoder);
+	const Clip clip = makeClip({{VideoCodec::H264, {1}, 1}});
+	planner.load(clip);
+	REQUIRE(shows(planner, decoder, 5));
+	planner.load(clip);
+	CHECK(decoder.closes == 1);
+	const uint64_t opens = planner.work().opens;
+	CHECK(shows(planner, decoder, 5));
+	CHECK(planner.work().opens == opens + 1);
+}
