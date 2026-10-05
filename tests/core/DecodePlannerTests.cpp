@@ -12,6 +12,7 @@
 #include <cstddef>
 #include <cstdint>
 #include <memory>
+#include <new>
 #include <optional>
 #include <span>
 #include <vector>
@@ -519,4 +520,54 @@ TEST_CASE("DecodePlanner closes the decoder when it loads another clip")
 	const uint64_t opens = planner.work().opens;
 	CHECK(shows(planner, decoder, 5));
 	CHECK(planner.work().opens == opens + 1);
+}
+
+TEST_CASE("DecodePlanner recovers from running out of memory for a longer GOP")
+{
+	if (!tapeloop::test::kAllocationFailures) {
+		SKIP("allocation failures cannot be injected in this configuration");
+	}
+
+	// GOPs of 10, 50 and 10 frames: the second needs more room than either kept slot.
+	SyntheticEncoder::Config config;
+	config.gopLength = 10;
+	SyntheticEncoder encoder(config);
+	GopBuilder builder(encoder.frameDuration());
+	std::vector<std::shared_ptr<const tapeloop::Gop>> gops;
+	for (const int length : {10, 50, 10}) {
+		for (int i = 0; i < length; ++i) {
+			builder.append(encoder.next());
+		}
+		gops.push_back(builder.seal());
+	}
+	const Clip clip(gops, gops.front()->startTime(), gops.back()->lastTime());
+	const auto timeAt = [&encoder](int64_t frame) {
+		return encoder.timeOf(frame);
+	};
+	FakeDecoder decoder([](int64_t pts) { return pts == 0 || pts == 10 || pts == 60; }, 0);
+	DecodePlanner planner(decoder);
+	planner.load(clip);
+	REQUIRE(planner.frameAt(timeAt(5)).status == DecodeStatus::Ok);
+	REQUIRE(planner.frameAt(timeAt(65)).status == DecodeStatus::Ok);
+
+	bool threw = false;
+	{
+		tapeloop::test::AllocationFailure failure;
+		try {
+			planner.frameAt(timeAt(40));
+		} catch (const std::bad_alloc &) {
+			threw = true;
+		}
+	}
+	REQUIRE(threw);
+
+	// Nothing may take the slot that ran out of room for a GOP it never held.
+	REQUIRE(planner.frameAt(timeAt(65)).status == DecodeStatus::Ok);
+	REQUIRE(planner.prefetch(PlayDirection::Backward) == DecodeStatus::Ok);
+	for (int64_t frame = 59; frame >= 10; --frame) {
+		const DecodeResult result = planner.frameAt(timeAt(frame));
+		REQUIRE(result.status == DecodeStatus::Ok);
+		CHECK(result.frame.pts == frame);
+	}
+	CHECK(decoder.violations == 0);
 }

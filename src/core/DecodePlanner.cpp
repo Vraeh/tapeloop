@@ -11,6 +11,8 @@ namespace tapeloop {
 namespace {
 
 constexpr size_t kWholeGop = std::numeric_limits<size_t>::max();
+// The index of no GOP, for a kept slot between two GOPs.
+constexpr size_t kNoGop = std::numeric_limits<size_t>::max();
 
 std::optional<size_t> packetOfPts(const Gop &gop, int64_t pts) noexcept
 {
@@ -126,10 +128,12 @@ DecodePlanner::KeptGop &DecodePlanner::keep(size_t gop)
 		}
 		release(*slot);
 	}
-	slot->gop = gop;
-	slot->frames.assign(clip_.gops()[gop]->packets().size(), std::nullopt);
+	// Named only once its frames are sized, so that a throw leaves a slot no GOP finds.
+	slot->gop = kNoGop;
 	slot->received = 0;
 	slot->complete = false;
+	slot->frames.assign(clip_.gops()[gop]->packets().size(), std::nullopt);
+	slot->gop = gop;
 	return *slot;
 }
 
@@ -149,6 +153,7 @@ void DecodePlanner::release(KeptGop &kept) noexcept
 		}
 	}
 	kept.received = 0;
+	kept.complete = false;
 }
 
 void DecodePlanner::releaseAll() noexcept
