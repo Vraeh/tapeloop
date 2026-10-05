@@ -17,6 +17,7 @@ obs_data_t *createSettingsData(const SavedSettings &saved)
 	obs_data_set_string(data, "resolution", saved.resolution.c_str());
 	obs_data_set_int(data, "height", saved.height);
 	obs_data_set_bool(data, "start_with_outputs", saved.startWithOutputs);
+	obs_data_set_bool(data, "activate_offair", saved.activateOffAir);
 	obs_data_set_bool(data, "force_h264", saved.forceH264);
 
 	OBSDataArrayAutoRelease sources = obs_data_array_create();
@@ -36,6 +37,9 @@ obs_data_t *createSettingsData(const SavedSettings &saved)
 		if (source.height) {
 			obs_data_set_int(entry, "height", *source.height);
 		}
+		if (source.activateOffAir) {
+			obs_data_set_bool(entry, "activate_offair", *source.activateOffAir);
+		}
 		obs_data_array_push_back(sources, entry);
 	}
 	obs_data_set_array(data, "sources", sources);
@@ -51,6 +55,7 @@ SavedSettings readSettingsData(obs_data_t *data)
 	saved.resolution = obs_data_get_string(data, "resolution");
 	saved.height = obs_data_get_int(data, "height");
 	saved.startWithOutputs = obs_data_get_bool(data, "start_with_outputs");
+	saved.activateOffAir = obs_data_get_bool(data, "activate_offair");
 	saved.forceH264 = obs_data_get_bool(data, "force_h264");
 
 	OBSDataArrayAutoRelease sources = obs_data_get_array(data, "sources");
@@ -68,6 +73,9 @@ SavedSettings readSettingsData(obs_data_t *data)
 		}
 		if (obs_data_has_user_value(entry, "height")) {
 			source.height = obs_data_get_int(entry, "height");
+		}
+		if (obs_data_has_user_value(entry, "activate_offair")) {
+			source.activateOffAir = obs_data_get_bool(entry, "activate_offair");
 		}
 		saved.sources.push_back(std::move(source));
 	}

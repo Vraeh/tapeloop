@@ -74,6 +74,7 @@ ObsFixture::ObsFixture() : allocationsBefore_(bnum_allocs())
 		loadModule("obs-x264");
 		registerTestPattern();
 		registerSilence();
+		registerTone();
 		registerTestEncoders();
 		registerBufferOutput();
 		tapeloop::obs::registerCaptureOutput();

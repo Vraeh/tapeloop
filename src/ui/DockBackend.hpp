@@ -23,6 +23,9 @@ struct DockSource {
 	SourceState state = SourceState::Stopped;
 	Nanoseconds buffered{0};
 	uint64_t bytes = 0;
+	// Not kept active off air although the settings ask: it restarts when it becomes
+	// active.
+	bool activationLeftOut = false;
 };
 
 // What the dock reads and changes. The plugin implements it on top of the capture

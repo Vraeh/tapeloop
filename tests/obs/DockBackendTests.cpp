@@ -99,6 +99,32 @@ TEST_CASE_METHOD(ObsFixture, "the dock sees a source waiting for its size", "[ob
 	REQUIRE(backend.toggleRunning());
 }
 
+TEST_CASE_METHOD(ObsFixture, "the dock sees a source left out of activation", "[obs][dock]")
+{
+	OBSSourceAutoRelease camera = createTestPattern(320, 180, "Camera");
+	OBSDataAutoRelease settings = obs_data_create();
+	obs_data_set_int(settings, "width", 320);
+	obs_data_set_int(settings, "height", 180);
+	OBSSourceAutoRelease clip = obs_source_create(tapeloop::test::kMediaStandInId, "Clip", settings, nullptr);
+
+	OfflineHost host;
+	CaptureManager manager(host);
+	ManagerDockBackend backend(manager);
+	BufferSettings selected = backend.settings();
+	selected.startWithOutputs = false;
+	selected.activateOffAir = true;
+	selected.sources[obs_source_get_uuid(camera)].selected = true;
+	selected.sources[obs_source_get_uuid(clip)].selected = true;
+	backend.setSettings(selected);
+	REQUIRE(backend.toggleRunning());
+
+	const auto sources = backend.sources();
+	REQUIRE(sources.size() == 2);
+	CHECK_FALSE(sources[0].activationLeftOut);
+	CHECK(sources[1].activationLeftOut);
+	REQUIRE(backend.toggleRunning());
+}
+
 TEST_CASE_METHOD(ObsFixture, "every settings change from the dock asks the host for one save", "[obs][dock]")
 {
 	OBSSourceAutoRelease camera = createTestPattern(320, 180, "Camera");

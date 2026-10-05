@@ -33,6 +33,9 @@ public:
 struct SourceStatus {
 	bool selected = false;
 	CaptureStats stats;
+	// The settings ask to keep it active off air, but it restarts when it becomes active,
+	// so it is not held.
+	bool activationLeftOut = false;
 };
 
 // Every selected source with its capture and buffer, started and stopped as the buffer
@@ -48,8 +51,9 @@ public:
 	const BufferSettings &settings() const noexcept { return settings_; }
 	// An edit of the settings, which the host is asked to save unless the collection
 	// holds settings of another version, kept as they came. Sources selected while the
-	// buffers run start at once and unselected ones stop and free their buffer; any other
-	// change reaches a capture at its next start.
+	// buffers run start at once and unselected ones stop and free their buffer, and
+	// activation off air reaches running captures at once; any other change reaches a
+	// capture at its next start.
 	void setSettings(BufferSettings settings);
 
 	bool running() const noexcept { return lifecycle_.running(); }
@@ -84,6 +88,24 @@ public:
 	const SourceBuffer *buffer(const std::string &uuid) const;
 
 private:
+	// Keeps a source active, as if it were on air, until reset or destroyed. Activation
+	// adds the source to no view of the program: libobs mixes into the program audio
+	// only the sources on a canvas that mixes audio, and a capture's view does not.
+	class Activation {
+	public:
+		Activation() = default;
+		~Activation() { reset(); }
+
+		Activation(const Activation &) = delete;
+		Activation &operator=(const Activation &) = delete;
+
+		void hold(obs_source_t *source);
+		void reset() noexcept;
+
+	private:
+		obs_source_t *source_ = nullptr;
+	};
+
 	struct Entry {
 		SourceCapture capture;
 		// Held while capturing, with the remove signal connected to removed.
@@ -94,6 +116,10 @@ private:
 		// with the same keepBuffer.
 		bool retry = false;
 		bool retryKeepsBuffer = false;
+		// Held while the capture runs or waits, when the settings ask for it and the source
+		// does not restart when it becomes active.
+		Activation activation;
+		bool activationLeftOut = false;
 	};
 
 	// What a start found out about the source.
@@ -106,6 +132,9 @@ private:
 	StartOutcome start(const std::string &uuid, Entry &entry, bool keepBuffer, bool quiet,
 			   std::optional<std::vector<EncoderInfo>> &candidates);
 	void stop(Entry &entry);
+	// Holds the source active or lets go of it, as the settings and the source's own
+	// restart setting now say.
+	void updateActivation(const std::string &uuid, Entry &entry, obs_source_t *source);
 	void releaseAll();
 	void followOutputs();
 	static void handleRemove(void *data, calldata_t *) noexcept;

@@ -10,7 +10,11 @@
 #include <catch2/catch_test_macros.hpp>
 #include <obs.hpp>
 
+#include <algorithm>
+#include <atomic>
 #include <chrono>
+#include <cmath>
+#include <initializer_list>
 #include <string>
 #include <vector>
 
@@ -373,16 +377,17 @@ TEST_CASE_METHOD(ObsFixture, "settings are saved with the scene collection and l
 	settings.length = 90s;
 	settings.resolution = {ResolutionMode::Fixed, 720};
 	settings.startWithOutputs = false;
+	settings.activateOffAir = true;
 	settings.forceH264 = true;
-	settings.sources[uuidOf(camera)] = {true, 30s, std::nullopt};
+	settings.sources[uuidOf(camera)] = {true, 30s, std::nullopt, std::nullopt};
 	settings.sources[uuidOf(wide)] =
-		SourceSettings{false, std::nullopt, ReplayResolution{ResolutionMode::Output, 1080}};
+		SourceSettings{false, std::nullopt, ReplayResolution{ResolutionMode::Output, 1080}, false};
 
 	OBSDataAutoRelease collection = obs_data_create();
 	{
 		CaptureManager manager(host);
 		BufferSettings withGone = settings;
-		withGone.sources["9f1c0a7e-0000-4000-8000-000000000001"] = {true, 30s, std::nullopt};
+		withGone.sources["9f1c0a7e-0000-4000-8000-000000000001"] = {true, 30s, std::nullopt, std::nullopt};
 		manager.setSettings(withGone);
 		manager.save(collection);
 	}
@@ -587,6 +592,181 @@ TEST_CASE_METHOD(ObsFixture, "a source waiting for its size is let go of wheneve
 	CHECK(manager.status(uuid).stats.state == CaptureState::Stopped);
 }
 
+namespace {
+
+// Watches what the program renders and mixes: frames brighter than black and audio
+// above silence.
+struct ProgramProbe {
+	std::atomic<int> frames{0};
+	std::atomic<int> brightFrames{0};
+	std::atomic<int> blocks{0};
+	std::atomic<int> loudBlocks{0};
+	uint32_t width = 0;
+	uint32_t height = 0;
+
+	ProgramProbe()
+	{
+		obs_video_info video = {};
+		obs_get_video_info(&video);
+		width = video.output_width;
+		height = video.output_height;
+		obs_add_raw_video_callback(nullptr, onFrame, this);
+		obs_add_raw_audio_callback(0, nullptr, onAudio, this);
+	}
+
+	~ProgramProbe()
+	{
+		obs_remove_raw_video_callback(onFrame, this);
+		obs_remove_raw_audio_callback(0, onAudio, this);
+	}
+
+	ProgramProbe(const ProgramProbe &) = delete;
+	ProgramProbe &operator=(const ProgramProbe &) = delete;
+
+	static void onFrame(void *param, video_data *frame) noexcept
+	{
+		auto &probe = *static_cast<ProgramProbe *>(param);
+		uint8_t brightest = 0;
+		for (uint32_t y = 0; y < probe.height; y += 8) {
+			for (uint32_t x = 0; x < probe.width; x += 8) {
+				brightest = std::max(brightest, frame->data[0][y * frame->linesize[0] + x]);
+			}
+		}
+		// Limited range black is 16.
+		if (brightest > 40) {
+			++probe.brightFrames;
+		}
+		++probe.frames;
+	}
+
+	static void onAudio(void *param, size_t, audio_data *data) noexcept
+	{
+		auto &probe = *static_cast<ProgramProbe *>(param);
+		const auto *samples = reinterpret_cast<const float *>(data->data[0]);
+		for (uint32_t i = 0; i < data->frames; ++i) {
+			if (std::fabs(samples[i]) > 0.01f) {
+				++probe.loudBlocks;
+				break;
+			}
+		}
+		++probe.blocks;
+	}
+};
+
+} // namespace
+
+TEST_CASE_METHOD(ObsFixture, "a source activated off air reaches neither the program picture nor its audio",
+		 "[obs][manager]")
+{
+	OBSSourceAutoRelease tone = obs_source_create(tapeloop::test::kToneId, "Media", nullptr, nullptr);
+	const std::string uuid = uuidOf(tone);
+	ProgramProbe probe;
+	FakeHost host;
+	CaptureManager manager(host);
+	BufferSettings settings = selecting(uuid);
+	settings.startWithOutputs = false;
+	settings.activateOffAir = true;
+	manager.setSettings(settings);
+	REQUIRE(manager.manualStart());
+	CHECK(obs_source_active(tone));
+	CHECK(manager.status(uuid).stats.state == CaptureState::Running);
+
+	const int framesBefore = probe.frames;
+	const int blocksBefore = probe.blocks;
+	REQUIRE(waitFor([&] { return probe.frames >= framesBefore + 30 && probe.blocks >= blocksBefore + 30; }, 30s));
+	CHECK(probe.brightFrames == 0);
+	CHECK(probe.loudBlocks == 0);
+
+	// The probes see the tone once it is really on air.
+	obs_set_output_source(0, tone);
+	CHECK(waitFor([&] { return probe.brightFrames > 0 && probe.loudBlocks > 0; }, 30s));
+	obs_set_output_source(0, nullptr);
+
+	manager.manualStop();
+	CHECK_FALSE(obs_source_active(tone));
+}
+
+TEST_CASE_METHOD(ObsFixture, "a selected source is activated only when the settings ask", "[obs][manager]")
+{
+	OBSSourceAutoRelease pattern = createTestPattern(640, 360, "Camera");
+	const std::string uuid = uuidOf(pattern);
+	FakeHost host;
+	CaptureManager manager(host);
+	BufferSettings settings = selecting(uuid);
+	settings.startWithOutputs = false;
+	manager.setSettings(settings);
+	REQUIRE(manager.manualStart());
+	CHECK(manager.status(uuid).stats.state == CaptureState::Running);
+	CHECK_FALSE(obs_source_active(pattern));
+	manager.manualStop();
+
+	settings.sources[uuid].activateOffAir = true;
+	manager.setSettings(settings);
+	REQUIRE(manager.manualStart());
+	CHECK(obs_source_active(pattern));
+	manager.manualStop();
+
+	settings.activateOffAir = true;
+	settings.sources[uuid].activateOffAir = false;
+	manager.setSettings(settings);
+	REQUIRE(manager.manualStart());
+	CHECK_FALSE(obs_source_active(pattern));
+	manager.manualStop();
+}
+
+TEST_CASE_METHOD(ObsFixture, "every activation is let go of when its capture stops", "[obs][manager]")
+{
+	OBSSourceAutoRelease pattern = createTestPattern(640, 360, "Camera");
+	const std::string uuid = uuidOf(pattern);
+	FakeHost host;
+	CaptureManager manager(host);
+	BufferSettings settings = selecting(uuid);
+	settings.startWithOutputs = false;
+	settings.activateOffAir = true;
+	manager.setSettings(settings);
+	REQUIRE(manager.manualStart());
+	REQUIRE(obs_source_active(pattern));
+
+	SECTION("buffers stopped")
+	{
+		manager.manualStop();
+	}
+	SECTION("source unselected")
+	{
+		settings.sources.clear();
+		manager.setSettings(settings);
+	}
+	SECTION("source removed")
+	{
+		obs_source_remove(pattern);
+		manager.poll();
+	}
+	SECTION("scene collection cleanup")
+	{
+		manager.onSceneCollectionCleanup();
+	}
+	SECTION("exit")
+	{
+		manager.onExit();
+	}
+	CHECK_FALSE(obs_source_active(pattern));
+}
+
+TEST_CASE_METHOD(ObsFixture, "a source that cannot be captured is not left active", "[obs][manager]")
+{
+	OBSSourceAutoRelease huge = createTestPattern(20000, 360, "Huge");
+	const std::string uuid = uuidOf(huge);
+	FakeHost host;
+	CaptureManager manager(host);
+	BufferSettings settings = selecting(uuid);
+	settings.startWithOutputs = false;
+	settings.activateOffAir = true;
+	manager.setSettings(settings);
+	REQUIRE(manager.manualStart());
+	CHECK(manager.status(uuid).stats.state == CaptureState::Stopped);
+	CHECK_FALSE(obs_source_active(huge));
+}
+
 TEST_CASE_METHOD(ObsFixture, "a scene or an input without video never takes a saved name", "[obs][manager]")
 {
 	// A scene can share an input's name; scenes are named per canvas. Groups are listed
@@ -678,4 +858,216 @@ TEST_CASE_METHOD(ObsFixture, "a removed source that was waiting for its size is 
 	OBSSourceAutoRelease left = obs_weak_source_get_source(weak);
 	CHECK(left == nullptr);
 	manager.manualStop();
+}
+
+namespace {
+
+// A test pattern by settings, for the sizes and the behaviour of the cases below.
+OBSSourceAutoRelease patternWith(const char *id, const char *name, uint32_t width, uint32_t height,
+				 bool sizeOnlyWhenActive)
+{
+	OBSDataAutoRelease settings = obs_data_create();
+	obs_data_set_int(settings, "width", width);
+	obs_data_set_int(settings, "height", height);
+	obs_data_set_bool(settings, "size_only_when_active", sizeOnlyWhenActive);
+	return obs_source_create(id, name, settings, nullptr);
+}
+
+BufferSettings activating(const std::string &uuid)
+{
+	BufferSettings settings = selecting(uuid);
+	settings.startWithOutputs = false;
+	settings.activateOffAir = true;
+	return settings;
+}
+
+} // namespace
+
+TEST_CASE_METHOD(ObsFixture, "a media source that restarts when activated is not kept active", "[obs][manager]")
+{
+	OBSSourceAutoRelease media = patternWith(tapeloop::test::kMediaStandInId, "Clip", 640, 360, false);
+	const std::string uuid = uuidOf(media);
+	FakeHost host;
+	CaptureManager manager(host);
+	manager.setSettings(activating(uuid));
+	REQUIRE(manager.manualStart());
+	CHECK(manager.status(uuid).stats.state == CaptureState::Running);
+	CHECK(manager.status(uuid).activationLeftOut);
+	CHECK_FALSE(obs_source_active(media));
+	REQUIRE(manager.manualStop());
+
+	// Without the restart it is kept active like any other source.
+	OBSDataAutoRelease noRestart = obs_data_create();
+	obs_data_set_bool(noRestart, "restart_on_activate", false);
+	obs_source_update(media, noRestart);
+	REQUIRE(manager.manualStart());
+	CHECK_FALSE(manager.status(uuid).activationLeftOut);
+	CHECK(obs_source_active(media));
+	REQUIRE(manager.manualStop());
+	CHECK_FALSE(obs_source_active(media));
+}
+
+TEST_CASE_METHOD(ObsFixture, "a VLC source or slideshow is kept active only when it does not restart", "[obs][manager]")
+{
+	struct Case {
+		const char *behavior;
+		bool held;
+	};
+	for (const char *id : {tapeloop::test::kVlcStandInId, tapeloop::test::kSlideshowStandInId}) {
+		for (const Case &each : {Case{"stop_restart", false}, Case{"pause_unpause", true},
+					 Case{"always_play", true}, Case{"", false}}) {
+			CAPTURE(id, each.behavior);
+			OBSSourceAutoRelease media = patternWith(id, "Clip", 640, 360, false);
+			OBSDataAutoRelease setting = obs_data_create();
+			obs_data_set_string(setting, "playback_behavior", each.behavior);
+			obs_source_update(media, setting);
+			const std::string uuid = uuidOf(media);
+			FakeHost host;
+			CaptureManager manager(host);
+			manager.setSettings(activating(uuid));
+			REQUIRE(manager.manualStart());
+			CHECK(manager.status(uuid).stats.state == CaptureState::Running);
+			CHECK(obs_source_active(media) == each.held);
+			CHECK(manager.status(uuid).activationLeftOut == !each.held);
+			REQUIRE(manager.manualStop());
+		}
+	}
+}
+
+TEST_CASE_METHOD(ObsFixture, "an image source is not kept active", "[obs][manager]")
+{
+	OBSSourceAutoRelease image = patternWith(tapeloop::test::kImageStandInId, "Logo", 640, 360, false);
+	const std::string uuid = uuidOf(image);
+	FakeHost host;
+	CaptureManager manager(host);
+	manager.setSettings(activating(uuid));
+	REQUIRE(manager.manualStart());
+	CHECK(manager.status(uuid).stats.state == CaptureState::Running);
+	CHECK_FALSE(obs_source_active(image));
+	CHECK(manager.status(uuid).activationLeftOut);
+	REQUIRE(manager.manualStop());
+}
+
+TEST_CASE_METHOD(ObsFixture, "a change of the restart setting applies while the buffers run", "[obs][manager]")
+{
+	OBSDataAutoRelease noRestart = obs_data_create();
+	obs_data_set_bool(noRestart, "restart_on_activate", false);
+	OBSDataAutoRelease restart = obs_data_create();
+	obs_data_set_bool(restart, "restart_on_activate", true);
+	OBSSourceAutoRelease media = patternWith(tapeloop::test::kMediaStandInId, "Clip", 640, 360, false);
+	obs_source_update(media, noRestart);
+	const std::string uuid = uuidOf(media);
+	FakeHost host;
+	CaptureManager manager(host);
+	manager.setSettings(activating(uuid));
+	REQUIRE(manager.manualStart());
+	REQUIRE(obs_source_active(media));
+
+	obs_source_update(media, restart);
+	manager.poll();
+	CHECK_FALSE(obs_source_active(media));
+	CHECK(manager.status(uuid).activationLeftOut);
+	CHECK(manager.status(uuid).stats.state == CaptureState::Running);
+
+	obs_source_update(media, noRestart);
+	manager.poll();
+	CHECK(obs_source_active(media));
+	CHECK_FALSE(manager.status(uuid).activationLeftOut);
+
+	// Polling again takes no second activation.
+	manager.poll();
+	REQUIRE(manager.manualStop());
+	CHECK_FALSE(obs_source_active(media));
+}
+
+TEST_CASE_METHOD(ObsFixture, "a running source follows the activation setting at once", "[obs][manager]")
+{
+	OBSSourceAutoRelease camera = patternWith(tapeloop::test::kTestPatternId, "Camera", 640, 360, false);
+	OBSSourceAutoRelease media = patternWith(tapeloop::test::kMediaStandInId, "Clip", 640, 360, false);
+	const std::string cameraUuid = uuidOf(camera);
+	const std::string mediaUuid = uuidOf(media);
+	FakeHost host;
+	CaptureManager manager(host);
+	BufferSettings settings = activating(cameraUuid);
+	settings.sources[mediaUuid].selected = true;
+	manager.setSettings(settings);
+	REQUIRE(manager.manualStart());
+	REQUIRE(obs_source_active(camera));
+	REQUIRE(manager.status(mediaUuid).activationLeftOut);
+
+	SECTION("turning it off lets go of the source and the note")
+	{
+		settings.activateOffAir = false;
+		manager.setSettings(settings);
+		CHECK_FALSE(obs_source_active(camera));
+		CHECK_FALSE(manager.status(mediaUuid).activationLeftOut);
+		settings.activateOffAir = true;
+		manager.setSettings(settings);
+		CHECK(obs_source_active(camera));
+		CHECK(manager.status(mediaUuid).activationLeftOut);
+		REQUIRE(manager.manualStop());
+	}
+	SECTION("stopping the buffers clears the note")
+	{
+		REQUIRE(manager.manualStop());
+		CHECK_FALSE(obs_source_active(camera));
+		CHECK(manager.status(mediaUuid).stats.state == CaptureState::Stopped);
+		CHECK_FALSE(manager.status(mediaUuid).activationLeftOut);
+	}
+}
+
+TEST_CASE_METHOD(ObsFixture, "a source with a size only while active starts once activated", "[obs][manager]")
+{
+	OBSSourceAutoRelease media = patternWith(tapeloop::test::kTestPatternId, "Media", 640, 360, true);
+	const std::string uuid = uuidOf(media);
+	REQUIRE(obs_source_get_width(media) == 0);
+	FakeHost host;
+	CaptureManager manager(host);
+	manager.setSettings(activating(uuid));
+	REQUIRE(manager.manualStart());
+	manager.poll();
+	CHECK(manager.status(uuid).stats.state == CaptureState::Running);
+	REQUIRE(manager.manualStop());
+	CHECK_FALSE(obs_source_active(media));
+}
+
+TEST_CASE_METHOD(ObsFixture, "a waiting source keeps one activation and gives it back when asked", "[obs][manager]")
+{
+	OBSSourceAutoRelease never = patternWith(tapeloop::test::kTestPatternId, "Never", 0, 0, false);
+	const std::string uuid = uuidOf(never);
+	FakeHost host;
+	CaptureManager manager(host);
+	BufferSettings settings = activating(uuid);
+	manager.setSettings(settings);
+	REQUIRE(manager.manualStart());
+	REQUIRE(manager.status(uuid).stats.state == CaptureState::Waiting);
+	REQUIRE(obs_source_active(never));
+
+	SECTION("retries take no second activation")
+	{
+		manager.poll();
+		manager.poll();
+		manager.setSettings(settings);
+		REQUIRE(manager.manualStop());
+		CHECK_FALSE(obs_source_active(never));
+	}
+	SECTION("turning activation off lets go of it at the next retry")
+	{
+		settings.activateOffAir = false;
+		manager.setSettings(settings);
+		manager.poll();
+		CHECK(manager.status(uuid).stats.state == CaptureState::Waiting);
+		CHECK_FALSE(obs_source_active(never));
+		REQUIRE(manager.manualStop());
+	}
+	SECTION("removing the source lets go of it")
+	{
+		OBSWeakSourceAutoRelease weak = obs_source_get_weak_source(never);
+		obs_source_remove(never);
+		never = nullptr;
+		manager.poll();
+		OBSSourceAutoRelease left = obs_weak_source_get_source(weak);
+		CHECK(left == nullptr);
+		manager.manualStop();
+	}
 }
