@@ -241,6 +241,9 @@ jobs:
   windows-obs:
     name: windows-obs
     runs-on: windows-2022
+    # A run takes five to ten minutes. ctest stops each test after five, which across
+    # some fifty tests could hold the runner for hours.
+    timeout-minutes: 30
     defaults:
       run:
         shell: pwsh
