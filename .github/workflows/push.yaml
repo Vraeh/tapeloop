@@ -52,7 +52,9 @@ jobs:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           persist-credentials: false
-          sparse-checkout: cmake/ffmpeg
+          sparse-checkout: |
+            .github/scripts
+            cmake/ffmpeg
 
       - name: Check Release Tag ☑️
         id: check
@@ -125,13 +127,13 @@ jobs:
       - name: Name third-party code
         if: fromJSON(steps.check.outputs.validTag)
         run: |
-          read -r version url < <(cmake -DPRINT_SOURCE=ON -P cmake/ffmpeg/BuildFFmpeg.cmake 2>&1)
+          source_line="$(.github/scripts/ffmpeg-source)"
+          read -r version url <<< "${source_line}"
           {
             echo
             echo "### Third-party code"
             echo
-            echo "The Windows and Linux packages include FFmpeg ${version}, linked statically, under the"
-            echo "LGPL 2.1 or later. Source: ${url}"
+            echo "The Windows and Linux packages include FFmpeg ${version}, linked statically, under the LGPL 2.1 or later. Source: ${url}"
           } >> "${GITHUB_WORKSPACE}/CHECKSUMS.txt"
 
       - name: Create Release 🛫

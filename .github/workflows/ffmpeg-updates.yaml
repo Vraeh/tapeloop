@@ -19,17 +19,27 @@ jobs:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           persist-credentials: false
-          sparse-checkout: cmake/ffmpeg
+          sparse-checkout: |
+            .github/scripts
+            cmake/ffmpeg
 
+      # A check that cannot run fails, rather than reporting that nothing is new.
       - name: Compare with the newest release
+        shell: bash
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
-          read -r pinned url < <(cmake -DPRINT_SOURCE=ON -P cmake/ffmpeg/BuildFFmpeg.cmake 2>&1)
-          newest="$(gh api repos/FFmpeg/FFmpeg/git/matching-refs/tags/n8.1 --jq '.[].ref' |
-            sed -n 's|^refs/tags/n\(8\.1\(\.[0-9]*\)*\)$|\1|p' | sort -V | tail -1)"
-          echo "Pinned ${pinned} (${url}), newest 8.1 release ${newest:-unknown}"
-          if [[ -z "${newest}" || "$(printf '%s\n' "${pinned}" "${newest}" | sort -V | tail -1)" == "${pinned}" ]]; then
+          source_line="$(.github/scripts/ffmpeg-source)"
+          read -r pinned url <<< "${source_line}"
+          tags="$(gh api repos/FFmpeg/FFmpeg/git/matching-refs/tags/n8.1 --jq '.[].ref')"
+          newest="$(sed -n 's|^refs/tags/n\(8\.1\(\.[0-9]*\)*\)$|\1|p' <<< "${tags}" | sort -V | tail -1)"
+          # The tag of 8.1 itself always exists, so finding none means the lookup broke.
+          if [[ -z "${newest}" ]]; then
+            echo "::error::Found no FFmpeg 8.1 release among the tags"
+            exit 1
+          fi
+          echo "Pinned ${pinned} (${url}), newest 8.1 release ${newest}"
+          if [[ "$(printf '%s\n' "${pinned}" "${newest}" | sort -V | tail -1)" == "${pinned}" ]]; then
             exit 0
           fi
 
