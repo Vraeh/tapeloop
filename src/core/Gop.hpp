@@ -8,7 +8,9 @@
 #include <cstddef>
 #include <cstdint>
 #include <memory>
+#include <optional>
 #include <span>
+#include <string_view>
 #include <vector>
 
 namespace tapeloop {
@@ -26,6 +28,13 @@ struct EncodedPacket {
 // The codec configuration an encoder reports for one run, as obs_encoder_get_extra_data
 // gives it: the parameter sets a decoder needs before the first keyframe.
 using CodecConfig = std::vector<uint8_t>;
+
+// The codec of one run. A buffer can hold runs of both, when a restart fell back from an
+// HEVC encoder to an H.264 one.
+enum class VideoCodec { H264, Hevc };
+
+// From the name obs_encoder_get_codec gives; empty for a codec replays do not use.
+std::optional<VideoCodec> videoCodecFromName(std::string_view name) noexcept;
 
 struct PacketRecord {
 	int64_t pts = 0;
@@ -50,7 +59,7 @@ public:
 	};
 
 	Gop(Key, std::vector<uint8_t> bytes, std::vector<PacketRecord> packets, Nanoseconds frameDuration,
-	    std::shared_ptr<const CodecConfig> codecConfig);
+	    VideoCodec codec, std::shared_ptr<const CodecConfig> codecConfig);
 
 	std::span<const PacketRecord> packets() const noexcept { return packets_; }
 	std::span<const uint8_t> packetData(size_t index) const noexcept;
@@ -59,6 +68,7 @@ public:
 	// same object, valid as long as any of them lives. Null when the encoder reported
 	// none.
 	const CodecConfig *codecConfig() const noexcept { return codecConfig_.get(); }
+	VideoCodec codec() const noexcept { return codec_; }
 
 	Nanoseconds startTime() const noexcept { return packets_.front().time; }
 	Nanoseconds lastTime() const noexcept { return packets_.back().time; }
@@ -71,6 +81,7 @@ private:
 	std::vector<uint8_t> bytes_;
 	std::vector<PacketRecord> packets_;
 	Nanoseconds frameDuration_;
+	VideoCodec codec_;
 	std::shared_ptr<const CodecConfig> codecConfig_;
 };
 
@@ -101,14 +112,17 @@ public:
 	// Drops the packets and starts a new GOP, keeping the buffers.
 	void clear() noexcept;
 
-	// The configuration the GOPs built from now on point at. The builder must be empty.
-	void setCodecConfig(std::shared_ptr<const CodecConfig> codecConfig) noexcept;
+	// The codec and the configuration of the GOPs built from now on, H.264 and none until
+	// set. The builder must be empty.
+	void setCodecConfig(VideoCodec codec, std::shared_ptr<const CodecConfig> codecConfig) noexcept;
 	const CodecConfig *codecConfig() const noexcept { return codecConfig_.get(); }
+	VideoCodec codec() const noexcept { return codec_; }
 
 private:
 	std::shared_ptr<const Gop> makeGop() const;
 
 	Nanoseconds frameDuration_;
+	VideoCodec codec_ = VideoCodec::H264;
 	std::shared_ptr<const CodecConfig> codecConfig_;
 	std::vector<uint8_t> bytes_;
 	std::vector<PacketRecord> packets_;

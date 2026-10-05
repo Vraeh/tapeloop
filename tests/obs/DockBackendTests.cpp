@@ -71,3 +71,26 @@ TEST_CASE_METHOD(ObsFixture, "the dock sees the video inputs of the scene collec
 	// before shutting down; libobs frees source types before canvases.
 	obs_source_remove(obs_scene_get_source(scene));
 }
+
+TEST_CASE_METHOD(ObsFixture, "the dock sees a source waiting for its size", "[obs][dock]")
+{
+	OBSDataAutoRelease settings = obs_data_create();
+	obs_data_set_int(settings, "width", 320);
+	obs_data_set_int(settings, "height", 180);
+	obs_data_set_bool(settings, "size_only_when_shown", true);
+	OBSSourceAutoRelease display = obs_source_create(tapeloop::test::kTestPatternId, "Display", settings, nullptr);
+
+	OfflineHost host;
+	CaptureManager manager(host);
+	ManagerDockBackend backend(manager);
+	BufferSettings selected = backend.settings();
+	selected.startWithOutputs = false;
+	selected.sources[obs_source_get_uuid(display)].selected = true;
+	backend.setSettings(selected);
+	REQUIRE(backend.toggleRunning());
+
+	const auto sources = backend.sources();
+	REQUIRE(sources.size() == 1);
+	CHECK(sources[0].state == SourceState::Waiting);
+	REQUIRE(backend.toggleRunning());
+}

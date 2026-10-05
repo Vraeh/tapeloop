@@ -56,12 +56,12 @@ public:
 
 	void push(const EncodedPacket &packet);
 
-	// Starts a new run with a copy of the codec configuration the encoder reports, empty
-	// when it reports none. Call it between runs: after the last packet of the previous
-	// encoder and before the first of the next one. The GOP being built is sealed with
-	// the previous configuration, the next packet kept is a keyframe, and a run cut short
-	// this way counts as a discontinuity.
-	void setCodecConfig(std::span<const uint8_t> codecConfig);
+	// Starts a new run of the encoder's codec, with a copy of the codec configuration it
+	// reports, empty when it reports none. Call it between runs: after the last packet
+	// of the previous encoder and before the first of the next one. The GOP being built
+	// is sealed with the previous codec and configuration, the next packet kept is a
+	// keyframe, and a run cut short this way counts as a discontinuity.
+	void setCodecConfig(VideoCodec codec, std::span<const uint8_t> codecConfig);
 
 	// The last duration up to the newest frame.
 	Clip clip(Nanoseconds duration) const;

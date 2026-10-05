@@ -116,7 +116,8 @@ private:
 
 	void reconcile();
 	// candidates is filled on first use, so a batch of starts reads the encoders and the
-	// render adapter once. A quiet start skips a source without a size without trying.
+	// render adapter once. A quiet start does not try a source without a size: it only
+	// shows it on the capture's view, without logging.
 	StartOutcome start(const std::string &uuid, Entry &entry, bool keepBuffer, bool quiet,
 			   std::optional<std::vector<EncoderInfo>> &candidates);
 	void stop(Entry &entry);

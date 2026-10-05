@@ -22,6 +22,7 @@ using tapeloop::Gop;
 using tapeloop::Nanoseconds;
 using tapeloop::PacketRecord;
 using tapeloop::SourceBuffer;
+using tapeloop::VideoCodec;
 using tapeloop::fuzz::FuzzInput;
 using tapeloop::fuzz::require;
 
@@ -38,19 +39,23 @@ struct SyncModel {
 	int64_t lastDts = 0;
 	uint64_t dropped = 0;
 	uint64_t discontinuities = 0;
+	VideoCodec codec = VideoCodec::H264;
 	CodecConfig codecConfig;
-	// Every configuration set so far, and which of them each kept frame was encoded
-	// with, by frame time.
+	// Every codec and configuration set so far, and which of them each kept frame was
+	// encoded with, by frame time.
+	std::vector<VideoCodec> codecs{VideoCodec::H264};
 	std::vector<CodecConfig> configs{CodecConfig{}};
 	std::map<Nanoseconds, size_t> configOfFrame;
 
-	void setCodecConfig(std::span<const uint8_t> bytes)
+	void setCodecConfig(VideoCodec newCodec, std::span<const uint8_t> bytes)
 	{
 		if (synced) {
 			++discontinuities;
 		}
 		synced = false;
+		codec = newCodec;
 		codecConfig.assign(bytes.begin(), bytes.end());
+		codecs.push_back(codec);
 		configs.push_back(codecConfig);
 	}
 
@@ -145,6 +150,7 @@ void checkCodecConfigs(const Clip &all, const tapeloop::SourceBufferStats &stats
 			const auto found = model.configOfFrame.find(packet.time);
 			require(found != model.configOfFrame.end() && found->second == first->second);
 		}
+		require(gop->codec() == model.codecs[first->second]);
 		const CodecConfig &expected = model.configs[first->second];
 		if (expected.empty()) {
 			require(gop->codecConfig() == nullptr);
@@ -206,8 +212,9 @@ void checkBuffer(const SourceBuffer &buffer, const SyncModel &model)
 }
 
 // A kept packet is the newest frame held, with its fields and bytes, in a GOP with the
-// configuration of its run.
-void checkKept(const SourceBuffer &buffer, const EncodedPacket &packet, const CodecConfig &codecConfig)
+// codec and configuration of its run.
+void checkKept(const SourceBuffer &buffer, const EncodedPacket &packet, VideoCodec codec,
+	       const CodecConfig &codecConfig)
 {
 	require(buffer.stats().newestTime == packet.time);
 	const Clip newest = buffer.clip(packet.time, packet.time);
@@ -219,6 +226,7 @@ void checkKept(const SourceBuffer &buffer, const EncodedPacket &packet, const Co
 	require(record.keyframe == packet.keyframe);
 	const std::span<const uint8_t> stored = gop.packetData(at.packet);
 	require(std::equal(stored.begin(), stored.end(), packet.data.begin(), packet.data.end()));
+	require(gop.codec() == codec);
 	if (codecConfig.empty()) {
 		require(gop.codecConfig() == nullptr);
 	} else {
@@ -303,7 +311,7 @@ extern "C" int LLVMFuzzerTestOneInput(const uint8_t *data, size_t size)
 
 			buffer.push(packet);
 			if (model.push(packet)) {
-				checkKept(buffer, packet, model.codecConfig);
+				checkKept(buffer, packet, model.codec, model.codecConfig);
 				if (keyframe) {
 					checkEviction(buffer, config, before, sealsOpenGop, restarted);
 				}
@@ -340,8 +348,14 @@ extern "C" int LLVMFuzzerTestOneInput(const uint8_t *data, size_t size)
 		}
 		case 5: {
 			const std::span<const uint8_t> codecConfig = input.bytes(input.below(64));
-			buffer.setCodecConfig(codecConfig);
-			model.setCodecConfig(codecConfig);
+			// Taken from what was already read rather than from a new input byte, so the
+			// seeds still read the same, and not from the bytes alone, so either codec comes
+			// with any configuration, none included.
+			const VideoCodec codec = ((codecConfig.size() + model.configs.size()) & 1) != 0
+							 ? VideoCodec::Hevc
+							 : VideoCodec::H264;
+			buffer.setCodecConfig(codec, codecConfig);
+			model.setCodecConfig(codec, codecConfig);
 			break;
 		}
 		}
