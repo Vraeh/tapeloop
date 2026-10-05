@@ -299,8 +299,7 @@ uint64_t CaptureManager::captureReplay()
 		blog(LOG_INFO, "[tapeloop] Captured replay %llu from %zu sources, %zu of them with nothing in range",
 		     static_cast<unsigned long long>(id), sources.size(), cut.skipped.size());
 		if (const size_t dropped = kept + 1 - library_.size(); dropped != 0) {
-			blog(LOG_WARNING,
-			     "[tapeloop] Dropped the %zu oldest replays to stay within %zu replays and %zu MiB",
+			blog(LOG_WARNING, "[tapeloop] Dropped %zu old replays to stay within %zu replays and %zu MiB",
 			     dropped, kReplayLimits.maxMoments, kReplayLimits.maxBytes >> 20);
 		}
 	}
