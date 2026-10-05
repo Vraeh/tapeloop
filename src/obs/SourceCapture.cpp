@@ -146,6 +146,12 @@ StartResult SourceCapture::start(obs_source_t *source, const CaptureSettings &se
 				}
 				bufferConfig.maxBytes = replayByteBudget(replayBitrateKbps(params, candidate.codec),
 									 settings.bufferLength);
+				// A kept buffer still holds what the previous encoder wrote at its own
+				// bitrate, which a smaller budget would cut short; the larger one stays
+				// until a start that empties the buffer.
+				if (reuse && keepBuffer) {
+					bufferConfig.maxBytes = std::max(bufferConfig.maxBytes, buffer_->byteBudget());
+				}
 				buffer_->setByteBudget(bufferConfig.maxBytes);
 				bufferConfig_ = bufferConfig;
 				source_ = obs_source_get_weak_source(source);
