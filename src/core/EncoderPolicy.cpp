@@ -205,7 +205,7 @@ std::vector<EncoderInfo> replayEncoderCandidates(std::span<const EncoderInfo> en
 	std::vector<EncoderInfo> ordered;
 	ordered.reserve(candidates.size() + 1);
 	// A choice the user made goes first, even one the automatic order leaves out, as long
-	// as a replay can hold what it encodes.
+	// as it is one the user could have picked.
 	if (!preferences.chosen.empty()) {
 		for (const EncoderInfo &choice : replayEncoderChoices(encoders)) {
 			if (choice.id == preferences.chosen) {
