@@ -934,6 +934,20 @@ TEST_CASE_METHOD(ObsFixture, "a VLC source or slideshow is kept active only when
 	}
 }
 
+TEST_CASE_METHOD(ObsFixture, "an image source is not kept active", "[obs][manager]")
+{
+	OBSSourceAutoRelease image = patternWith(tapeloop::test::kImageStandInId, "Logo", 640, 360, false);
+	const std::string uuid = uuidOf(image);
+	FakeHost host;
+	CaptureManager manager(host);
+	manager.setSettings(activating(uuid));
+	REQUIRE(manager.manualStart());
+	CHECK(manager.status(uuid).stats.state == CaptureState::Running);
+	CHECK_FALSE(obs_source_active(image));
+	CHECK(manager.status(uuid).activationLeftOut);
+	REQUIRE(manager.manualStop());
+}
+
 TEST_CASE_METHOD(ObsFixture, "a change of the restart setting applies while the buffers run", "[obs][manager]")
 {
 	OBSDataAutoRelease noRestart = obs_data_create();

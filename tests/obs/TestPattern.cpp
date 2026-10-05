@@ -250,7 +250,7 @@ void registerTestPattern()
 	media.get_defaults = mediaDefaults;
 	obs_register_source(&media);
 
-	for (const char *id : {kVlcStandInId, kSlideshowStandInId}) {
+	for (const char *id : {kVlcStandInId, kSlideshowStandInId, kImageStandInId}) {
 		obs_source_info other = info;
 		other.id = id;
 		other.get_name = mediaName;

@@ -31,14 +31,20 @@ bool addInput(void *param, obs_source_t *source) noexcept
 	return true;
 }
 
-// Media sources that restart when they become active. Holding one active off air would
-// keep it from restarting when it is cut to air, so activation leaves them out. The ids
-// and settings are those of OBS 32's media source, VLC source and image slideshow.
+// Sources that restart when they become active. Holding one active off air would keep it
+// from restarting when it is cut to air, so activation leaves them out. The ids and
+// settings are those of OBS 32's media source, VLC source, image slideshow and image
+// source.
 bool restartsWhenActivated(obs_source_t *source)
 {
 	const char *id = obs_source_get_unversioned_id(source);
 	if (!id) {
 		return false;
+	}
+	// An animated image starts over. Holding gives an image nothing else: it runs while
+	// shown, which its capture already does.
+	if (std::strcmp(id, "image_source") == 0) {
+		return true;
 	}
 	OBSDataAutoRelease settings = obs_source_get_settings(source);
 	if (std::strcmp(id, "ffmpeg_source") == 0) {
