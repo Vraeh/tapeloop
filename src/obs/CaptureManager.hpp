@@ -89,9 +89,9 @@ public:
 	const SourceBuffer *buffer(const std::string &uuid) const;
 
 	// Keeps what every captured buffer holds as one replay of the library: the range
-	// reaches back from now as far as the longest buffer, and each source's clip is the
-	// part of it its buffer holds, a stopped buffer's included. Buffers keep recording.
-	// Zero when no buffer holds anything.
+	// reaches back from now to the oldest frame any buffer holds, and each source's clip
+	// is all its buffer holds, a stopped buffer's included. Buffers keep recording. Zero
+	// when no buffer holds anything.
 	uint64_t captureReplay();
 	const ReplayLibrary &library() const noexcept { return library_; }
 	ReplayLibrary &library() noexcept { return library_; }

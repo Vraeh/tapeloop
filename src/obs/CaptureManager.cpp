@@ -276,19 +276,26 @@ const SourceBuffer *CaptureManager::buffer(const std::string &uuid) const
 uint64_t CaptureManager::captureReplay()
 {
 	std::vector<MomentSource> sources;
-	Nanoseconds reach{0};
 	for (const auto &[uuid, entry] : entries_) {
 		if (const SourceBuffer *held = entry->capture.buffer()) {
 			sources.push_back({uuid, *held});
-			reach = std::max(reach, settings_.lengthFor(uuid));
 		}
 	}
 	// Packets carry the time of the frames they encode, on the clock OBS stamps video with.
 	const Nanoseconds now{static_cast<int64_t>(os_gettime_ns())};
+	// The length set now is no measure of what a buffer holds: a running one keeps the
+	// length it started with, and a stopped one what it had.
+	Nanoseconds reach{0};
+	for (const MomentSource &source : sources) {
+		const SourceBufferStats stats = source.buffer.get().stats();
+		if (stats.gopCount != 0) {
+			reach = std::max(reach, now - stats.oldestTime);
+		}
+	}
 	MomentCut cut = cutMoment(sources, now, reach);
 	const uint64_t id = library_.add(std::move(cut.moment), std::chrono::system_clock::now());
 	if (id != 0) {
-		blog(LOG_INFO, "[tapeloop] Captured replay %llu from %zu sources, %zu of them empty",
+		blog(LOG_INFO, "[tapeloop] Captured replay %llu from %zu sources, %zu of them with nothing in range",
 		     static_cast<unsigned long long>(id), sources.size(), cut.skipped.size());
 	}
 	return id;
