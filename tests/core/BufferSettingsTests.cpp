@@ -47,6 +47,14 @@ TEST_CASE("per source overrides take the place of the global settings")
 	CHECK(settings.selectedSources() == std::vector<std::string>{"a", "b"});
 }
 
+TEST_CASE("encoders prefer HEVC unless the settings keep replays in H.264")
+{
+	BufferSettings settings;
+	CHECK(settings.encoderPreferences().preferHevc);
+	settings.forceH264 = true;
+	CHECK_FALSE(settings.encoderPreferences().preferHevc);
+}
+
 TEST_CASE("buffer settings survive a save and a load")
 {
 	BufferSettings settings;

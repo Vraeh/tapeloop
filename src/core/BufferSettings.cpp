@@ -85,6 +85,13 @@ std::vector<std::string> BufferSettings::selectedSources() const
 	return selected;
 }
 
+EncoderPreferences BufferSettings::encoderPreferences() const
+{
+	EncoderPreferences preferences;
+	preferences.preferHevc = !forceH264;
+	return preferences;
+}
+
 SavedSettings saveSettings(const BufferSettings &settings)
 {
 	SavedSettings saved;

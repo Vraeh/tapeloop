@@ -286,9 +286,8 @@ CaptureManager::StartOutcome CaptureManager::start(const std::string &uuid, Entr
 	}
 
 	if (!candidates) {
-		EncoderPreferences preferences;
-		preferences.preferHevc = !settings_.forceH264;
-		candidates = replayEncoderCandidates(registeredVideoEncoders(), renderAdapterVendor(), preferences);
+		candidates = replayEncoderCandidates(registeredVideoEncoders(), renderAdapterVendor(),
+						     settings_.encoderPreferences());
 	}
 	CaptureSettings settings;
 	settings.resolution = settings_.resolutionFor(uuid);

@@ -3,6 +3,7 @@
 
 #pragma once
 
+#include "core/EncoderPolicy.hpp"
 #include "core/MediaTime.hpp"
 #include "core/ReplaySize.hpp"
 
@@ -45,6 +46,8 @@ struct BufferSettings {
 	Nanoseconds lengthFor(const std::string &uuid) const;
 	ReplayResolution resolutionFor(const std::string &uuid) const;
 	std::vector<std::string> selectedSources() const;
+	// What the encoder candidates are chosen by.
+	EncoderPreferences encoderPreferences() const;
 
 	bool operator==(const BufferSettings &) const = default;
 };
