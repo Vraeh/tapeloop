@@ -4,6 +4,8 @@
 #include "core/FileIo.hpp"
 
 #include <algorithm>
+#include <limits>
+#include <stdexcept>
 #include <system_error>
 #include <utility>
 
@@ -70,26 +72,53 @@ int openFile(const std::filesystem::path &path, int flags)
 
 } // namespace
 
+#ifdef _WIN32
+
 std::filesystem::path pathFromUtf8(std::string_view utf8)
 {
-	std::u8string text;
-	text.reserve(utf8.size());
-	for (const char c : utf8) {
-		text.push_back(static_cast<char8_t>(c));
+	if (utf8.empty()) {
+		return {};
 	}
-	return {text};
+	if (utf8.size() > static_cast<size_t>(std::numeric_limits<int>::max())) {
+		throw std::length_error("path too long");
+	}
+	const int length = static_cast<int>(utf8.size());
+	const int size = MultiByteToWideChar(CP_UTF8, 0, utf8.data(), length, nullptr, 0);
+	std::wstring wide(static_cast<size_t>(size), L'\0');
+	MultiByteToWideChar(CP_UTF8, 0, utf8.data(), length, wide.data(), size);
+	return {wide};
 }
 
 std::string utf8FromPath(const std::filesystem::path &path)
 {
-	const std::u8string text = path.u8string();
-	std::string utf8;
-	utf8.reserve(text.size());
-	for (const char8_t c : text) {
-		utf8.push_back(static_cast<char>(c));
+	const std::wstring &wide = path.native();
+	if (wide.empty()) {
+		return {};
 	}
+	if (wide.size() > static_cast<size_t>(std::numeric_limits<int>::max())) {
+		throw std::length_error("path too long");
+	}
+	const int length = static_cast<int>(wide.size());
+	const int size = WideCharToMultiByte(CP_UTF8, 0, wide.data(), length, nullptr, 0, nullptr, nullptr);
+	std::string utf8(static_cast<size_t>(size), '\0');
+	WideCharToMultiByte(CP_UTF8, 0, wide.data(), length, utf8.data(), size, nullptr, nullptr);
 	return utf8;
 }
+
+#else
+
+// The file systems Tapeloop runs on name files in bytes, which OBS gives as UTF-8.
+std::filesystem::path pathFromUtf8(std::string_view utf8)
+{
+	return {std::string(utf8)};
+}
+
+std::string utf8FromPath(const std::filesystem::path &path)
+{
+	return path.string();
+}
+
+#endif
 
 File::File(File &&other) noexcept
 #ifdef _WIN32

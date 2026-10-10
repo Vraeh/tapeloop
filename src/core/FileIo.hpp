@@ -13,7 +13,8 @@
 namespace tapeloop {
 
 // Paths come from OBS as UTF-8 on every platform. A std::filesystem::path built from a
-// plain std::string takes the Windows code page instead, so paths are built with these.
+// plain std::string takes the Windows code page instead, so paths are built with these,
+// which also work where the plugin's build turns char8_t off.
 std::filesystem::path pathFromUtf8(std::string_view utf8);
 std::string utf8FromPath(const std::filesystem::path &path);
 
