@@ -13,6 +13,7 @@
 #include "core/GopReader.hpp"
 #include "core/ReplayWriter.hpp"
 #include "obs/CaptureManager.hpp"
+#include "obs/ManagerDockBackend.hpp"
 #include "obs/SettingsData.hpp"
 
 #include <catch2/catch_test_macros.hpp>
@@ -456,6 +457,12 @@ TEST_CASE_METHOD(ObsFixture, "a source whose HEVC encoder fails uses that vendor
 	REQUIRE(waitFor([&] { return hasGops(capture.manager, capture.uuid, 2); }, 60s));
 	CHECK(capture.manager.status(capture.uuid).stats.state == CaptureState::Running);
 	CHECK(capture.manager.status(capture.uuid).hevcFailed);
+	const std::vector<tapeloop::ui::DockSource> rows = tapeloop::obs::ManagerDockBackend(capture.manager).sources();
+	const auto row = std::find_if(rows.begin(), rows.end(), [&](const tapeloop::ui::DockSource &source) {
+		return source.uuid == capture.uuid;
+	});
+	REQUIRE(row != rows.end());
+	CHECK(row->hevcFailed);
 
 	// An encoder chosen after the failure is the one that starts.
 	capture.settings.replayEncoder = "obs_x264";

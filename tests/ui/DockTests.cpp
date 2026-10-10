@@ -606,13 +606,18 @@ TEST_CASE("a source whose HEVC encoder failed says it goes on in H.264")
 	CHECK_FALSE(status->icon().isNull());
 	CHECK(status->toolTip() == localeText()("Dock.Status.HevcFailed.Tooltip"));
 
-	// Running again in H.264 on the CPU, it says both.
+	// Running again, on the CPU as the order went on to x264, it says both.
 	backend.shown[0].state = SourceState::Running;
 	backend.shown[0].encoderPath = tapeloop::EncoderPath::Software;
 	dock.refresh();
 	const QString both = child<QTableWidget>(dock, "sources")->item(0, 1)->toolTip();
 	CHECK(both.startsWith(localeText()("Dock.Status.Software.Tooltip")));
-	CHECK(both.endsWith(localeText()("Dock.Status.HevcFailed.Tooltip")));
+	CHECK(both.endsWith(localeText()("Dock.Status.HevcFallback.Tooltip")));
+
+	// Unticked, it has nothing to say.
+	backend.current.sources["uuid-camera-1"].selected = false;
+	dock.refresh();
+	CHECK(child<QTableWidget>(dock, "sources")->item(0, 1)->toolTip().isEmpty());
 }
 
 TEST_CASE("the activation checkbox follows the settings")
