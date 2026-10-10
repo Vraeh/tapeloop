@@ -31,6 +31,8 @@ target_sources(
     FrameDecoder.hpp
     Gop.cpp
     Gop.hpp
+    GopReader.cpp
+    GopReader.hpp
     MediaTime.cpp
     MediaTime.hpp
     MomentCutter.cpp

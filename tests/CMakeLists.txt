@@ -52,6 +52,7 @@ target_sources(
     core/EncoderPolicyTests.cpp
     core/FakeDecoder.hpp
     core/FileIoTests.cpp
+    core/GopReaderTests.cpp
     core/GopTests.cpp
     core/MediaTimeTests.cpp
     core/MomentCutterTests.cpp
