@@ -87,6 +87,49 @@ TEST_CASE("a capture is written as segments and a manifest")
 	CHECK(tapeloop::decodeTags(fileBytes(written.manifest)) == std::vector<std::string>{"Goal"});
 }
 
+TEST_CASE("a capture's index before writing has everything but the places of its GOPs")
+{
+	TempDirectory dir;
+	ReplayCapture capture = captureOf(dir.path(), {sourceOf("a", makeGops(3)), sourceOf("b", makeGops(2, 40))});
+	capture.sources.push_back({"empty", "Empty", Clip()});
+	const ReplayIndex pending = tapeloop::indexOf(capture);
+	const WrittenReplay written = ReplayWriter().write(capture);
+	CHECK(pending.id == written.index.id);
+	CHECK(pending.start == written.index.start);
+	CHECK(pending.capturedAtClock == written.index.capturedAtClock);
+	REQUIRE(pending.sources.size() == 2);
+	for (size_t s = 0; s < pending.sources.size(); ++s) {
+		const StoredSource &before = pending.sources[s];
+		const StoredSource &after = written.index.sources[s];
+		CHECK(before.key == after.key);
+		CHECK(before.name == after.name);
+		CHECK(before.in == after.in);
+		CHECK(before.out == after.out);
+		CHECK(before.frameTimes == after.frameTimes);
+		REQUIRE(before.runs.size() == after.runs.size());
+		REQUIRE(before.gops.size() == after.gops.size());
+		for (size_t g = 0; g < before.gops.size(); ++g) {
+			CHECK(before.gops[g].packetCount == after.gops[g].packetCount);
+			CHECK(before.gops[g].run == after.gops[g].run);
+			CHECK(before.gops[g].size == 0);
+			CHECK(after.gops[g].size > 0);
+		}
+	}
+}
+
+TEST_CASE("a replay's index is read back from its manifest")
+{
+	TempDirectory dir;
+	const WrittenReplay written = ReplayWriter().write(captureOf(dir.path(), {sourceOf("a", makeGops(2))}));
+	const std::optional<ReplayIndex> index = tapeloop::readReplayIndex(written.manifest);
+	REQUIRE(index);
+	CHECK(index->id == written.index.id);
+	CHECK(index->sources[0].frameTimes == written.index.sources[0].frameTimes);
+	CHECK_FALSE(tapeloop::readReplayIndex(dir.path() / "missing.tplp"));
+	fs::resize_file(written.manifest, 100);
+	CHECK_FALSE(tapeloop::readReplayIndex(written.manifest));
+}
+
 TEST_CASE("a GOP already written is stored once")
 {
 	TempDirectory dir;
@@ -370,10 +413,14 @@ TEST_CASE("a scan finds every replay of every broadcast")
 	CHECK(scan.replays[2].manifest == second.manifest);
 	CHECK(scan.replays[2].tags.empty());
 	for (const tapeloop::FoundReplay &found : scan.replays) {
-		REQUIRE(found.index);
+		CHECK(found.intact);
+		CHECK(found.sources == std::vector<tapeloop::ReplaySource>{{"a", "Camera a"}});
+		CHECK(found.capturedAtUtc == tagged.capturedAtUtc);
 	}
-	CHECK(scan.replays[1].index->id == tagged.id);
-	CHECK(scan.replays[2].index->sources[0].gops.size() == 4);
+	CHECK(scan.replays[1].id == tagged.id);
+	const std::optional<ReplayIndex> index = tapeloop::readReplayIndex(scan.replays[2].manifest);
+	REQUIRE(index);
+	CHECK(index->sources[0].gops.size() == 4);
 }
 
 TEST_CASE("a scan deletes half written manifests and lists damaged ones")
@@ -393,11 +440,14 @@ TEST_CASE("a scan deletes half written manifests and lists damaged ones")
 	CHECK_FALSE(fs::exists(folder / "torn.tplp.part"));
 	REQUIRE(scan.replays.size() == 3);
 	CHECK(scan.replays[0].manifest == cut.manifest);
-	CHECK_FALSE(scan.replays[0].index);
+	CHECK_FALSE(scan.replays[0].intact);
+	CHECK(scan.replays[0].broadcast == "Liga 2026-10-09 21-00");
+	CHECK(scan.replays[0].sources.empty());
 	CHECK(scan.replays[1].manifest == kept.manifest);
-	CHECK(scan.replays[1].index);
+	CHECK(scan.replays[1].intact);
 	CHECK(scan.replays[2].manifest == orphan.manifest);
-	CHECK_FALSE(scan.replays[2].index);
+	CHECK_FALSE(scan.replays[2].intact);
+	CHECK(scan.replays[2].sources.empty());
 	CHECK(scan.errors.empty());
 }
 

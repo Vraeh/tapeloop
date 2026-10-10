@@ -76,6 +76,24 @@ std::vector<uint8_t> readWhole(const std::filesystem::path &path)
 	return bytes;
 }
 
+bool segmentsExist(const std::filesystem::path &manifest, const ReplayIndex &index)
+{
+	for (const StoredSource &source : index.sources) {
+		uint32_t checked = 0;
+		for (const StoredGop &gop : source.gops) {
+			if (gop.segment == checked) {
+				continue;
+			}
+			checked = gop.segment;
+			std::error_code error;
+			if (!std::filesystem::is_regular_file(segmentPath(manifest, source, gop.segment), error)) {
+				return false;
+			}
+		}
+	}
+	return true;
+}
+
 FoundReplay readReplay(const std::filesystem::path &manifest, const std::string &broadcast,
 		       std::vector<std::string> &errors)
 {
@@ -84,31 +102,51 @@ FoundReplay readReplay(const std::filesystem::path &manifest, const std::string 
 	found.broadcast = broadcast;
 	try {
 		const std::vector<uint8_t> bytes = readWhole(manifest);
-		found.index = decodeManifest(bytes);
-		if (!found.index) {
+		const std::optional<ReplayIndex> index = decodeManifest(bytes);
+		if (!index || !segmentsExist(manifest, *index)) {
 			return found;
 		}
-		found.tags = decodeTags(bytes);
-		for (const StoredSource &source : found.index->sources) {
-			uint32_t checked = 0;
-			for (const StoredGop &gop : source.gops) {
-				if (gop.segment == checked) {
-					continue;
-				}
-				checked = gop.segment;
-				std::error_code error;
-				if (!std::filesystem::is_regular_file(segmentPath(manifest, source, gop.segment),
-								      error)) {
-					found.index.reset();
-					return found;
-				}
-			}
+		for (const StoredSource &source : index->sources) {
+			found.sources.push_back({source.key, source.name});
 		}
+		found.tags = decodeTags(bytes);
+		found.id = index->id;
+		found.capturedAtUtc = index->capturedAtUtc;
+		found.intact = true;
 	} catch (const std::exception &e) {
 		errors.emplace_back(e.what());
-		found.index.reset();
+		found.sources.clear();
+		found.tags.clear();
 	}
 	return found;
+}
+
+// A source as its clip describes it, with no GOP placed in a segment yet.
+StoredSource sourceIndexOf(const CaptureSource &source)
+{
+	StoredSource stored;
+	stored.key = source.key;
+	stored.name = shortened(source.name, kMaxSourceNameBytes);
+	stored.in = source.clip.in();
+	stored.out = source.clip.out();
+	for (const std::shared_ptr<const Gop> &gop : source.clip.gops()) {
+		const GopKey key = gopKeyOf(*gop);
+		const auto run = std::find_if(stored.runs.begin(), stored.runs.end(), [&](const StoredRun &known) {
+			return known.key == key.runKey && known.frameDuration == gop->frameDuration();
+		});
+		const auto runIndex = static_cast<uint32_t>(run - stored.runs.begin());
+		if (run == stored.runs.end()) {
+			const CodecConfig *config = gop->codecConfig();
+			stored.runs.push_back({gop->codec(), gop->frameDuration(),
+					       config ? std::make_shared<const CodecConfig>(*config) : nullptr,
+					       key.runKey});
+		}
+		stored.gops.push_back({0, key.packetCount, 0, 0, 0, runIndex});
+		for (const PacketRecord &packet : gop->packets()) {
+			stored.frameTimes.push_back(packet.time);
+		}
+	}
+	return stored;
 }
 
 bool hasRun(const std::vector<std::pair<uint32_t, Nanoseconds>> &runs, const std::pair<uint32_t, Nanoseconds> &run)
@@ -129,6 +167,22 @@ ReplayId newReplayId()
 		}
 	}
 	return id;
+}
+
+ReplayIndex indexOf(const ReplayCapture &capture)
+{
+	ReplayIndex index;
+	index.id = capture.id;
+	index.capturedAtUtc = capture.capturedAtUtc;
+	index.capturedAtClock = capture.capturedAtClock;
+	index.start = capture.start;
+	index.end = capture.end;
+	for (const CaptureSource &source : capture.sources) {
+		if (!source.clip.empty()) {
+			index.sources.push_back(sourceIndexOf(source));
+		}
+	}
+	return index;
 }
 
 size_t ReplayWriter::GopKeyHash::operator()(const GopKey &key) const noexcept
@@ -155,17 +209,14 @@ WrittenReplay ReplayWriter::write(const ReplayCapture &capture)
 	}
 
 	WrittenReplay written;
-	written.index.id = capture.id;
-	written.index.capturedAtUtc = capture.capturedAtUtc;
-	written.index.capturedAtClock = capture.capturedAtClock;
-	written.index.start = capture.start;
-	written.index.end = capture.end;
+	written.index = indexOf(capture);
 	appended_ = 0;
 	try {
 		prepareFolder();
+		size_t stored = 0;
 		for (const CaptureSource &source : capture.sources) {
 			if (!source.clip.empty()) {
-				written.index.sources.push_back(writeSource(source, written));
+				writeSource(source, written.index.sources[stored++], written);
 			}
 		}
 		flushSegments();
@@ -232,43 +283,27 @@ ReplayWriter::SourceState &ReplayWriter::stateOf(const std::string &key)
 	return sources_.emplace(key, std::move(state)).first->second;
 }
 
-StoredSource ReplayWriter::writeSource(const CaptureSource &source, WrittenReplay &written)
+void ReplayWriter::writeSource(const CaptureSource &source, StoredSource &stored, WrittenReplay &written)
 {
 	SourceState &state = stateOf(source.key);
-	StoredSource stored;
-	stored.key = source.key;
-	stored.name = shortened(source.name, kMaxSourceNameBytes);
-	stored.in = source.clip.in();
-	stored.out = source.clip.out();
-	for (const std::shared_ptr<const Gop> &gop : source.clip.gops()) {
-		const GopKey key = gopKeyOf(*gop);
-		const auto run = std::find_if(stored.runs.begin(), stored.runs.end(), [&](const StoredRun &known) {
-			return known.key == key.runKey && known.frameDuration == gop->frameDuration();
-		});
-		const auto runIndex = static_cast<uint32_t>(run - stored.runs.begin());
-		if (run == stored.runs.end()) {
-			const CodecConfig *config = gop->codecConfig();
-			stored.runs.push_back({gop->codec(), gop->frameDuration(),
-					       config ? std::make_shared<const CodecConfig>(*config) : nullptr,
-					       key.runKey});
-		}
-
+	const std::span<const std::shared_ptr<const Gop>> gops = source.clip.gops();
+	for (size_t i = 0; i < gops.size(); ++i) {
+		const GopKey key = gopKeyOf(*gops[i]);
 		Place place;
 		if (const auto found = state.written.find(key); found != state.written.end()) {
 			place = found->second;
 			++written.gopsShared;
 		} else {
-			place = append(state, source, *gop, key);
+			place = append(state, source, *gops[i], key);
 			++written.gopsAppended;
 		}
-		stored.gops.push_back(
-			{place.segment, key.packetCount, place.offset, place.size, place.headerCrc, runIndex});
-		for (const PacketRecord &packet : gop->packets()) {
-			stored.frameTimes.push_back(packet.time);
-		}
+		StoredGop &gop = stored.gops[i];
+		gop.segment = place.segment;
+		gop.offset = place.offset;
+		gop.size = place.size;
+		gop.headerCrc = place.headerCrc;
 	}
 	writeBatch(state);
-	return stored;
 }
 
 ReplayWriter::Place ReplayWriter::append(SourceState &state, const CaptureSource &source, const Gop &gop,
@@ -419,6 +454,15 @@ ReplayScan scanReplays(const std::filesystem::path &base)
 		}
 	}
 	return scan;
+}
+
+std::optional<ReplayIndex> readReplayIndex(const std::filesystem::path &manifest)
+{
+	try {
+		return decodeManifest(readWhole(manifest));
+	} catch (const std::exception &) {
+		return std::nullopt;
+	}
 }
 
 std::filesystem::path segmentPath(const std::filesystem::path &manifest, const StoredSource &source, uint32_t segment)

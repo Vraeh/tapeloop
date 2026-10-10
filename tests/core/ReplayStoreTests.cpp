@@ -82,7 +82,7 @@ TEST_CASE("jobs run in the order they were asked for")
 	REQUIRE(results[3].scan);
 	REQUIRE(results[3].scan->replays.size() == 2);
 	CHECK(results[3].scan->replays[0].tags == std::vector<std::string>{"Goal"});
-	CHECK(results[3].scan->replays[1].index);
+	CHECK(results[3].scan->replays[1].intact);
 }
 
 TEST_CASE("a failed job says why and the store goes on")

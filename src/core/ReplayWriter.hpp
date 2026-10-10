@@ -51,6 +51,10 @@ struct ReplayCapture {
 	std::vector<std::string> tags;
 };
 
+// The index of a capture before it is written: everything but where its GOPs are, which
+// only writing tells. Sources with an empty clip are left out.
+ReplayIndex indexOf(const ReplayCapture &capture);
+
 struct WrittenReplay {
 	std::filesystem::path manifest;
 	ReplayIndex index;
@@ -121,7 +125,8 @@ private:
 
 	void prepareFolder();
 	SourceState &stateOf(const std::string &key);
-	StoredSource writeSource(const CaptureSource &source, WrittenReplay &written);
+	// Fills in where the GOPs of the source landed.
+	void writeSource(const CaptureSource &source, StoredSource &stored, WrittenReplay &written);
 	Place append(SourceState &state, const CaptureSource &source, const Gop &gop, const GopKey &key);
 	void writeBatch(SourceState &state);
 	Segment &openSegment(SourceState &state, const CaptureSource &source);
@@ -142,13 +147,26 @@ private:
 	uint64_t appended_ = 0;
 };
 
-// A replay found in a broadcast folder.
+struct ReplaySource {
+	std::string key;
+	std::string name;
+
+	bool operator==(const ReplaySource &) const = default;
+};
+
+// A replay found in a broadcast folder: what a list of replays shows, without the frame
+// times, which only playing it needs (see readReplayIndex).
 struct FoundReplay {
 	std::filesystem::path manifest;
 	// The folder's name.
 	std::string broadcast;
-	// Nothing for a manifest that is damaged or refers to a segment that is gone.
-	std::optional<ReplayIndex> index;
+	// False for a manifest that is damaged or refers to a segment that is gone; what
+	// follows is then empty.
+	bool intact = false;
+	ReplayId id{};
+	// Unix time in nanoseconds.
+	int64_t capturedAtUtc = 0;
+	std::vector<ReplaySource> sources;
 	std::vector<std::string> tags;
 };
 
@@ -163,6 +181,10 @@ struct ReplayScan {
 // Reads every broadcast folder under base (D-080), in name order; reports what it cannot
 // read instead of throwing. Nothing for a base that does not exist.
 ReplayScan scanReplays(const std::filesystem::path &base);
+
+// The index of the replay whose manifest this is. Nothing when it cannot be read or is
+// not an intact manifest.
+std::optional<ReplayIndex> readReplayIndex(const std::filesystem::path &manifest);
 
 // Where the segment of a source that a manifest refers to lives.
 std::filesystem::path segmentPath(const std::filesystem::path &manifest, const StoredSource &source, uint32_t segment);
