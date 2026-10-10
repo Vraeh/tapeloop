@@ -7,7 +7,8 @@ namespace tapeloop {
 
 std::optional<uint64_t> FailurePacer::fail(Nanoseconds now) noexcept
 {
-	// A clock that went back would otherwise keep every later failure unsaid.
+	// A clock that went back would otherwise keep failures unsaid until it was past the
+	// last line again.
 	if (lastSaid_ && now >= *lastSaid_ && saturatingSub(now, *lastSaid_) < interval_) {
 		++unsaid_;
 		return std::nullopt;

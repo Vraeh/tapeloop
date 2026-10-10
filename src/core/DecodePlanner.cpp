@@ -33,6 +33,9 @@ size_t distance(size_t a, size_t b) noexcept
 
 } // namespace
 
+// The bounds reach 4 GiB, more than a 32-bit size holds.
+static_assert(sizeof(size_t) >= 8, "the decoded cache needs 64-bit sizes");
+
 DecodedCacheBounds decodedCacheBounds(FrameMemory where, MemorySizes sizes) noexcept
 {
 	constexpr uint64_t kLeastMiB = 128;
