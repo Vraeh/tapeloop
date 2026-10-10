@@ -73,11 +73,10 @@ set(
   "libavutil/uuid.c|BSD-3-Clause|Redistribution and use"
   "libavutil/x86/x86inc.asm|ISC|Permission to use"
 )
-# Files whose permissive text FFmpeg carries without a notice of its own: code after
-# Boost's algorithms, whose license covers object code without its notice, and SHA code
-# that credits public-domain and BSD-licensed code it is based on. FFmpeg's source does
-# not hold the BSD notice, so it goes into FFmpeg-THIRD-PARTY.txt from the code's own
-# release, as sha2_notice below.
+# Files whose permissive text needs no notice from FFmpeg's source: code after Boost's
+# algorithms, whose license covers object code without its notice, and SHA code that
+# credits public-domain and BSD-licensed code it is based on, whose BSD notice FFmpeg's
+# source does not hold and sha2_notice below ships.
 set(reviewed_licenses "libavutil/libm.h" "libavutil/mathematics.c" "libavutil/sha.c" "libavutil/sha512.c")
 # What marks a notice other than the LGPL's, matched in lower case with line breaks and
 # comment leaders taken out.
@@ -383,7 +382,8 @@ string(
   third_party
   "Most of FFmpeg is under the LGPL. A few of the files this build of it compiles, or\n"
   "includes into what it compiles, also carry other licenses; their notices follow, as\n"
-  "they stand in FFmpeg ${version}'s source.\n"
+  "they stand in FFmpeg ${version}'s source, and last the notice of code two other files\n"
+  "are based on, which that source does not hold.\n"
   "\n"
   "This software is based in part on the work of the Independent JPEG Group. FFmpeg's\n"
   "jfdctfst.c, jfdctint_template.c and jrevdct.c are its changed copies of libjpeg's\n"
@@ -459,6 +459,14 @@ foreach(entry IN LISTS other_licenses)
     string(APPEND closing "\n")
   endif()
   string(APPEND third_party "\n${path} (${license}):\n\n${opening}${closing}")
+endforeach()
+# The notice goes with sha.c and sha512.c only while they credit the code it is for.
+foreach(path IN ITEMS libavutil/sha.c libavutil/sha512.c)
+  file(READ "${source}/${path}" text)
+  string(REGEX REPLACE "[ \t\r\n*]+" " " text "${text}")
+  if(NOT text MATCHES "BSD-licensed SHA-2 code by Aaron D\\. Gifford")
+    message(FATAL_ERROR "${path} no longer credits Aaron D. Gifford's SHA-2 code; check sha2_notice")
+  endif()
 endforeach()
 string(APPEND third_party "${sha2_notice}")
 file(WRITE "${PREFIX}/FFmpeg-THIRD-PARTY.txt" "${third_party}")
