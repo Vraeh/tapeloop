@@ -361,6 +361,19 @@ std::shared_ptr<const Gop> decodeGopChunk(std::span<const uint8_t> chunk, uint32
 	return builder.seal();
 }
 
+std::optional<uint64_t> gopChunkSizeFromHeader(std::span<const uint8_t> header, uint32_t headerCrc)
+{
+	if (header.size() < kChunkHeaderSize || get32(header, 0) != kGopChunk || get32(header, 4) != kChunkHeaderSize ||
+	    get32(header, 28) != headerCrc || crc32c(header.first(28)) != headerCrc) {
+		return std::nullopt;
+	}
+	const uint64_t payloadSize = get64(header, 8);
+	if (payloadSize > std::numeric_limits<uint64_t>::max() - kChunkHeaderSize) {
+		return std::nullopt;
+	}
+	return kChunkHeaderSize + payloadSize;
+}
+
 std::optional<GopKey> peekGopKey(std::span<const uint8_t> chunkStart)
 {
 	if (chunkStart.size() < kChunkHeaderSize + kGopHeadSize || get32(chunkStart, 0) != kGopChunk ||
@@ -412,12 +425,12 @@ bool tagsFit(std::span<const std::string> tags) noexcept
 
 std::vector<uint8_t> encodeTagSlot(std::span<const std::string> tags, uint64_t generation)
 {
+	if (!tagsFit(tags)) {
+		throw std::length_error("tags do not fit their slot");
+	}
 	std::vector<uint8_t> slot(kTagSlotSize, 0);
 	size_t at = kTagSlotHeadSize;
 	for (const std::string &tag : tags) {
-		if (tag.size() > kTagSlotSize || at + kTagRecordHeadSize + tag.size() > kTagSlotSize) {
-			throw std::length_error("tags do not fit their slot");
-		}
 		put16(slot, at, kTagRecord);
 		put32(slot, at + 4, static_cast<uint32_t>(tag.size()));
 		putBytes(slot, at + kTagRecordHeadSize, bytesOf(tag));

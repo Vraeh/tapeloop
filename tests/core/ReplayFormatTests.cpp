@@ -194,6 +194,8 @@ TEST_CASE("a GOP chunk gives back the GOP it was written from")
 		const std::optional<GopKey> key = tapeloop::peekGopKey(chunk);
 		REQUIRE(key);
 		CHECK(*key == tapeloop::gopKeyOf(*gops[i]));
+		CHECK(tapeloop::gopChunkSizeFromHeader(chunk.first(tapeloop::kChunkHeaderSize), place.headerCrc) ==
+		      place.size);
 	}
 	// The chunk read can be longer than the chunk, padding included.
 	const std::span<const uint8_t> padded = std::span<const uint8_t>(segment).subspan(places[0].offset, 8192);
@@ -201,6 +203,8 @@ TEST_CASE("a GOP chunk gives back the GOP it was written from")
 	// Reading a RUN chunk where a GOP was meant finds nothing.
 	CHECK_FALSE(tapeloop::decodeGopChunk(std::span<const uint8_t>(segment).subspan(run.offset, run.size),
 					     run.headerCrc, runOf(*gops[0])));
+	CHECK_FALSE(tapeloop::gopChunkSizeFromHeader(std::span<const uint8_t>(segment).subspan(run.offset, run.size),
+						     run.headerCrc));
 }
 
 TEST_CASE("a chunk's size is known before it is appended")
@@ -241,6 +245,11 @@ TEST_CASE("a GOP chunk that is damaged, cut short or not the one meant is refuse
 		CHECK_FALSE(decode(chunk.first(size)));
 	}
 	CHECK_FALSE(tapeloop::decodeGopChunk(chunk, place.headerCrc + 1, run));
+	CHECK_FALSE(tapeloop::gopChunkSizeFromHeader(chunk, place.headerCrc + 1));
+	CHECK_FALSE(tapeloop::gopChunkSizeFromHeader(chunk.first(tapeloop::kChunkHeaderSize - 1), place.headerCrc));
+	std::vector<uint8_t> header(chunk.begin(), chunk.begin() + tapeloop::kChunkHeaderSize);
+	header[8] ^= 0x01;
+	CHECK_FALSE(tapeloop::gopChunkSizeFromHeader(header, place.headerCrc));
 	StoredRun other = run;
 	other.key += 1;
 	CHECK_FALSE(tapeloop::decodeGopChunk(chunk, place.headerCrc, other));

@@ -20,6 +20,7 @@
 #include <cstring>
 #include <filesystem>
 #include <optional>
+#include <string>
 #include <string_view>
 #include <utility>
 #include <vector>
@@ -29,9 +30,14 @@ namespace {
 
 // The folder of every broadcast, inside OBS's recording folder.
 constexpr std::string_view kReplayFolder = "Tapeloop";
-// How many jobs may wait for the store before the log says the disk falls behind: a
-// capture keeps its GOPs in memory until it is written, whatever the buffers drop.
+// How many jobs the store may have, the one it is on included, before the log says the
+// disk falls behind: a capture keeps its GOPs in memory until it is written, whatever
+// the buffers drop.
 constexpr size_t kStoreBacklogWarning = 3;
+// Why a replay the store could not take is not saved. That happens when memory runs out,
+// so the reason fits a string's own buffer in every standard library.
+constexpr std::string_view kNotHandedOver = "not handed over";
+static_assert(kNotHandedOver.size() <= 15);
 
 bool addInput(void *param, obs_source_t *source) noexcept
 {
@@ -313,7 +319,7 @@ uint64_t CaptureManager::captureReplay()
 	}
 	// OBS may have had no recording folder when the buffers started.
 	if (broadcastFolder_.empty()) {
-		nameBroadcast();
+		placeBroadcast();
 	}
 	const auto capturedAt = std::chrono::system_clock::now();
 	ReplayCapture capture;
@@ -343,11 +349,16 @@ uint64_t CaptureManager::captureReplay()
 		return id;
 	}
 	try {
-		writing_[store_.write(std::move(capture))] = id;
+		// The entry for the ticket is made first, since nothing may fail once the store has
+		// the capture: the replay would be marked not saved while it is written. Tickets
+		// start at 1.
+		auto entry = writing_.extract(writing_.try_emplace(0, id).first);
+		entry.key() = store_.write(std::move(capture));
+		writing_.insert(std::move(entry));
 	} catch (...) {
 		blog(LOG_WARNING, "[tapeloop] Replay %llu could not be saved: it could not be handed to the writer",
 		     static_cast<unsigned long long>(id));
-		library_.notSaved(id, "it could not be handed to the writer");
+		library_.notSaved(id, std::string(kNotHandedOver));
 		throw;
 	}
 	const size_t backlog = store_.pending();
@@ -355,8 +366,8 @@ uint64_t CaptureManager::captureReplay()
 		backlogLogged_ = false;
 	} else if (!backlogLogged_) {
 		blog(LOG_WARNING,
-		     "[tapeloop] The disk falls behind: %zu replays, tag edits or scans wait for the writer, "
-		     "and every replay waiting keeps its footage in memory",
+		     "[tapeloop] The disk falls behind: the writer has %zu replays, tag edits or scans to do, "
+		     "and every replay among them keeps its footage in memory",
 		     backlog);
 		backlogLogged_ = true;
 	}
@@ -424,6 +435,11 @@ void CaptureManager::nameBroadcast()
 {
 	broadcastName_ =
 		broadcastFolderName(host_.sceneCollectionName(), localTimeOf(std::chrono::system_clock::now()));
+	placeBroadcast();
+}
+
+void CaptureManager::placeBroadcast()
+{
 	const std::filesystem::path base = replayFolder();
 	broadcastFolder_ = base.empty() ? std::filesystem::path() : base / pathFromUtf8(broadcastName_);
 	if (base.empty()) {

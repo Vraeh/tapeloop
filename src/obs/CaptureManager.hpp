@@ -171,6 +171,9 @@ private:
 	void releaseAll();
 	void followOutputs();
 	void nameBroadcast();
+	// The folder of the broadcast named when the buffers started, once OBS has a
+	// recording folder.
+	void placeBroadcast();
 	void takeStoreResults();
 	// Has the store write the replay's tags when it is stored on disk.
 	void saveTags(uint64_t id);

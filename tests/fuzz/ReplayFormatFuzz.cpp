@@ -218,6 +218,7 @@ void writtenThenDamaged(FuzzInput &input)
 				require(gop->packets().size() == stored.packetCount);
 			}
 			(void)tapeloop::peekGopKey(chunk);
+			(void)tapeloop::gopChunkSizeFromHeader(chunk, headerCrc);
 		}
 	}
 }

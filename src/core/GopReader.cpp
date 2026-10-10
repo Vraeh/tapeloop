@@ -6,6 +6,8 @@
 #include "core/FileIo.hpp"
 #include "core/ReplayWriter.hpp"
 
+#include <array>
+#include <cstdint>
 #include <exception>
 #include <utility>
 
@@ -53,7 +55,14 @@ std::shared_ptr<const Gop> GopReader::readSegment(const std::filesystem::path &s
 {
 	try {
 		File file(segment, File::Mode::ReadOnly);
-		// The size comes from the manifest, and the buffer keeps what it grows to.
+		// The size comes from the manifest, and the buffer keeps what it grows to, so it
+		// is taken only when the chunk's own header, which the manifest's CRC names, has
+		// it too, and the chunk lies inside the segment.
+		std::array<uint8_t, kChunkHeaderSize> header{};
+		if (file.readAt(stored.offset, header) != header.size() ||
+		    gopChunkSizeFromHeader(header, stored.headerCrc) != stored.size) {
+			return nullptr;
+		}
 		const uint64_t fileSize = file.size();
 		if (stored.offset > fileSize || stored.size > fileSize - stored.offset) {
 			return nullptr;

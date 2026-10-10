@@ -51,9 +51,9 @@ template<typename Function> void guarded(Function &&function) noexcept
 	}
 }
 
-// Qt goes past the rows that cannot be current only on the arrow keys, so Home, End and a
-// page key that stopped on a heading or a damaged replay did nothing. Such a move now
-// ends on the nearest row that can be current, back toward where it came from.
+// Qt goes past the rows that cannot be current on the arrow keys only, and ignores Home,
+// End or a page key that stops on a heading or a damaged replay; such a move ends on the
+// nearest row that can be current instead, back toward where it came from.
 class ReplayList : public QListWidget {
 public:
 	using QListWidget::QListWidget;
@@ -113,6 +113,7 @@ TapeloopDock::TapeloopDock(DockBackend &backend, TextLookup text, QWidget *paren
 	sources_->setEditTriggers(QAbstractItemView::NoEditTriggers);
 	sources_->setTabKeyNavigation(false);
 	sources_->installEventFilter(this);
+	replays_->installEventFilter(this);
 	replays_->viewport()->installEventFilter(this);
 	// Moves without a button reach the filter only with tracking on.
 	replays_->viewport()->setMouseTracking(true);
@@ -386,6 +387,11 @@ bool TapeloopDock::eventFilter(QObject *watched, QEvent *event)
 			return true;
 		}
 	}
+	// A dialog that opens during a press takes its release, and the pointer may never come
+	// back over the list to end it.
+	if (watched == replays_ && event->type() == QEvent::FocusOut) {
+		leftButtonHeld_ = false;
+	}
 	if (watched == replays_->viewport()) {
 		const QEvent::Type type = event->type();
 		if (type == QEvent::MouseButtonPress || type == QEvent::MouseButtonDblClick ||
@@ -396,7 +402,8 @@ bool TapeloopDock::eventFilter(QObject *watched, QEvent *event)
 				return true;
 			}
 			leftButtonHeld_ = type != QEvent::MouseButtonRelease;
-			if (type == QEvent::MouseButtonPress) {
+			// The second press of a double click ends in a click too.
+			if (type != QEvent::MouseButtonRelease) {
 				currentAtPress_.reset();
 				guarded([this] { currentAtPress_ = backend_.currentReplay(); });
 			}
