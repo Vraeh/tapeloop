@@ -504,6 +504,10 @@ TEST_CASE("an encoder that reads its frames back says why")
 	CHECK(readbackReasonOf(nvenc, Vendor::Unknown, false) == ReadbackReason::NoTextures);
 	CHECK(readbackReasonOf(encoder("com.apple.videotoolbox.videoencoder.ave.avc", "h264", Vendor::Apple, false),
 			       Vendor::Apple, false) == ReadbackReason::None);
+	// An Intel Mac rendering on its AMD card: VideoToolbox takes no textures, wherever it
+	// encodes.
+	CHECK(readbackReasonOf(encoder("com.apple.videotoolbox.videoencoder.ave.avc", "h264", Vendor::Apple, false),
+			       Vendor::Amd, true) == ReadbackReason::NoTextureInput);
 	CHECK(readbackReasonOf(encoder("obs_x264", "h264", Vendor::Software, false), Vendor::Nvidia, false) ==
 	      ReadbackReason::None);
 	// Every encoder that reads back has a reason, and only those.

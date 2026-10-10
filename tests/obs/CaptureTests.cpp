@@ -390,9 +390,11 @@ TEST_CASE_METHOD(ObsFixture, "a capture reports the path its encoder takes the f
 	texture.vendor = Vendor::Nvidia;
 	texture.passTexture = true;
 	settings.candidates = {texture};
+	LogCounter noTextures("but OBS cannot hand it textures with this graphics card or renderer");
 	REQUIRE(capture.start(pattern, settings) == StartResult::Started);
 	CHECK(capture.stats().encoderPath == (nv12 ? tapeloop::EncoderPath::Texture : tapeloop::EncoderPath::Readback));
 	CHECK(capture.stats().readbackReason == (nv12 ? ReadbackReason::None : ReadbackReason::NoTextures));
+	CHECK(noTextures.lines == (nv12 ? 0 : 1));
 	REQUIRE(waitFor([&] { return hasGops(capture, 2); }, 60s));
 	capture.stop();
 	CHECK(capture.stats().readbackReason == ReadbackReason::None);
@@ -402,12 +404,14 @@ TEST_CASE_METHOD(ObsFixture, "a capture reports the path its encoder takes the f
 	EncoderInfo readback = testEncoder(tapeloop::test::kHevcEncoderId, "hevc");
 	readback.vendor = Vendor::Intel;
 	settings.candidates = {readback};
-	LogCounter said("takes every frame read back through memory");
+	const ReadbackReason expected =
+		tapeloop::readbackReasonOf(readback, tapeloop::obs::renderAdapterVendor(), false);
+	REQUIRE(expected != ReadbackReason::None);
+	LogCounter said(expected == ReadbackReason::OtherAdapter ? "which runs on another graphics card"
+								 : "which cannot take OBS's textures");
 	REQUIRE(capture.start(pattern, settings) == StartResult::Started);
 	CHECK(capture.stats().encoderPath == tapeloop::EncoderPath::Readback);
-	CHECK(capture.stats().readbackReason ==
-	      tapeloop::readbackReasonOf(readback, tapeloop::obs::renderAdapterVendor(), false));
-	CHECK(capture.stats().readbackReason != ReadbackReason::None);
+	CHECK(capture.stats().readbackReason == expected);
 	CHECK(said.lines == 1);
 	capture.stop();
 }

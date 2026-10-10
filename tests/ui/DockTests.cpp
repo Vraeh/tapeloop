@@ -257,14 +257,28 @@ TEST_CASE("a source on an encoder path that is not the optimal one says so")
 		CHECK_FALSE(note.contains("NV12"));
 	}
 
-	// An encoder chosen in the advanced settings explains the path it takes.
-	backend.shown[1].chosenEncoder = true;
+	// Without a reason, as no capture gives, it says no more than it knows.
+	backend.shown[1].readbackReason = tapeloop::ReadbackReason::None;
 	dock.refresh();
-	CHECK(table->item(1, 1)->toolTip().endsWith(localeText()("Dock.Status.ReadbackChosen.Tooltip")));
+	CHECK(table->item(1, 1)->toolTip() == localeText()("Dock.Status.Readback.Tooltip"));
+
+	// An encoder chosen in the advanced settings on another card explains the path it
+	// takes; one OBS gives no textures, or that takes none, would read back in the
+	// automatic order too.
+	const QString chosenNote = localeText()("Dock.Status.ReadbackChosen.Tooltip");
+	backend.shown[1].chosenEncoder = true;
+	for (const auto &[reason, words] : reasons) {
+		backend.shown[1].readbackReason = reason;
+		dock.refresh();
+		CAPTURE(words);
+		CHECK(table->item(1, 1)->toolTip().endsWith(chosenNote) ==
+		      (reason == tapeloop::ReadbackReason::OtherAdapter));
+	}
 	backend.shown[0].chosenEncoder = true;
 	dock.refresh();
 	CHECK(table->item(0, 1)->toolTip().contains(localeText()("Dock.Status.SoftwareChosen.Tooltip")));
 	CHECK_FALSE(table->item(0, 1)->toolTip().contains("no hardware encoder could take it"));
+	CHECK_FALSE(table->item(0, 1)->toolTip().contains(chosenNote));
 	backend.shown[0].chosenEncoder = false;
 	backend.shown[1].chosenEncoder = false;
 

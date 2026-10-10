@@ -49,10 +49,11 @@ const char *readbackNote(ReadbackReason reason)
 	case ReadbackReason::NoTextureInput:
 		return "Dock.Status.Readback.NoTextureInput.Tooltip";
 	case ReadbackReason::NoTextures:
+		return "Dock.Status.Readback.NoTextures.Tooltip";
 	case ReadbackReason::None:
 		break;
 	}
-	return "Dock.Status.Readback.NoTextures.Tooltip";
+	return "Dock.Status.Readback.Tooltip";
 }
 
 // Qt cannot let an exception through its event loop; a failed change is dropped and the
@@ -537,7 +538,9 @@ void TapeloopDock::updateSources(const std::vector<DockSource> &sources)
 		}
 		if (path) {
 			note += (note.isEmpty() ? QString() : QStringLiteral("\n\n")) + text_(path);
-			if (sources[i].chosenEncoder && sources[i].encoderPath == EncoderPath::Readback) {
+			// Only another card is a choice the automatic order would have made otherwise.
+			if (sources[i].chosenEncoder && sources[i].encoderPath == EncoderPath::Readback &&
+			    sources[i].readbackReason == ReadbackReason::OtherAdapter) {
 				note += QStringLiteral(" ") + text_("Dock.Status.ReadbackChosen.Tooltip");
 			}
 		}
