@@ -1,10 +1,12 @@
 // SPDX-License-Identifier: GPL-2.0-or-later
 // Copyright (C) 2026 Vicente Aedo <ryde1337@gmail.com>
 
+#include "../core/TempDirectory.hpp"
 #include "ObsFixture.hpp"
 #include "TestEncoders.hpp"
 #include "TestPattern.hpp"
 
+#include "core/FileIo.hpp"
 #include "obs/CaptureManager.hpp"
 #include "obs/ManagerDockBackend.hpp"
 
@@ -30,8 +32,11 @@ public:
 	bool streamingActive() const override { return false; }
 	bool recordingActive() const override { return false; }
 	void requestSave() override { ++saves; }
+	std::string recordingFolder() const override { return tapeloop::utf8FromPath(dir.path()); }
+	std::string sceneCollectionName() const override { return "Liga"; }
 
 	int saves = 0;
+	tapeloop::test::TempDirectory dir;
 };
 
 } // namespace
@@ -215,4 +220,5 @@ TEST_CASE_METHOD(ObsFixture, "the dock captures replays through the manager", "[
 	CHECK(tagged[0].id == first);
 	CHECK(tagged[0].tags == std::vector<std::string>{"goal"});
 	REQUIRE(backend.toggleRunning());
+	manager.finishWrites();
 }

@@ -3,16 +3,30 @@
 
 #pragma once
 
+#include "core/Clip.hpp"
 #include "core/MediaTime.hpp"
-#include "core/MomentList.hpp"
 #include "core/SourceBuffer.hpp"
 
+#include <cstdint>
 #include <functional>
 #include <span>
 #include <string>
 #include <vector>
 
 namespace tapeloop {
+
+struct MomentClip {
+	// Chosen by the caller to tell sources apart; the core does not interpret it.
+	std::string sourceKey;
+	Clip clip;
+};
+
+// One marked instant, cut from one or more sources over the same range.
+struct Moment {
+	Nanoseconds start{0};
+	Nanoseconds end{0};
+	std::vector<MomentClip> clips;
+};
 
 // A view for one call: the buffer must outlive the call to cutMoment.
 struct MomentSource {
@@ -21,7 +35,6 @@ struct MomentSource {
 };
 
 struct MomentCut {
-	// Not yet in any MomentList, so its id is still zero.
 	Moment moment;
 	// Sources that held nothing in the requested range.
 	std::vector<std::string> skipped;

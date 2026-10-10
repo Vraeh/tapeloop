@@ -3,7 +3,6 @@
 
 #include "core/MomentCutter.hpp"
 
-#include "core/MomentList.hpp"
 #include "core/SourceBuffer.hpp"
 #include "SyntheticEncoder.hpp"
 
@@ -12,6 +11,7 @@
 #include <atomic>
 #include <chrono>
 #include <cstddef>
+#include <deque>
 #include <limits>
 #include <memory>
 #include <set>
@@ -25,7 +25,6 @@ using tapeloop::cutMoment;
 using tapeloop::Gop;
 using tapeloop::Moment;
 using tapeloop::MomentCut;
-using tapeloop::MomentList;
 using tapeloop::MomentSource;
 using tapeloop::Nanoseconds;
 using tapeloop::SourceBuffer;
@@ -116,7 +115,6 @@ TEST_CASE("cutMoment cuts the same range from every source")
 						   {"idle", idle.buffer}};
 	const MomentCut cut = cutMoment(sources, 9s, 3s);
 
-	CHECK(cut.moment.id == 0);
 	CHECK(cut.moment.start == 6s);
 	CHECK(cut.moment.end == 9s);
 	CHECK(cut.skipped == std::vector<std::string>{"idle"});
@@ -215,7 +213,7 @@ TEST_CASE("cutMoment keeps what a source holds when it stopped before the anchor
 	CHECK(clip->out() == stopped.encoder.timeOf(480));
 }
 
-TEST_CASE("cutMoment with every source skipped gives a moment the list refuses")
+TEST_CASE("cutMoment with every source skipped gives a moment without clips")
 {
 	Camera idle(0ms);
 	Camera stale(0ms);
@@ -225,13 +223,6 @@ TEST_CASE("cutMoment with every source skipped gives a moment the list refuses")
 	MomentCut cut = cutMoment(sources, 10s, 1s);
 	CHECK(cut.moment.clips.empty());
 	CHECK(cut.skipped == std::vector<std::string>{"idle", "stale"});
-
-	tapeloop::MomentListConfig config;
-	config.maxMoments = 10;
-	config.maxBytes = std::numeric_limits<size_t>::max();
-	MomentList list(config);
-	CHECK(list.add(std::move(cut.moment)) == 0);
-	CHECK(list.size() == 0);
 }
 
 TEST_CASE("Moments cut from the same buffers share their GOPs")
@@ -259,14 +250,6 @@ TEST_CASE("Moments cut from the same buffers share their GOPs")
 		}
 	}
 
-	tapeloop::MomentListConfig config;
-	config.maxMoments = 10;
-	config.maxBytes = std::numeric_limits<size_t>::max();
-	MomentList list(config);
-	list.add(std::move(first.moment));
-	list.add(std::move(second.moment));
-
-	CHECK(list.byteSize() == distinctBytes);
 	CHECK(distinctBytes < clipBytes);
 }
 
@@ -293,10 +276,8 @@ TEST_CASE("cutMoment can run while the encoders push")
 		});
 	}
 
-	tapeloop::MomentListConfig config;
-	config.maxMoments = 20;
-	config.maxBytes = std::numeric_limits<size_t>::max();
-	MomentList list(config);
+	// The last moments cut, as a capture keeps them until they are written.
+	std::deque<Moment> kept;
 	int failures = 0;
 	int cuts = 0;
 	// At least one cut happens while the producers run or right after, however the
@@ -319,7 +300,10 @@ TEST_CASE("cutMoment can run while the encoders push")
 				}
 			}
 		}
-		list.add(std::move(cut.moment));
+		kept.push_back(std::move(cut.moment));
+		if (kept.size() > 20) {
+			kept.pop_front();
+		}
 		++cuts;
 	} while (running > 0);
 	for (auto &producer : producers) {
@@ -333,7 +317,7 @@ TEST_CASE("cutMoment can run while the encoders push")
 	for (const auto &camera : cameras) {
 		CHECK(camera->buffer.stats().oldestTime > camera->encoder.timeOf(5000));
 	}
-	for (const Moment &moment : list.moments()) {
+	for (const Moment &moment : kept) {
 		for (const auto &entry : moment.clips) {
 			for (const auto &gop : entry.clip.gops()) {
 				CHECK(tapeloop::test::hasExpectedBytes(*gop));

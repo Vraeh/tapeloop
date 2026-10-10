@@ -37,8 +37,6 @@ target_sources(
     MediaTime.hpp
     MomentCutter.cpp
     MomentCutter.hpp
-    MomentList.cpp
-    MomentList.hpp
     Playhead.cpp
     Playhead.hpp
     ReplayFormat.cpp

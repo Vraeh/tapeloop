@@ -46,137 +46,15 @@ bool sameIgnoringCase(std::string_view a, std::string_view b) noexcept
 	return std::ranges::equal(a, b, [](char x, char y) { return lower(x) == lower(y); });
 }
 
-} // namespace
-
-ReplayLibrary::ReplayLibrary(MomentListConfig limits) : moments_(limits) {}
-
-uint64_t ReplayLibrary::add(Moment moment, std::chrono::system_clock::time_point capturedAt)
+std::chrono::system_clock::time_point fromUnixNanoseconds(int64_t nanoseconds)
 {
-	// The entry is made before the moment is stored and given its id after, which
-	// cannot fail, so a replay is never stored without it.
-	auto entry = info_.extract(info_.try_emplace(0).first);
-	entry.mapped().capturedAt = capturedAt;
-	const uint64_t id = moments_.add(std::move(moment));
-	if (id != 0) {
-		entry.key() = id;
-		info_.insert(std::move(entry));
-		picked_ = 0;
-		forgetDropped();
-	}
-	return id;
+	return std::chrono::system_clock::time_point(
+		std::chrono::duration_cast<std::chrono::system_clock::duration>(std::chrono::nanoseconds(nanoseconds)));
 }
 
-bool ReplayLibrary::remove(uint64_t id)
-{
-	if (!moments_.remove(id)) {
-		return false;
-	}
-	info_.erase(id);
-	if (picked_ == id) {
-		picked_ = 0;
-	}
-	return true;
-}
-
-void ReplayLibrary::clear()
-{
-	moments_.clear();
-	info_.clear();
-	picked_ = 0;
-}
-
-std::vector<uint64_t> ReplayLibrary::list(std::string_view tag) const
-{
-	const std::string name = tag.empty() ? std::string() : canonical(tag);
-	const auto carries = [&](uint64_t id) {
-		const auto found = info_.find(id);
-		return found != info_.end() && containsSorted(found->second.tags, name);
-	};
-	std::vector<uint64_t> ids;
-	ids.reserve(moments_.size());
-	for (const Moment &moment : std::views::reverse(moments_.moments())) {
-		if (tag.empty() || carries(moment.id)) {
-			ids.push_back(moment.id);
-		}
-	}
-	return ids;
-}
-
-const Moment *ReplayLibrary::find(uint64_t id) const
-{
-	return moments_.find(id);
-}
-
-std::chrono::system_clock::time_point ReplayLibrary::capturedAt(uint64_t id) const
-{
-	const auto found = info_.find(id);
-	return found != info_.end() ? found->second.capturedAt : std::chrono::system_clock::time_point{};
-}
-
-bool ReplayLibrary::createTag(std::string_view tag)
-{
-	const std::string name = canonical(tag);
-	return !name.empty() && insertSorted(tags_, name);
-}
-
-bool ReplayLibrary::deleteTag(std::string_view tag)
-{
-	const std::string name = canonical(tag);
-	if (!eraseSorted(tags_, name)) {
-		return false;
-	}
-	for (auto &[id, info] : info_) {
-		eraseSorted(info.tags, name);
-	}
-	return true;
-}
-
-bool ReplayLibrary::addTag(uint64_t id, std::string_view tag)
-{
-	const std::string name = canonical(tag);
-	if (name.empty() || !moments_.find(id)) {
-		return false;
-	}
-	// The tag list first: should the replay's own list then fail to grow, the tag is at
-	// least known.
-	insertSorted(tags_, name);
-	return insertSorted(info_[id].tags, name);
-}
-
-bool ReplayLibrary::removeTag(uint64_t id, std::string_view tag)
-{
-	const auto found = info_.find(id);
-	return found != info_.end() && eraseSorted(found->second.tags, canonical(tag));
-}
-
-std::span<const std::string> ReplayLibrary::tagsOf(uint64_t id) const
-{
-	const auto found = info_.find(id);
-	if (found == info_.end()) {
-		return {};
-	}
-	return found->second.tags;
-}
-
-uint64_t ReplayLibrary::current() const noexcept
-{
-	if (picked_ != 0) {
-		return picked_;
-	}
-	const std::span<const Moment> moments = moments_.moments();
-	return moments.empty() ? 0 : moments.back().id;
-}
-
-bool ReplayLibrary::pick(uint64_t id)
-{
-	if (!moments_.find(id)) {
-		return false;
-	}
-	picked_ = id;
-	return true;
-}
-
-std::string ReplayLibrary::canonical(std::string_view tag) const
+// The spelling a name has in known when it matches one ignoring ASCII case, else the
+// name trimmed; empty for a name that is not valid.
+std::string canonicalIn(const std::vector<std::string> &known, std::string_view tag)
 {
 	const auto blank = [](char c) {
 		return c == ' ' || c == '\t';
@@ -194,14 +72,224 @@ std::string ReplayLibrary::canonical(std::string_view tag) const
 	if (tag.empty() || control) {
 		return {};
 	}
-	const auto known =
-		std::ranges::find_if(tags_, [tag](const std::string &name) { return sameIgnoringCase(name, tag); });
-	return known != tags_.end() ? *known : std::string(tag);
+	const auto found =
+		std::ranges::find_if(known, [tag](const std::string &name) { return sameIgnoringCase(name, tag); });
+	return found != known.end() ? *found : std::string(tag);
 }
 
-void ReplayLibrary::forgetDropped()
+// Newer first: by capture time, then by id, which follows the order replays came in.
+bool newer(const Replay &a, const Replay &b) noexcept
 {
-	std::erase_if(info_, [this](const auto &entry) { return moments_.find(entry.first) == nullptr; });
+	return a.capturedAt != b.capturedAt ? a.capturedAt > b.capturedAt : a.id > b.id;
+}
+
+} // namespace
+
+uint64_t ReplayLibrary::addCaptured(const ReplayCapture &capture, std::string broadcast)
+{
+	ReplayIndex index = indexOf(capture);
+	if (index.sources.empty()) {
+		return 0;
+	}
+	Replay replay;
+	replay.uuid = capture.id;
+	replay.capturedAt = fromUnixNanoseconds(capture.capturedAtUtc);
+	replay.broadcast = std::move(broadcast);
+	replay.state = ReplayState::Writing;
+	for (const CaptureSource &source : capture.sources) {
+		if (source.clip.empty()) {
+			continue;
+		}
+		std::vector<std::weak_ptr<const Gop>> gops(source.clip.gops().begin(), source.clip.gops().end());
+		replay.live.push_back(std::move(gops));
+	}
+	for (const StoredSource &source : index.sources) {
+		replay.sources.push_back({source.key, source.name});
+	}
+	replay.index = std::make_shared<const ReplayIndex>(std::move(index));
+	const uint64_t id = add(std::move(replay));
+	picked_ = 0;
+	return id;
+}
+
+uint64_t ReplayLibrary::addFound(const FoundReplay &found)
+{
+	const bool known = std::ranges::any_of(replays_, [&](const auto &entry) {
+		const Replay &replay = entry.second;
+		return found.intact ? replay.uuid == found.id && replay.state != ReplayState::Damaged
+				    : replay.manifest == found.manifest;
+	});
+	if (known) {
+		return 0;
+	}
+	Replay replay;
+	replay.state = found.intact ? ReplayState::Stored : ReplayState::Damaged;
+	replay.uuid = found.id;
+	replay.capturedAt = fromUnixNanoseconds(found.capturedAtUtc);
+	replay.broadcast = found.broadcast;
+	replay.manifest = found.manifest;
+	replay.sources = found.sources;
+	std::vector<std::string> tags = tags_;
+	for (const std::string &tag : found.tags) {
+		const std::string name = canonicalIn(tags, tag);
+		if (!name.empty()) {
+			insertSorted(replay.tags, name);
+			insertSorted(tags, name);
+		}
+	}
+	const uint64_t id = add(std::move(replay));
+	tags_.swap(tags);
+	return id;
+}
+
+bool ReplayLibrary::stored(uint64_t id, std::filesystem::path manifest, ReplayIndex index)
+{
+	const auto found = replays_.find(id);
+	if (found == replays_.end() || found->second.state != ReplayState::Writing) {
+		return false;
+	}
+	Replay &replay = found->second;
+	replay.index = std::make_shared<const ReplayIndex>(std::move(index));
+	replay.manifest = std::move(manifest);
+	replay.state = ReplayState::Stored;
+	return true;
+}
+
+bool ReplayLibrary::notSaved(uint64_t id, std::string error)
+{
+	const auto found = replays_.find(id);
+	if (found == replays_.end() || found->second.state != ReplayState::Writing) {
+		return false;
+	}
+	found->second.error = std::move(error);
+	found->second.state = ReplayState::NotSaved;
+	return true;
+}
+
+bool ReplayLibrary::remove(uint64_t id)
+{
+	if (replays_.erase(id) == 0) {
+		return false;
+	}
+	if (picked_ == id) {
+		picked_ = 0;
+	}
+	return true;
+}
+
+void ReplayLibrary::clear()
+{
+	replays_.clear();
+	picked_ = 0;
+}
+
+std::vector<uint64_t> ReplayLibrary::list(std::string_view tag) const
+{
+	const std::string name = tag.empty() ? std::string() : canonical(tag);
+	std::vector<const Replay *> shown;
+	shown.reserve(replays_.size());
+	for (const auto &[id, replay] : replays_) {
+		if (tag.empty() || containsSorted(replay.tags, name)) {
+			shown.push_back(&replay);
+		}
+	}
+	std::sort(shown.begin(), shown.end(), [](const Replay *a, const Replay *b) { return newer(*a, *b); });
+	std::vector<uint64_t> ids;
+	ids.reserve(shown.size());
+	for (const Replay *replay : shown) {
+		ids.push_back(replay->id);
+	}
+	return ids;
+}
+
+const Replay *ReplayLibrary::find(uint64_t id) const
+{
+	const auto found = replays_.find(id);
+	return found != replays_.end() ? &found->second : nullptr;
+}
+
+bool ReplayLibrary::createTag(std::string_view tag)
+{
+	const std::string name = canonical(tag);
+	return !name.empty() && insertSorted(tags_, name);
+}
+
+bool ReplayLibrary::deleteTag(std::string_view tag)
+{
+	const std::string name = canonical(tag);
+	if (!eraseSorted(tags_, name)) {
+		return false;
+	}
+	for (auto &[id, replay] : replays_) {
+		eraseSorted(replay.tags, name);
+	}
+	return true;
+}
+
+bool ReplayLibrary::addTag(uint64_t id, std::string_view tag)
+{
+	const std::string name = canonical(tag);
+	const auto found = replays_.find(id);
+	if (name.empty() || found == replays_.end() || found->second.state == ReplayState::Damaged) {
+		return false;
+	}
+	// The tag list first: should the replay's own list then fail to grow, the tag is at
+	// least known.
+	insertSorted(tags_, name);
+	return insertSorted(found->second.tags, name);
+}
+
+bool ReplayLibrary::removeTag(uint64_t id, std::string_view tag)
+{
+	const auto found = replays_.find(id);
+	return found != replays_.end() && eraseSorted(found->second.tags, canonical(tag));
+}
+
+std::span<const std::string> ReplayLibrary::tagsOf(uint64_t id) const
+{
+	const auto found = replays_.find(id);
+	if (found == replays_.end()) {
+		return {};
+	}
+	return found->second.tags;
+}
+
+uint64_t ReplayLibrary::current() const noexcept
+{
+	if (picked_ != 0) {
+		return picked_;
+	}
+	const Replay *newest = nullptr;
+	for (const auto &[id, replay] : replays_) {
+		if (replay.state != ReplayState::Damaged && (!newest || newer(replay, *newest))) {
+			newest = &replay;
+		}
+	}
+	return newest ? newest->id : 0;
+}
+
+bool ReplayLibrary::pick(uint64_t id)
+{
+	const auto found = replays_.find(id);
+	if (found == replays_.end() || found->second.state == ReplayState::Damaged) {
+		return false;
+	}
+	picked_ = id;
+	return true;
+}
+
+uint64_t ReplayLibrary::add(Replay replay)
+{
+	const uint64_t id = nextId_;
+	replay.id = id;
+	replays_.emplace(id, std::move(replay));
+	++nextId_;
+	return id;
+}
+
+std::string ReplayLibrary::canonical(std::string_view tag) const
+{
+	return canonicalIn(tags_, tag);
 }
 
 } // namespace tapeloop

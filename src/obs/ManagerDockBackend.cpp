@@ -80,9 +80,9 @@ std::vector<ui::DockReplay> ManagerDockBackend::replays(const std::string &tag) 
 	for (const uint64_t id : library.list(tag)) {
 		ui::DockReplay replay;
 		replay.id = id;
-		replay.capturedAt = library.capturedAt(id);
-		if (const Moment *moment = library.find(id)) {
-			replay.sources = moment->clips.size();
+		if (const Replay *found = library.find(id)) {
+			replay.capturedAt = found->capturedAt;
+			replay.sources = found->sources.size();
 		}
 		const std::span<const std::string> tags = library.tagsOf(id);
 		replay.tags.assign(tags.begin(), tags.end());
