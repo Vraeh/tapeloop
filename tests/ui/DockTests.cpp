@@ -26,6 +26,7 @@
 #include <QMouseEvent>
 #include <QSpinBox>
 #include <QTableWidget>
+#include <QWheelEvent>
 
 #include <chrono>
 #include <cstdlib>
@@ -186,7 +187,9 @@ TEST_CASE("the advanced settings choose the replay encoder and whether other car
 	// Tab goes through the advanced settings in the order they show.
 	const auto nextFocus = [](QWidget *from) {
 		QWidget *next = from->nextInFocusChain();
-		while (next != from && (!(next->focusPolicy() & Qt::TabFocus) || next->objectName().isEmpty())) {
+		// Qt's own parts, as a spin box's line edit, come after their control.
+		while (next != from && (!(next->focusPolicy() & Qt::TabFocus) || next->objectName().isEmpty() ||
+					next->objectName().startsWith("qt_"))) {
 			next = next->nextInFocusChain();
 		}
 		return next->objectName();
@@ -194,7 +197,149 @@ TEST_CASE("the advanced settings choose the replay encoder and whether other car
 	CHECK(nextFocus(advanced) == "replayEncoder");
 	CHECK(nextFocus(encoder) == "otherAdapters");
 	CHECK(nextFocus(otherAdapters) == "forceH264");
-	CHECK(nextFocus(forceH264) == "startStop");
+	CHECK(nextFocus(forceH264) == "bufferMemory");
+	CHECK(nextFocus(child<QSpinBox>(dock, "bufferMemory")) == "startStop");
+}
+
+TEST_CASE("the advanced settings set the memory the buffers may use")
+{
+	FakeBackend backend = backendWithSources();
+	backend.current.showAdvanced = true;
+	TapeloopDock dock(backend, localeText());
+	dock.show();
+	auto *memory = child<QSpinBox>(dock, "bufferMemory");
+	auto *warning = child<QLabel>(dock, "memoryWarning");
+	// Automatic until set, and it says how much that is: a quarter of the computer's.
+	CHECK(memory->value() == 0);
+	CHECK(memory->text() == localeText()("Dock.BufferMemory.Automatic").arg(4096));
+	CHECK(memory->maximum() == 16384);
+	CHECK_FALSE(warning->isVisible());
+
+	memory->setValue(6144);
+	CHECK(backend.current.bufferMemoryMiB == 6144);
+	CHECK_FALSE(warning->isVisible());
+	// Above half of the computer's memory it warns.
+	memory->setValue(9000);
+	CHECK(backend.current.bufferMemoryMiB == 9000);
+	CHECK(warning->isVisible());
+	memory->setValue(0);
+	CHECK(backend.current.bufferMemoryMiB == 0);
+	CHECK_FALSE(warning->isVisible());
+
+	// The selected sources needing more than the budget says so, before the buffers start
+	// too.
+	auto *short_ = child<QLabel>(dock, "memoryShort");
+	CHECK_FALSE(short_->isVisible());
+	backend.needed = (uint64_t{5} << 30) + 1;
+	dock.refresh();
+	CHECK(short_->isVisible());
+	CHECK(short_->text() == localeText()("Dock.MemoryShort").arg(5121).arg(4096));
+	backend.needed = uint64_t{4} << 30;
+	dock.refresh();
+	CHECK_FALSE(short_->isVisible());
+
+	// With the computer's memory unknown, automatic sets no limit.
+	backend.memory = 0;
+	dock.refresh();
+	CHECK(memory->text() == localeText()("Dock.BufferMemory.AutomaticUnknown"));
+	CHECK_FALSE(warning->isVisible());
+}
+
+TEST_CASE("the memory for buffers steps in large amounts and never to almost nothing")
+{
+	FakeBackend backend = backendWithSources();
+	backend.current.showAdvanced = true;
+	TapeloopDock dock(backend, localeText());
+	auto *memory = child<QSpinBox>(dock, "bufferMemory");
+	memory->stepUp();
+	CHECK(backend.current.bufferMemoryMiB == 256);
+	memory->stepUp();
+	CHECK(backend.current.bufferMemoryMiB == 512);
+	// A value below the smallest step is a slip, and gets the smallest step.
+	memory->setValue(100);
+	CHECK(memory->value() == 256);
+	CHECK(backend.current.bufferMemoryMiB == 256);
+	memory->setValue(0);
+	CHECK(backend.current.bufferMemoryMiB == 0);
+}
+
+TEST_CASE("a wheel over the memory for buffers changes it only once it has the focus")
+{
+	FakeBackend backend = backendWithSources();
+	backend.current.showAdvanced = true;
+	TapeloopDock dock(backend, localeText());
+	dock.show();
+	dock.activateWindow();
+	auto *memory = child<QSpinBox>(dock, "bufferMemory");
+	// A real wheel reaches the spin box through its line edit, which does not take it;
+	// one sent from a test goes only where it is sent.
+	const auto turnWheel = [&] {
+		const QPointF at(memory->rect().center());
+		QWheelEvent wheel(at, memory->mapToGlobal(at), QPoint(), QPoint(0, 120), Qt::NoButton, Qt::NoModifier,
+				  Qt::NoScrollPhase, false);
+		QApplication::sendEvent(memory, &wheel);
+		QApplication::processEvents();
+	};
+	CHECK((memory->focusPolicy() & Qt::WheelFocus) != Qt::WheelFocus);
+	child<QSpinBox>(dock, "length")->setFocus();
+	QApplication::processEvents();
+	turnWheel();
+	CHECK_FALSE(memory->hasFocus());
+	CHECK(memory->value() == 0);
+	CHECK(backend.current.bufferMemoryMiB == 0);
+
+	memory->setFocus();
+	QApplication::processEvents();
+	REQUIRE(memory->hasFocus());
+	turnWheel();
+	CHECK(backend.current.bufferMemoryMiB == 256);
+}
+
+TEST_CASE("a memory for buffers being typed in the dock is not overwritten")
+{
+	FakeBackend backend = backendWithSources();
+	backend.current.showAdvanced = true;
+	TapeloopDock dock(backend, localeText());
+	dock.show();
+	dock.activateWindow();
+	auto *memory = child<QSpinBox>(dock, "bufferMemory");
+	memory->setFocus();
+	QApplication::processEvents();
+	REQUIRE(memory->hasFocus());
+	const auto type = [&](const char *digits) {
+		memory->selectAll();
+		for (const char *digit = digits; *digit != '\0'; ++digit) {
+			QKeyEvent key(QEvent::KeyPress, Qt::Key_0 + (*digit - '0'), Qt::NoModifier,
+				      QString(QChar(*digit)));
+			QApplication::sendEvent(memory, &key);
+		}
+		// The dock refreshes every second, also while a value is being typed.
+		dock.refresh();
+		QKeyEvent enter(QEvent::KeyPress, Qt::Key_Return, Qt::NoModifier);
+		QApplication::sendEvent(memory, &enter);
+	};
+	// From automatic, and from a value.
+	type("8192");
+	CHECK(backend.current.bufferMemoryMiB == 8192);
+	type("6000");
+	CHECK(backend.current.bufferMemoryMiB == 6000);
+}
+
+TEST_CASE("a memory for buffers set on a computer with more memory shows as it is")
+{
+	FakeBackend backend = backendWithSources();
+	backend.current.showAdvanced = true;
+	backend.current.bufferMemoryMiB = 65536;
+	TapeloopDock dock(backend, localeText());
+	dock.show();
+	auto *memory = child<QSpinBox>(dock, "bufferMemory");
+	CHECK(memory->value() == 65536);
+	CHECK(child<QLabel>(dock, "memoryWarning")->isVisible());
+	// Set lower, it is held to this computer's memory again.
+	memory->setValue(4096);
+	dock.refresh();
+	CHECK(memory->maximum() == 16384);
+	CHECK(backend.settingsChanges == 1);
 }
 
 TEST_CASE("the encoder list holds still while it is open")
@@ -282,6 +427,12 @@ TEST_CASE("a source on an encoder path that is not the optimal one says so")
 	CHECK_FALSE(table->item(0, 1)->toolTip().contains(chosenNote));
 	backend.shown[0].chosenEncoder = false;
 	backend.shown[1].chosenEncoder = false;
+
+	// A buffer the memory budget holds to less than its length.
+	backend.shown[2].budgetLimited = true;
+	dock.refresh();
+	CHECK(table->item(2, 1)->toolTip() == localeText()("Dock.Status.BudgetLimited.Tooltip"));
+	backend.shown[2].budgetLimited = false;
 
 	// A choice that could not start, whatever path the encoder after it takes.
 	backend.shown[2].choiceSkipped = true;
@@ -942,7 +1093,7 @@ TEST_CASE("every control of the dock can be reached with the keyboard")
 		CAPTURE(widget->objectName().toStdString());
 		CHECK((widget->focusPolicy() & Qt::TabFocus) != 0);
 	}
-	CHECK(controls == 18);
+	CHECK(controls == 19);
 }
 
 TEST_CASE("every string the dock asks for is in the locale file")
@@ -955,6 +1106,8 @@ TEST_CASE("every string the dock asks for is in the locale file")
 		backend.current.sources[source.uuid].selected = true;
 	}
 	backend.manualEnabled = false;
+	backend.shown[0].budgetLimited = true;
+	backend.needed = uint64_t{8} << 30;
 
 	std::set<std::string> missing;
 	TapeloopDock dock(backend, tapeloop::test::recordingLocaleText(missing));
@@ -963,6 +1116,8 @@ TEST_CASE("every string the dock asks for is in the locale file")
 	child<QPushButton>(dock, "sourceSettings")->click();
 	REQUIRE(sourceDialog(dock));
 	backend.isRunning = true;
+	dock.refresh();
+	backend.memory = 0;
 	dock.refresh();
 	CHECK(missing.empty());
 

@@ -51,6 +51,8 @@ struct BufferSettings {
 	bool allowOtherAdapters = true;
 	// Whether the dock shows the advanced settings.
 	bool showAdvanced = false;
+	// The memory every buffer may hold together, in MiB; zero for the automatic budget.
+	int64_t bufferMemoryMiB = 0;
 	std::map<std::string, SourceSettings> sources;
 
 	Nanoseconds lengthFor(const std::string &uuid) const;
@@ -92,6 +94,7 @@ struct SavedSettings {
 	std::string replayEncoder;
 	bool allowOtherAdapters = true;
 	bool showAdvanced = false;
+	int64_t bufferMemoryMiB = 0;
 	std::vector<SavedSource> sources;
 };
 

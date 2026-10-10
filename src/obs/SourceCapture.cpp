@@ -7,6 +7,7 @@
 #include "obs/ObsEncoders.hpp"
 
 #include <util/base.h>
+#include <util/platform.h>
 
 #include <algorithm>
 #include <chrono>
@@ -77,6 +78,15 @@ int32_t toInt32(uint32_t value)
 // entered and the graphics thread stuck; Direct3D 11 at feature level 10 allows 8192.
 constexpr uint32_t kMaxViewSize = 8192;
 
+ReplayEncoderParams encoderParams(FrameSize outputSize, const obs_video_info &video)
+{
+	ReplayEncoderParams params;
+	params.width = outputSize.width;
+	params.height = outputSize.height;
+	params.frameDuration = {toInt32(video.fps_den), toInt32(video.fps_num)};
+	return params;
+}
+
 // A buffer can take a new byte budget but not a new length or frame duration.
 bool canReuse(const SourceBufferConfig &existing, const SourceBufferConfig &wanted)
 {
@@ -138,10 +148,7 @@ StartResult SourceCapture::start(obs_source_t *source, const CaptureSettings &se
 			return StartResult::NoEncoder;
 		}
 
-		ReplayEncoderParams params;
-		params.width = outputSize->width;
-		params.height = outputSize->height;
-		params.frameDuration = {toInt32(video.fps_den), toInt32(video.fps_num)};
+		const ReplayEncoderParams params = encoderParams(*outputSize, video);
 
 		SourceBufferConfig bufferConfig;
 		bufferConfig.window = settings.bufferLength;
@@ -194,15 +201,20 @@ StartResult SourceCapture::start(obs_source_t *source, const CaptureSettings &se
 				if (!reuse) {
 					buffer_ = std::move(replacement);
 				}
-				bufferConfig.maxBytes = replayByteBudget(replayBitrateKbps(params, candidate.codec),
-									 settings.bufferLength);
+				encoderNeed_ = replayByteBudget(replayBitrateKbps(params, candidate.codec),
+								settings.bufferLength);
+				bufferConfig.maxBytes = encoderNeed_;
+				keptNeedUntil_ = Nanoseconds{0};
 				// A kept buffer still holds what the previous encoder wrote at its own
 				// bitrate, which a smaller budget would cut short; the larger one stays
-				// until a start that empties the buffer.
-				if (reuse && keepBuffer) {
-					bufferConfig.maxBytes = std::max(bufferConfig.maxBytes, buffer_->byteBudget());
+				// until that has gone, a whole length from now.
+				if (reuse && keepBuffer && buffer_->byteBudget() > encoderNeed_) {
+					bufferConfig.maxBytes = buffer_->byteBudget();
+					keptNeedUntil_ = Nanoseconds{static_cast<int64_t>(os_gettime_ns())} +
+							 settings.bufferLength;
 				}
 				buffer_->setByteBudget(bufferConfig.maxBytes);
+				byteNeed_ = bufferConfig.maxBytes;
 				bufferConfig_ = bufferConfig;
 				source_ = obs_source_get_weak_source(source);
 				sourceSize_ = sourceSize;
@@ -313,6 +325,9 @@ void SourceCapture::tearDown()
 	encoderId_.clear();
 	encoderPath_ = EncoderPath::Texture;
 	readbackReason_ = ReadbackReason::None;
+	byteNeed_ = 0;
+	encoderNeed_ = 0;
+	keptNeedUntil_ = Nanoseconds{0};
 	chosenEncoder_ = false;
 	choiceSkipped_ = false;
 	outputSize_ = {};
@@ -325,6 +340,49 @@ bool SourceCapture::sourceSizeMatches() const
 		return true;
 	}
 	return obs_source_get_width(source) == sourceSize_.width && obs_source_get_height(source) == sourceSize_.height;
+}
+
+size_t SourceCapture::estimateByteNeed(obs_source_t *source, const CaptureSettings &settings)
+{
+	obs_video_info video = {};
+	if (!obs_get_video_info(&video)) {
+		return 0;
+	}
+	FrameSize sourceSize{obs_source_get_width(source), obs_source_get_height(source)};
+	if (sourceSize.width == 0 || sourceSize.height == 0) {
+		sourceSize = {video.base_width, video.base_height};
+	}
+	if (sourceSize.width == 0 || sourceSize.height == 0 || sourceSize.width > kMaxViewSize ||
+	    sourceSize.height > kMaxViewSize) {
+		return 0;
+	}
+	const uint32_t height = targetHeight(settings.resolution, {video.base_width, video.base_height},
+					     {video.output_width, video.output_height});
+	const std::optional<FrameSize> outputSize = replayOutputSize(sourceSize, height);
+	const std::vector<EncoderInfo> candidates =
+		settings.candidates.empty() ? replayEncoderCandidates(registeredVideoEncoders(), renderAdapterVendor(),
+								      settings.encoderPreferences)
+					    : settings.candidates;
+	if (!outputSize || candidates.empty()) {
+		return 0;
+	}
+	return replayByteBudget(replayBitrateKbps(encoderParams(*outputSize, video), candidates.front().codec),
+				settings.bufferLength);
+}
+
+void SourceCapture::limitBytes(size_t bytes)
+{
+	if (buffer_ && byteNeed_ != 0) {
+		buffer_->setByteBudget(std::min(bytes, byteNeed_));
+	}
+}
+
+void SourceCapture::settleByteNeed(Nanoseconds now) noexcept
+{
+	if (keptNeedUntil_ != Nanoseconds{0} && now >= keptNeedUntil_) {
+		byteNeed_ = encoderNeed_;
+		keptNeedUntil_ = Nanoseconds{0};
+	}
 }
 
 void SourceCapture::expireBuffer(Nanoseconds now)

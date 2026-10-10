@@ -46,6 +46,9 @@ struct SourceStatus {
 	// Its HEVC encoder failed while it ran, so from its next start until OBS closes it
 	// tries the same vendor's H.264 first.
 	bool hevcFailed = false;
+	// The buffers together need more memory than the budget, so this one holds less than
+	// its length.
+	bool budgetLimited = false;
 };
 
 // Every selected source with its capture and buffer, started and stopped as the buffer
@@ -111,6 +114,14 @@ public:
 	// Waits for the replays being written and takes in what became of them.
 	void finishWrites();
 	const ReplayLibrary &library() const noexcept { return library_; }
+	// The memory every buffer may hold together, from the settings and the computer's
+	// memory, which is zero when it cannot be read.
+	uint64_t memoryBudget() const;
+	// What the selected sources need for their lengths at their target bitrates, without
+	// the margin each buffer has for a bitrate that runs over: the need of each buffer
+	// running, and for the others what a start now would give.
+	uint64_t memoryNeeded() const;
+	uint64_t physicalMemory() const noexcept { return physicalMemory_; }
 	// Each changes the library, and writes the tags of a replay stored on disk into its
 	// manifest.
 	bool tagReplay(uint64_t id, std::string_view tag);
@@ -157,17 +168,26 @@ private:
 		// does not restart when it becomes active.
 		Activation activation;
 		bool activationLeftOut = false;
+		bool budgetLimited = false;
 	};
 
 	// What a start found out about the source.
 	enum class StartOutcome { Started, Failed, SourceRemoved };
 
 	void reconcile();
+	// Shares the memory budget among the buffers that run, by what each needs.
+	void applyBudget();
 	// candidates is filled on first use, so a batch of starts reads the encoders and the
 	// render adapter once. A quiet start does not try a source without a size: it only
 	// shows it on the capture's view, without logging.
 	StartOutcome start(const std::string &uuid, Entry &entry, bool keepBuffer, bool quiet,
 			   std::optional<std::vector<EncoderInfo>> &candidates);
+	// What a start of the source is given, candidates filled as for start.
+	CaptureSettings captureSettings(const std::string &uuid,
+					std::optional<std::vector<EncoderInfo>> &candidates) const;
+	// The vendor of the adapter OBS renders on, asked once: it stays until OBS restarts,
+	// and asking enters the graphics context, which the dock would do every second.
+	Vendor renderVendor() const;
 	void stop(const std::string &uuid, Entry &entry);
 	// Holds the source active or lets go of it, as the settings and the source's own
 	// restart setting now say.
@@ -186,6 +206,8 @@ private:
 
 	CaptureHost &host_;
 	BufferSettings settings_;
+	uint64_t physicalMemory_ = 0;
+	mutable std::optional<Vendor> renderVendor_;
 	BufferLifecycle lifecycle_;
 	ReplayLibrary library_;
 	std::map<std::string, std::unique_ptr<Entry>> entries_;

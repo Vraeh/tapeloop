@@ -386,6 +386,11 @@ size_t replayByteBudget(int64_t bitrateKbps, Nanoseconds length)
 	return static_cast<size_t>(bytes);
 }
 
+size_t nominalReplayBytes(size_t byteBudget) noexcept
+{
+	return byteBudget / 3 * 2 + byteBudget % 3 * 2 / 3;
+}
+
 int64_t gopFrames(Nanoseconds gop, Rational frameDuration)
 {
 	const int64_t frames =
