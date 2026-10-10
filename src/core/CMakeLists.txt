@@ -14,6 +14,8 @@ add_library(tapeloop-core STATIC)
 target_sources(
   tapeloop-core
   PRIVATE
+    BufferBudget.cpp
+    BufferBudget.hpp
     BufferLifecycle.cpp
     BufferLifecycle.hpp
     BufferSettings.cpp

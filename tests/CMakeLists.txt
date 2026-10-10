@@ -44,6 +44,7 @@ target_sources(
     core/AllocationCounter.cpp
     core/AllocationCounter.hpp
     core/AllocationCounterTests.cpp
+    core/BufferBudgetTests.cpp
     core/BufferLifecycleTests.cpp
     core/BufferSettingsTests.cpp
     core/ClipTests.cpp
