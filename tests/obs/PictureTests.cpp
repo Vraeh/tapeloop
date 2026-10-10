@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: GPL-2.0-or-later
 // Copyright (C) 2026 Vicente Aedo <ryde1337@gmail.com>
 
+#include "LogCounter.hpp"
 #include "ObsFixture.hpp"
 #include "TestPattern.hpp"
 
@@ -17,10 +18,8 @@
 #include <algorithm>
 #include <array>
 #include <cmath>
-#include <cstdarg>
 #include <cstddef>
 #include <cstdint>
-#include <cstring>
 #include <functional>
 #include <optional>
 #include <vector>
@@ -29,6 +28,7 @@ using tapeloop::decode::ColorMatrix;
 using tapeloop::decode::Picture;
 using tapeloop::decode::PixelLayout;
 using tapeloop::obs::PictureRenderer;
+using tapeloop::test::LogCounter;
 using tapeloop::test::ObsFixture;
 
 namespace {
@@ -528,34 +528,6 @@ TEST_CASE_METHOD(ObsFixture, "the picture renderer sites chroma left of its luma
 }
 
 #ifdef _WIN32
-namespace {
-
-// Counts the log lines whose format holds `text`, and passes every line on.
-struct LogCounter {
-	const char *text;
-	int lines = 0;
-	log_handler_t previous = nullptr;
-	void *previousParam = nullptr;
-
-	explicit LogCounter(const char *counted) : text(counted)
-	{
-		base_get_log_handler(&previous, &previousParam);
-		base_set_log_handler(count, this);
-	}
-	~LogCounter() { base_set_log_handler(previous, previousParam); }
-
-	static void count(int level, const char *format, va_list args, void *param)
-	{
-		auto *counter = static_cast<LogCounter *>(param);
-		if (std::strstr(format, counter->text)) {
-			++counter->lines;
-		}
-		counter->previous(level, format, args, counter->previousParam);
-	}
-};
-
-} // namespace
-
 TEST_CASE_METHOD(ObsFixture, "shared pictures say when pictures have to go through memory", "[obs][picture]")
 {
 	obs_enter_graphics();

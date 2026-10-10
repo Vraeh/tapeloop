@@ -8,6 +8,7 @@
 
 #include <QWidget>
 
+#include <optional>
 #include <string>
 #include <utility>
 #include <vector>
@@ -15,6 +16,8 @@
 class QCheckBox;
 class QComboBox;
 class QLabel;
+class QLineEdit;
+class QListWidget;
 class QPushButton;
 class QSpinBox;
 class QTableWidget;
@@ -40,6 +43,7 @@ protected:
 private:
 	void rebuildSources(const std::vector<DockSource> &sources);
 	void updateSources(const std::vector<DockSource> &sources);
+	void updateReplays();
 	QString statusText(const DockSource &source) const;
 	void updateEncoders(const std::string &chosen);
 	void changeSettings(void (*change)(BufferSettings &, int), int value);
@@ -66,6 +70,22 @@ private:
 	QLabel *note_;
 	QPushButton *startStop_;
 	QLabel *followsOutputs_;
+	QPushButton *captureReplay_;
+	QComboBox *tagFilter_;
+	QListWidget *replays_;
+	QLineEdit *tagName_;
+	QPushButton *addTag_;
+	// The ids the replay list shows, newest first, and the text of each.
+	std::vector<uint64_t> shownReplays_;
+	std::vector<QString> shownReplayTexts_;
+	std::vector<std::string> shownTags_;
+	// The newest replay seen current, to tell a new capture from a pick.
+	uint64_t newestReplay_ = 0;
+	bool refreshQueued_ = false;
+	bool leftButtonHeld_ = false;
+	// The replay to show next when the left button was pressed on the list, until the
+	// click of that press is handled.
+	std::optional<uint64_t> currentAtPress_;
 };
 
 } // namespace tapeloop::ui

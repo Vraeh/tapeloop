@@ -3,17 +3,27 @@
 
 #include "obs/CaptureManager.hpp"
 
+#include "core/MomentCutter.hpp"
+
 #include "obs/ObsEncoders.hpp"
 #include "obs/SettingsData.hpp"
 
 #include <obs.hpp>
 #include <util/base.h>
+#include <util/platform.h>
 
+#include <algorithm>
+#include <chrono>
 #include <cstring>
 #include <utility>
 
 namespace tapeloop::obs {
 namespace {
+
+// Replays live in memory until they are stored on disk. They share their GOPs with the
+// buffers, but the cap counts every GOP a replay holds, once, whether or not a buffer
+// still holds it too.
+constexpr MomentListConfig kReplayLimits{200, size_t{2} << 30};
 
 bool addInput(void *param, obs_source_t *source) noexcept
 {
@@ -60,7 +70,7 @@ bool restartsWhenActivated(obs_source_t *source)
 
 } // namespace
 
-CaptureManager::CaptureManager(CaptureHost &host) : host_(host)
+CaptureManager::CaptureManager(CaptureHost &host) : host_(host), library_(kReplayLimits)
 {
 	lifecycle_.reset(settings_.startWithOutputs, host_.streamingActive(), host_.recordingActive());
 }
@@ -261,6 +271,39 @@ const SourceBuffer *CaptureManager::buffer(const std::string &uuid) const
 {
 	const auto found = entries_.find(uuid);
 	return found != entries_.end() ? found->second->capture.buffer() : nullptr;
+}
+
+uint64_t CaptureManager::captureReplay()
+{
+	std::vector<MomentSource> sources;
+	for (const auto &[uuid, entry] : entries_) {
+		if (const SourceBuffer *held = entry->capture.buffer()) {
+			sources.push_back({uuid, *held});
+		}
+	}
+	// Packets carry the time of the frames they encode, on the clock OBS stamps video with.
+	const Nanoseconds now{static_cast<int64_t>(os_gettime_ns())};
+	// The length set now is no measure of what a buffer holds: a running one keeps the
+	// length it started with, and a stopped one what it had.
+	Nanoseconds reach{0};
+	for (const MomentSource &source : sources) {
+		const SourceBufferStats stats = source.buffer.get().stats();
+		if (stats.gopCount != 0) {
+			reach = std::max(reach, now - stats.oldestTime);
+		}
+	}
+	MomentCut cut = cutMoment(sources, now, reach);
+	const size_t kept = library_.size();
+	const uint64_t id = library_.add(std::move(cut.moment), std::chrono::system_clock::now());
+	if (id != 0) {
+		blog(LOG_INFO, "[tapeloop] Captured replay %llu from %zu sources, %zu of them with nothing in range",
+		     static_cast<unsigned long long>(id), sources.size(), cut.skipped.size());
+		if (const size_t dropped = kept + 1 - library_.size(); dropped != 0) {
+			blog(LOG_WARNING, "[tapeloop] Old replays dropped to stay within %zu replays and %zu MiB: %zu",
+			     kReplayLimits.maxMoments, kReplayLimits.maxBytes >> 20, dropped);
+		}
+	}
+	return id;
 }
 
 void CaptureManager::reconcile()

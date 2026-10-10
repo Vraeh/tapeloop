@@ -7,6 +7,7 @@
 
 #include <algorithm>
 #include <cctype>
+#include <span>
 
 namespace tapeloop::obs {
 namespace {
@@ -70,6 +71,30 @@ std::vector<ui::DockSource> ManagerDockBackend::sources() const
 void ManagerDockBackend::setSettings(const BufferSettings &settings)
 {
 	manager_.setSettings(settings);
+}
+
+std::vector<ui::DockReplay> ManagerDockBackend::replays(const std::string &tag) const
+{
+	const ReplayLibrary &library = manager_.library();
+	std::vector<ui::DockReplay> replays;
+	for (const uint64_t id : library.list(tag)) {
+		ui::DockReplay replay;
+		replay.id = id;
+		replay.capturedAt = library.capturedAt(id);
+		if (const Moment *moment = library.find(id)) {
+			replay.sources = moment->clips.size();
+		}
+		const std::span<const std::string> tags = library.tagsOf(id);
+		replay.tags.assign(tags.begin(), tags.end());
+		replays.push_back(std::move(replay));
+	}
+	return replays;
+}
+
+std::vector<std::string> ManagerDockBackend::replayTags() const
+{
+	const std::span<const std::string> tags = manager_.library().tags();
+	return {tags.begin(), tags.end()};
 }
 
 std::vector<ui::EncoderChoice> ManagerDockBackend::encoderChoices() const

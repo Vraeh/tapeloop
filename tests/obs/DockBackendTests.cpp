@@ -14,6 +14,7 @@
 #include <algorithm>
 #include <chrono>
 #include <string>
+#include <vector>
 
 using tapeloop::BufferSettings;
 using tapeloop::obs::CaptureManager;
@@ -171,4 +172,47 @@ TEST_CASE_METHOD(ObsFixture, "every settings change from the dock asks the host 
 	CHECK(host.saves == 4);
 	REQUIRE(backend.toggleRunning());
 	CHECK(host.saves == 4);
+}
+
+TEST_CASE_METHOD(ObsFixture, "the dock captures replays through the manager", "[obs][dock][replay]")
+{
+	OBSSourceAutoRelease camera = createTestPattern(320, 180, "Camera");
+	OfflineHost host;
+	CaptureManager manager(host);
+	ManagerDockBackend backend(manager);
+	BufferSettings settings = backend.settings();
+	settings.startWithOutputs = false;
+	settings.sources[obs_source_get_uuid(camera)].selected = true;
+	backend.setSettings(settings);
+	CHECK(backend.captureReplay() == 0);
+	CHECK(backend.replays().empty());
+
+	REQUIRE(backend.toggleRunning());
+	const tapeloop::SourceBuffer *buffer = nullptr;
+	REQUIRE(tapeloop::test::waitFor(
+		[&] {
+			buffer = manager.buffer(obs_source_get_uuid(camera));
+			return buffer && buffer->stats().gopCount >= 2;
+		},
+		std::chrono::seconds(60)));
+	const uint64_t first = backend.captureReplay();
+	const uint64_t second = backend.captureReplay();
+	REQUIRE(first != 0);
+	REQUIRE(second != 0);
+	const auto replays = backend.replays();
+	REQUIRE(replays.size() == 2);
+	CHECK(replays[0].id == second);
+	CHECK(replays[0].sources == 1);
+	CHECK(replays[0].capturedAt.time_since_epoch().count() != 0);
+	CHECK(backend.currentReplay() == second);
+	backend.pickReplay(first);
+	CHECK(backend.currentReplay() == first);
+	CHECK(backend.tagReplay(first, "goal"));
+	CHECK_FALSE(backend.tagReplay(first, " "));
+	CHECK(backend.replayTags() == std::vector<std::string>{"goal"});
+	const auto tagged = backend.replays("goal");
+	REQUIRE(tagged.size() == 1);
+	CHECK(tagged[0].id == first);
+	CHECK(tagged[0].tags == std::vector<std::string>{"goal"});
+	REQUIRE(backend.toggleRunning());
 }

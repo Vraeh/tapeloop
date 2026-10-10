@@ -3,6 +3,7 @@
 
 #include "obs/FrontendBridge.hpp"
 
+#include <obs-module.h>
 #include <util/base.h>
 
 #include <new>
@@ -21,6 +22,9 @@ void runTask(void *param) noexcept
 	}
 }
 
+// Where the hotkey's bindings are kept in the scene collection.
+constexpr const char *kCaptureHotkeyKey = "tapeloop_capture_hotkey";
+
 } // namespace
 
 FrontendBridge::FrontendBridge() : manager_(std::make_unique<CaptureManager>(static_cast<CaptureHost &>(*this)))
@@ -28,11 +32,16 @@ FrontendBridge::FrontendBridge() : manager_(std::make_unique<CaptureManager>(sta
 	obs_frontend_add_event_callback(handleEvent, this);
 	obs_frontend_add_save_callback(handleSave, this);
 	obs_add_tick_callback(handleTick, this);
+	captureHotkey_ = obs_hotkey_register_frontend(
+		"tapeloop.capture_replay", obs_module_text("Hotkey.CaptureReplay"), handleCaptureHotkey, this);
 }
 
 FrontendBridge::~FrontendBridge()
 {
 	obs_remove_tick_callback(handleTick, this);
+	if (captureHotkey_ != OBS_INVALID_HOTKEY_ID) {
+		obs_hotkey_unregister(captureHotkey_);
+	}
 	removeFrontendCallbacks();
 	manager_.reset();
 }
@@ -100,12 +109,21 @@ void FrontendBridge::handleEvent(obs_frontend_event event, void *data) noexcept
 
 void FrontendBridge::handleSave(obs_data_t *collection, bool saving, void *data) noexcept
 {
-	CaptureManager &manager = *static_cast<FrontendBridge *>(data)->manager_;
+	auto &bridge = *static_cast<FrontendBridge *>(data);
+	CaptureManager &manager = *bridge.manager_;
 	try {
 		if (saving) {
 			manager.save(collection);
+			if (bridge.captureHotkey_ != OBS_INVALID_HOTKEY_ID) {
+				OBSDataArrayAutoRelease bindings = obs_hotkey_save(bridge.captureHotkey_);
+				obs_data_set_array(collection, kCaptureHotkeyKey, bindings);
+			}
 		} else {
 			manager.load(collection);
+			if (bridge.captureHotkey_ != OBS_INVALID_HOTKEY_ID) {
+				OBSDataArrayAutoRelease bindings = obs_data_get_array(collection, kCaptureHotkeyKey);
+				obs_hotkey_load(bridge.captureHotkey_, bindings);
+			}
 		}
 	} catch (...) {
 		blog(LOG_ERROR, "[tapeloop] Saving or loading the settings failed");
@@ -122,14 +140,29 @@ void FrontendBridge::handleTick(void *data, float seconds) noexcept
 		return;
 	}
 	bridge.sincePoll_ = 0.0f;
+	bridge.onUiThread([](CaptureManager &manager) { manager.poll(); });
+}
+
+void FrontendBridge::handleCaptureHotkey(void *data, obs_hotkey_id, obs_hotkey_t *, bool pressed) noexcept
+{
+	// libobs calls hotkeys on its own thread unless the frontend routes them to its UI
+	// thread, as OBS does; queuing is right either way.
+	if (pressed) {
+		static_cast<FrontendBridge *>(data)->onUiThread(
+			[](CaptureManager &manager) { manager.captureReplay(); });
+	}
+}
+
+void FrontendBridge::onUiThread(void (*work)(CaptureManager &)) noexcept
+{
 	auto *task = new (std::nothrow) std::function<void()>;
 	if (!task) {
 		return;
 	}
 	try {
-		*task = [manager = bridge.manager_.get(), alive = std::weak_ptr<int>(bridge.alive_)] {
+		*task = [work, manager = manager_.get(), alive = std::weak_ptr<int>(alive_)] {
 			if (alive.lock()) {
-				manager->poll();
+				work(*manager);
 			}
 		};
 	} catch (...) {

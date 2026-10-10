@@ -5,6 +5,7 @@
 
 #include "core/BufferLifecycle.hpp"
 #include "core/BufferSettings.hpp"
+#include "core/ReplayLibrary.hpp"
 #include "obs/SourceCapture.hpp"
 
 #include <obs.hpp>
@@ -87,6 +88,15 @@ public:
 	// Null when the source has no buffer.
 	const SourceBuffer *buffer(const std::string &uuid) const;
 
+	// Keeps what every captured buffer holds as one replay of the library: the range
+	// reaches back from now to the oldest frame any buffer holds, and each source's clip
+	// is all its buffer holds, a stopped buffer's included. Buffers keep recording. The
+	// oldest replays go, with a warning in the log, past 200 replays or 2 GiB of GOPs
+	// they hold. Zero when no buffer holds anything.
+	uint64_t captureReplay();
+	const ReplayLibrary &library() const noexcept { return library_; }
+	ReplayLibrary &library() noexcept { return library_; }
+
 private:
 	// Keeps a source active, as if it were on air, until reset or destroyed. Activation
 	// adds the source to no view of the program: libobs mixes into the program audio
@@ -142,6 +152,7 @@ private:
 	CaptureHost &host_;
 	BufferSettings settings_;
 	BufferLifecycle lifecycle_;
+	ReplayLibrary library_;
 	std::map<std::string, std::unique_ptr<Entry>> entries_;
 	// Names saved with the settings, to find a source whose UUID changed and for log
 	// lines about sources that are not found.

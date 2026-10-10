@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: GPL-2.0-or-later
 // Copyright (C) 2026 Vicente Aedo <ryde1337@gmail.com>
 
+#include "LogCounter.hpp"
 #include "ObsFixture.hpp"
 #include "TestPattern.hpp"
 
@@ -16,6 +17,7 @@
 #include <cmath>
 #include <initializer_list>
 #include <string>
+#include <thread>
 #include <vector>
 
 using namespace std::chrono_literals;
@@ -31,6 +33,7 @@ using tapeloop::obs::CaptureState;
 using tapeloop::obs::createSettingsData;
 using tapeloop::obs::readSettingsData;
 using tapeloop::test::createTestPattern;
+using tapeloop::test::LogCounter;
 using tapeloop::test::ObsFixture;
 using tapeloop::test::waitFor;
 
@@ -1072,6 +1075,158 @@ TEST_CASE_METHOD(ObsFixture, "a waiting source keeps one activation and gives it
 		CHECK(left == nullptr);
 		manager.manualStop();
 	}
+}
+
+TEST_CASE_METHOD(ObsFixture, "a replay keeps what every captured buffer holds", "[obs][manager][replay]")
+{
+	OBSSourceAutoRelease first = createTestPattern(320, 180, "First");
+	OBSSourceAutoRelease second = createTestPattern(320, 180, "Second");
+	const std::string firstUuid = uuidOf(first);
+	const std::string secondUuid = uuidOf(second);
+	FakeHost host;
+	CaptureManager manager(host);
+	BufferSettings settings = selecting(firstUuid);
+	settings.sources[secondUuid].selected = true;
+	settings.startWithOutputs = false;
+	manager.setSettings(settings);
+
+	// Nothing captured yet, nothing to keep.
+	CHECK(manager.captureReplay() == 0);
+	CHECK(manager.library().size() == 0);
+
+	REQUIRE(manager.manualStart());
+	const auto gops = [&](const std::string &uuid) {
+		const tapeloop::SourceBuffer *buffer = manager.buffer(uuid);
+		return buffer ? buffer->stats().gopCount : 0;
+	};
+	REQUIRE(waitFor([&] { return gops(firstUuid) >= 2 && gops(secondUuid) >= 2; }, 60s));
+
+	const uint64_t id = manager.captureReplay();
+	REQUIRE(id != 0);
+	const tapeloop::Moment *moment = manager.library().find(id);
+	REQUIRE(moment);
+	REQUIRE(moment->clips.size() == 2);
+	// Both sources render on the same video clock, so their clips end together.
+	const auto out = [&](const std::string &uuid) {
+		for (const tapeloop::MomentClip &clip : moment->clips) {
+			if (clip.sourceKey == uuid) {
+				return clip.clip.out();
+			}
+		}
+		FAIL("no clip of " << uuid);
+		return tapeloop::Nanoseconds{0};
+	};
+	const tapeloop::Nanoseconds gap = out(firstUuid) - out(secondUuid);
+	CHECK(std::chrono::abs(gap) <= 100ms);
+	// The range starts at the oldest frame held, so each clip holds all its buffer did.
+	tapeloop::Nanoseconds earliest = moment->end;
+	for (const tapeloop::MomentClip &clip : moment->clips) {
+		CHECK(clip.clip.in() >= moment->start);
+		earliest = std::min(earliest, clip.clip.in());
+	}
+	CHECK(moment->start == earliest);
+
+	// The buffers keep recording, and a later capture is a replay of its own.
+	const size_t before = gops(firstUuid);
+	REQUIRE(waitFor([&] { return gops(firstUuid) > before; }, 60s));
+	CHECK(manager.status(firstUuid).stats.state == CaptureState::Running);
+	const uint64_t later = manager.captureReplay();
+	REQUIRE(later != 0);
+	CHECK(manager.library().list() == std::vector<uint64_t>{later, id});
+	CHECK(manager.library().current() == later);
+	CHECK(manager.library().capturedAt(later) >= manager.library().capturedAt(id));
+
+	// Buffers that stopped still hold what they recorded.
+	REQUIRE(manager.manualStop());
+	const uint64_t stopped = manager.captureReplay();
+	REQUIRE(stopped != 0);
+	CHECK(manager.library().find(stopped)->clips.size() == 2);
+
+	// A source no longer selected takes its buffer with it.
+	settings.sources[secondUuid].selected = false;
+	manager.setSettings(settings);
+	const uint64_t alone = manager.captureReplay();
+	REQUIRE(alone != 0);
+	REQUIRE(manager.library().find(alone)->clips.size() == 1);
+	CHECK(manager.library().find(alone)->clips[0].sourceKey == firstUuid);
+}
+
+TEST_CASE_METHOD(ObsFixture, "a replay keeps all a buffer holds, whatever the length set now", "[obs][manager][replay]")
+{
+	OBSSourceAutoRelease pattern = createTestPattern(320, 180, "Pattern");
+	const std::string uuid = uuidOf(pattern);
+	FakeHost host;
+	CaptureManager manager(host);
+	BufferSettings settings = selecting(uuid);
+	settings.startWithOutputs = false;
+	manager.setSettings(settings);
+	REQUIRE(manager.manualStart());
+	const auto held = [&] {
+		const tapeloop::SourceBuffer *buffer = manager.buffer(uuid);
+		return buffer ? buffer->stats() : tapeloop::SourceBufferStats{};
+	};
+	REQUIRE(waitFor(
+		[&] {
+			const tapeloop::SourceBufferStats stats = held();
+			return stats.gopCount >= 2 && stats.newestTime - stats.oldestTime >= 2s;
+		},
+		60s));
+	const auto inOf = [&](uint64_t id) {
+		const tapeloop::Moment *moment = manager.library().find(id);
+		REQUIRE(moment);
+		REQUIRE(moment->clips.size() == 1);
+		return moment->clips[0].clip.in();
+	};
+
+	// A running buffer keeps the length it started with until it starts again.
+	settings.length = 1s;
+	manager.setSettings(settings);
+	REQUIRE(manager.status(uuid).stats.state == CaptureState::Running);
+	const tapeloop::Nanoseconds oldest = held().oldestTime;
+	const uint64_t running = manager.captureReplay();
+	REQUIRE(running != 0);
+	CHECK(inOf(running) == oldest);
+
+	// A stopped one gives all it has, however long ago it stopped.
+	REQUIRE(manager.manualStop());
+	const tapeloop::SourceBufferStats stopped = held();
+	REQUIRE(stopped.gopCount != 0);
+	std::this_thread::sleep_for(1500ms);
+	const uint64_t late = manager.captureReplay();
+	REQUIRE(late != 0);
+	CHECK(inOf(late) == stopped.oldestTime);
+}
+
+TEST_CASE_METHOD(ObsFixture, "the oldest replays go with a warning past the library's limits", "[obs][manager][replay]")
+{
+	OBSSourceAutoRelease pattern = createTestPattern(320, 180, "Pattern");
+	const std::string uuid = uuidOf(pattern);
+	FakeHost host;
+	CaptureManager manager(host);
+	BufferSettings settings = selecting(uuid);
+	settings.startWithOutputs = false;
+	manager.setSettings(settings);
+	REQUIRE(manager.manualStart());
+	REQUIRE(waitFor(
+		[&] {
+			const tapeloop::SourceBuffer *buffer = manager.buffer(uuid);
+			return buffer && buffer->stats().gopCount != 0;
+		},
+		60s));
+
+	LogCounter warned("Old replays dropped to stay within");
+	const uint64_t first = manager.captureReplay();
+	REQUIRE(first != 0);
+	for (int i = 1; i < 200; ++i) {
+		REQUIRE(manager.captureReplay() != 0);
+	}
+	CHECK(manager.library().size() == 200);
+	CHECK(warned.lines == 0);
+	REQUIRE(manager.captureReplay() != 0);
+	CHECK(manager.library().size() == 200);
+	CHECK_FALSE(manager.library().find(first));
+	CHECK(warned.lines == 1);
+	manager.manualStop();
 }
 
 TEST_CASE("settings saved before the other-adapter setting allow other adapters", "[obs][manager]")

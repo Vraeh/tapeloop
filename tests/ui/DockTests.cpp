@@ -14,11 +14,15 @@
 #include <QApplication>
 #include <QKeyEvent>
 #include <QLabel>
+#include <QLineEdit>
 #include <QCheckBox>
 #include <QComboBox>
 #include <QDialog>
 #include <QDir>
+#include <QFocusEvent>
 #include <QPushButton>
+#include <QListWidget>
+#include <QMouseEvent>
 #include <QSpinBox>
 #include <QTableWidget>
 
@@ -239,6 +243,263 @@ TEST_CASE("a source on an encoder path that is not the optimal one says so")
 	CHECK(table->item(1, 1)->toolTip().isEmpty());
 }
 
+TEST_CASE("the dock captures replays and picks the one that goes on air")
+{
+	FakeBackend backend = backendWithSources();
+	TapeloopDock dock(backend, localeText());
+	auto *capture = child<QPushButton>(dock, "captureReplay");
+	auto *list = child<QListWidget>(dock, "replays");
+	CHECK(list->count() == 0);
+
+	capture->click();
+	capture->click();
+	REQUIRE(backend.captures == 2);
+	REQUIRE(list->count() == 2);
+	// Newest first, and the newest goes on air next.
+	CHECK(list->item(0)->data(Qt::UserRole).toULongLong() == 2u);
+	CHECK(list->item(0)->text().contains("2 sources"));
+	CHECK(list->currentRow() == 0);
+
+	// Picking an older one, from the keyboard as with the mouse, makes it the one on air
+	// next, and selects it.
+	QKeyEvent down(QEvent::KeyPress, Qt::Key_Down, Qt::NoModifier);
+	QApplication::sendEvent(list, &down);
+	CHECK(backend.picked == 1u);
+	QKeyEvent up(QEvent::KeyPress, Qt::Key_Up, Qt::NoModifier);
+	QApplication::sendEvent(list, &up);
+	CHECK(backend.picked == 2u);
+	list->setCurrentRow(1);
+	CHECK(backend.picked == 1u);
+	dock.refresh();
+	CHECK(list->currentRow() == 1);
+	// A tag goes on the selected replay, and the list can show only the replays with it.
+	auto *name = child<QLineEdit>(dock, "tagName");
+	name->setText("goal");
+	child<QPushButton>(dock, "addTag")->click();
+	CHECK(name->text().isEmpty());
+	REQUIRE(list->count() == 2);
+	CHECK(list->item(1)->text().endsWith("#goal"));
+	CHECK_FALSE(list->item(0)->text().contains("#goal"));
+	auto *filter = child<QComboBox>(dock, "tagFilter");
+	REQUIRE(filter->count() == 2);
+	filter->setCurrentIndex(1);
+	REQUIRE(list->count() == 1);
+	CHECK(list->item(0)->data(Qt::UserRole).toULongLong() == 1u);
+	filter->setCurrentIndex(0);
+	CHECK(list->count() == 2);
+	// A blank name tags nothing and stays to be fixed.
+	name->setText(" ");
+	Q_EMIT name->returnPressed();
+	CHECK(name->text() == " ");
+	// Enter tags as the button does.
+	name->setText("save");
+	Q_EMIT name->returnPressed();
+	CHECK(name->text().isEmpty());
+	CHECK(list->item(1)->text().endsWith("#goal #save"));
+
+	// A replay the filter hides takes no tag.
+	list->setCurrentRow(0);
+	REQUIRE(backend.picked == 2u);
+	filter->setCurrentIndex(1);
+	REQUIRE(list->count() == 1);
+	CHECK(list->currentRow() == -1);
+	CHECK_FALSE(child<QPushButton>(dock, "addTag")->isEnabled());
+	CHECK_FALSE(name->isEnabled());
+	// Tabbing into the list picks nothing.
+	QFocusEvent focusIn(QEvent::FocusIn, Qt::TabFocusReason);
+	QApplication::sendEvent(list, &focusIn);
+	CHECK(backend.picked == 2u);
+	// A capture shows every replay again, since the new one carries no tag yet.
+	capture->click();
+	CHECK(filter->currentIndex() == 0);
+	REQUIRE(list->count() == 3);
+	CHECK(list->currentRow() == 0);
+	CHECK(child<QPushButton>(dock, "addTag")->isEnabled());
+	// So does one made away from the dock, by the hotkey.
+	filter->setCurrentIndex(1);
+	backend.captureReplay();
+	dock.refresh();
+	CHECK(filter->currentIndex() == 0);
+	CHECK(list->count() == 4);
+	// Picking an older replay keeps the filter.
+	filter->setCurrentIndex(1);
+	REQUIRE(list->count() == 1);
+	list->setCurrentRow(0);
+	CHECK(backend.picked == 1u);
+	CHECK(filter->currentIndex() == 1);
+	// The list follows once the pick's event is done with.
+	QCoreApplication::processEvents();
+	REQUIRE(list->currentItem());
+	CHECK(list->currentItem()->data(Qt::UserRole).toULongLong() == 1u);
+
+	// A click on the row still current picks it again after a capture the list has not
+	// shown yet.
+	backend.captureReplay();
+	REQUIRE(backend.picked == 5u);
+	Q_EMIT list->itemClicked(list->item(0));
+	CHECK(backend.picked == 1u);
+	QCoreApplication::processEvents();
+	CHECK(filter->currentIndex() == 1);
+	// A filter chosen in that time is kept over the capture.
+	filter->setCurrentIndex(0);
+	backend.captureReplay();
+	filter->setCurrentIndex(1);
+	CHECK(filter->currentIndex() == 1);
+
+	// Buffers and settings are left alone.
+	CHECK(backend.settingsChanges == 0);
+	CHECK(backend.toggles == 0);
+}
+
+TEST_CASE("a press on a replay picks that replay, whatever the list does meanwhile")
+{
+	FakeBackend backend = backendWithSources();
+	TapeloopDock dock(backend, localeText());
+	dock.show();
+	auto *capture = child<QPushButton>(dock, "captureReplay");
+	auto *list = child<QListWidget>(dock, "replays");
+	capture->click();
+	capture->click();
+	capture->click();
+	REQUIRE(list->count() == 3);
+	QCoreApplication::processEvents();
+	// A hotkey capture the list has not shown yet.
+	backend.captureReplay();
+	const int picks = backend.picks;
+
+	QWidget *viewport = list->viewport();
+	const auto send = [&](QEvent::Type type, QPoint at, Qt::MouseButton button, Qt::MouseButtons buttons) {
+		QMouseEvent event(type, at, viewport->mapToGlobal(at), button, buttons, Qt::NoModifier);
+		QApplication::sendEvent(viewport, &event);
+	};
+	// The oldest replay, pressed, with the pointer moving a little before the release.
+	const QPoint oldest = list->visualItemRect(list->item(2)).center();
+	send(QEvent::MouseButtonPress, oldest, Qt::LeftButton, Qt::LeftButton);
+	QCoreApplication::processEvents();
+	send(QEvent::MouseMove, oldest + QPoint(0, 1), Qt::NoButton, Qt::LeftButton);
+	send(QEvent::MouseButtonRelease, oldest + QPoint(0, 1), Qt::LeftButton, Qt::NoButton);
+	QCoreApplication::processEvents();
+	CHECK(backend.picked == 1u);
+	CHECK(backend.picks == picks + 1);
+	REQUIRE(list->count() == 4);
+	REQUIRE(list->currentItem());
+	CHECK(list->currentItem()->data(Qt::UserRole).toULongLong() == 1u);
+	REQUIRE(list->selectedItems().size() == 1);
+	CHECK(list->selectedItems().front()->data(Qt::UserRole).toULongLong() == 1u);
+
+	// The other buttons pick nothing.
+	const QPoint newest = list->visualItemRect(list->item(0)).center();
+	send(QEvent::MouseButtonPress, newest, Qt::RightButton, Qt::RightButton);
+	send(QEvent::MouseButtonRelease, newest, Qt::RightButton, Qt::NoButton);
+	send(QEvent::MouseButtonPress, newest, Qt::MiddleButton, Qt::MiddleButton);
+	send(QEvent::MouseButtonRelease, newest, Qt::MiddleButton, Qt::NoButton);
+	QCoreApplication::processEvents();
+	CHECK(backend.picked == 1u);
+}
+
+TEST_CASE("a double click, a drag or a capture during a press does not pick another replay")
+{
+	FakeBackend backend = backendWithSources();
+	TapeloopDock dock(backend, localeText());
+	dock.show();
+	auto *capture = child<QPushButton>(dock, "captureReplay");
+	auto *list = child<QListWidget>(dock, "replays");
+	for (int i = 0; i < 3; ++i) {
+		capture->click();
+	}
+	REQUIRE(list->count() == 3);
+	QCoreApplication::processEvents();
+	QWidget *viewport = list->viewport();
+	const auto send = [&](QEvent::Type type, QPoint at, Qt::MouseButton button, Qt::MouseButtons buttons) {
+		QMouseEvent event(type, at, viewport->mapToGlobal(at), button, buttons, Qt::NoModifier);
+		QApplication::sendEvent(viewport, &event);
+	};
+	const auto rowAt = [&](int row) {
+		return list->visualItemRect(list->item(row)).center();
+	};
+	const auto shown = [&] {
+		return list->currentItem() ? list->currentItem()->data(Qt::UserRole).toULongLong() : 0;
+	};
+
+	SECTION("a double click after a capture the list has not shown")
+	{
+		backend.captureReplay();
+		const QPoint oldest = rowAt(2);
+		send(QEvent::MouseButtonPress, oldest, Qt::LeftButton, Qt::LeftButton);
+		send(QEvent::MouseButtonRelease, oldest, Qt::LeftButton, Qt::NoButton);
+		REQUIRE(backend.picked == 1u);
+		// The first click's refresh puts the new capture on top, under the second press.
+		QCoreApplication::processEvents();
+		REQUIRE(list->count() == 4);
+		send(QEvent::MouseButtonDblClick, oldest, Qt::LeftButton, Qt::LeftButton);
+		send(QEvent::MouseButtonRelease, oldest, Qt::LeftButton, Qt::NoButton);
+		QCoreApplication::processEvents();
+		CHECK(backend.picked == 1u);
+		CHECK(shown() == 1u);
+	}
+	SECTION("a drag with the button held")
+	{
+		send(QEvent::MouseButtonPress, rowAt(2), Qt::LeftButton, Qt::LeftButton);
+		REQUIRE(backend.picked == 1u);
+		send(QEvent::MouseMove, rowAt(1), Qt::NoButton, Qt::LeftButton);
+		send(QEvent::MouseMove, rowAt(0), Qt::NoButton, Qt::LeftButton);
+		send(QEvent::MouseButtonRelease, rowAt(0), Qt::LeftButton, Qt::NoButton);
+		QCoreApplication::processEvents();
+		CHECK(backend.picked == 1u);
+		CHECK(shown() == 1u);
+	}
+	SECTION("a capture between the press and the release")
+	{
+		const QPoint oldest = rowAt(2);
+		send(QEvent::MouseButtonPress, oldest, Qt::LeftButton, Qt::LeftButton);
+		REQUIRE(backend.picked == 1u);
+		backend.captureReplay();
+		send(QEvent::MouseButtonRelease, oldest, Qt::LeftButton, Qt::NoButton);
+		QCoreApplication::processEvents();
+		CHECK(backend.picked == 4u);
+		CHECK(shown() == 4u);
+	}
+	SECTION("a capture during the second click of a double click")
+	{
+		const QPoint oldest = rowAt(2);
+		send(QEvent::MouseButtonPress, oldest, Qt::LeftButton, Qt::LeftButton);
+		send(QEvent::MouseButtonRelease, oldest, Qt::LeftButton, Qt::NoButton);
+		QCoreApplication::processEvents();
+		REQUIRE(backend.picked == 1u);
+		send(QEvent::MouseButtonDblClick, oldest, Qt::LeftButton, Qt::LeftButton);
+		backend.captureReplay();
+		send(QEvent::MouseButtonRelease, oldest, Qt::LeftButton, Qt::NoButton);
+		QCoreApplication::processEvents();
+		CHECK(backend.picked == 4u);
+		CHECK(shown() == 4u);
+	}
+	SECTION("a press whose release never came")
+	{
+		send(QEvent::MouseButtonPress, rowAt(1), Qt::LeftButton, Qt::LeftButton);
+		backend.captureReplay();
+		dock.refresh();
+		CHECK(list->count() == 3);
+		// The pointer moves on with no button down: the list catches up.
+		send(QEvent::MouseMove, rowAt(0), Qt::NoButton, Qt::NoButton);
+		dock.refresh();
+		CHECK(list->count() == 4);
+		CHECK(shown() == 4u);
+	}
+	SECTION("a press whose release went to a dialog")
+	{
+		send(QEvent::MouseButtonPress, rowAt(1), Qt::LeftButton, Qt::LeftButton);
+		backend.captureReplay();
+		dock.refresh();
+		REQUIRE(list->count() == 3);
+		// The dialog takes the focus, and the pointer never comes back over the list.
+		QFocusEvent focusOut(QEvent::FocusOut, Qt::ActiveWindowFocusReason);
+		QApplication::sendEvent(list, &focusOut);
+		dock.refresh();
+		CHECK(list->count() == 4);
+		CHECK(shown() == 4u);
+	}
+}
+
 TEST_CASE("a media source left out of activation says why")
 {
 	FakeBackend backend = backendWithSources();
@@ -404,16 +665,18 @@ TEST_CASE("every control of the dock can be reached with the keyboard")
 	size_t controls = 0;
 	for (QWidget *widget : dock.findChildren<QWidget *>()) {
 		const bool control = qobject_cast<QAbstractButton *>(widget) || qobject_cast<QSpinBox *>(widget) ||
-				     qobject_cast<QComboBox *>(widget) || qobject_cast<QTableWidget *>(widget);
-		// Qt's own parts, such as the table's corner button, have no name.
-		if (!control || widget->objectName().isEmpty()) {
+				     qobject_cast<QComboBox *>(widget) || qobject_cast<QAbstractItemView *>(widget) ||
+				     qobject_cast<QLineEdit *>(widget);
+		// Qt's own parts, such as the table's corner button or a spin box's line edit,
+		// have no name or one of Qt's.
+		if (!control || widget->objectName().isEmpty() || widget->objectName().startsWith("qt_")) {
 			continue;
 		}
 		++controls;
 		CAPTURE(widget->objectName().toStdString());
 		CHECK((widget->focusPolicy() & Qt::TabFocus) != 0);
 	}
-	CHECK(controls == 11);
+	CHECK(controls == 16);
 }
 
 TEST_CASE("every string the dock asks for is in the locale file")

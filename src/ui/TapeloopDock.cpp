@@ -8,10 +8,15 @@
 #include <QAbstractItemView>
 #include <QCheckBox>
 #include <QComboBox>
+#include <QDateTime>
 #include <QFormLayout>
+#include <QHBoxLayout>
 #include <QHeaderView>
 #include <QKeyEvent>
 #include <QLabel>
+#include <QLineEdit>
+#include <QListWidget>
+#include <QMouseEvent>
 #include <QPushButton>
 #include <QSignalBlocker>
 #include <QSpinBox>
@@ -64,7 +69,12 @@ TapeloopDock::TapeloopDock(DockBackend &backend, TextLookup text, QWidget *paren
 	  otherAdapters_(new QCheckBox(text_("Dock.OtherAdapters"), this)),
 	  note_(new QLabel(text_("Dock.ApplyNote"), this)),
 	  startStop_(new QPushButton(this)),
-	  followsOutputs_(new QLabel(text_("Dock.FollowsOutputs"), this))
+	  followsOutputs_(new QLabel(text_("Dock.FollowsOutputs"), this)),
+	  captureReplay_(new QPushButton(text_("Dock.CaptureReplay"), this)),
+	  tagFilter_(new QComboBox(this)),
+	  replays_(new QListWidget(this)),
+	  tagName_(new QLineEdit(this)),
+	  addTag_(new QPushButton(text_("Dock.AddTag"), this))
 {
 	sources_->setObjectName("sources");
 	sources_->setHorizontalHeaderLabels({text_("Dock.Source"), text_("Dock.Status")});
@@ -76,6 +86,10 @@ TapeloopDock::TapeloopDock(DockBackend &backend, TextLookup text, QWidget *paren
 	sources_->setEditTriggers(QAbstractItemView::NoEditTriggers);
 	sources_->setTabKeyNavigation(false);
 	sources_->installEventFilter(this);
+	replays_->installEventFilter(this);
+	replays_->viewport()->installEventFilter(this);
+	// Moves without a button reach the filter only with tracking on.
+	replays_->viewport()->setMouseTracking(true);
 
 	sourceSettings_->setObjectName("sourceSettings");
 	sourceSettings_->setEnabled(false);
@@ -101,6 +115,18 @@ TapeloopDock::TapeloopDock(DockBackend &backend, TextLookup text, QWidget *paren
 	note_->setObjectName("note");
 	note_->setWordWrap(true);
 	startStop_->setObjectName("startStop");
+	captureReplay_->setObjectName("captureReplay");
+	captureReplay_->setToolTip(text_("Dock.CaptureReplay.Tooltip"));
+	replays_->setObjectName("replays");
+	replays_->setToolTip(text_("Dock.Replays.Tooltip"));
+	replays_->setSelectionMode(QAbstractItemView::SingleSelection);
+	tagFilter_->setObjectName("tagFilter");
+	tagFilter_->setToolTip(text_("Dock.TagFilter.Tooltip"));
+	tagFilter_->addItem(text_("Dock.TagFilter.All"), QString());
+	tagName_->setObjectName("tagName");
+	tagName_->setPlaceholderText(text_("Dock.TagName"));
+	addTag_->setObjectName("addTag");
+	addTag_->setToolTip(text_("Dock.AddTag.Tooltip"));
 	followsOutputs_->setObjectName("followsOutputs");
 	followsOutputs_->setWordWrap(true);
 	followsOutputs_->hide();
@@ -127,6 +153,13 @@ TapeloopDock::TapeloopDock(DockBackend &backend, TextLookup text, QWidget *paren
 	layout->addWidget(note_);
 	layout->addWidget(startStop_);
 	layout->addWidget(followsOutputs_);
+	layout->addWidget(captureReplay_);
+	layout->addWidget(tagFilter_);
+	layout->addWidget(replays_, 1);
+	auto *tagging = new QHBoxLayout;
+	tagging->addWidget(tagName_, 1);
+	tagging->addWidget(addTag_);
+	layout->addLayout(tagging);
 
 	connect(sources_, &QTableWidget::itemChanged, this, [this](QTableWidgetItem *item) {
 		if (item->column() != kSourceColumn) {
@@ -189,6 +222,61 @@ TapeloopDock::TapeloopDock(DockBackend &backend, TextLookup text, QWidget *paren
 	connect(forceH264_, &QCheckBox::toggled, this, [this](bool checked) {
 		changeSettings([](BufferSettings &settings, int on) { settings.forceH264 = on != 0; }, checked ? 1 : 0);
 	});
+	connect(captureReplay_, &QPushButton::clicked, this, [this] {
+		guarded([this] { backend_.captureReplay(); });
+		refresh();
+	});
+	connect(tagFilter_, &QComboBox::currentIndexChanged, this, [this] {
+		// A filter chosen after a capture the list has not shown yet is the user's choice
+		// over that capture.
+		guarded([this] { newestReplay_ = std::max(newestReplay_, backend_.currentReplay()); });
+		refresh();
+	});
+	const auto addTag = [this] {
+		const std::string tag = tagName_->text().toStdString();
+		bool added = false;
+		guarded([&] { added = backend_.tagReplay(backend_.currentReplay(), tag); });
+		if (added) {
+			tagName_->clear();
+		}
+		refresh();
+	};
+	connect(addTag_, &QPushButton::clicked, this, addTag);
+	connect(tagName_, &QLineEdit::returnPressed, this, addTag);
+	// Moving through the list with the keyboard picks as a click does, and a click on the
+	// row already current picks it again after a capture the list has not shown yet. The
+	// list is refreshed once the view is done with the event, since a rebuild inside it
+	// would leave the view selecting the row now under the pointer.
+	const auto pick = [this](QListWidgetItem *item, bool clicked) {
+		if (!item) {
+			return;
+		}
+		guarded([&] {
+			const uint64_t id = item->data(Qt::UserRole).toULongLong();
+			const uint64_t current = backend_.currentReplay();
+			// A replay captured during the press is the one to show next, over the click
+			// that ends it.
+			const bool capturedDuringPress = clicked && currentAtPress_ && current != *currentAtPress_;
+			if (id != current && !capturedDuringPress) {
+				backend_.pickReplay(id);
+			}
+		});
+		if (clicked) {
+			currentAtPress_.reset();
+		}
+		if (!refreshQueued_) {
+			refreshQueued_ = true;
+			QMetaObject::invokeMethod(
+				this,
+				[this] {
+					refreshQueued_ = false;
+					refresh();
+				},
+				Qt::QueuedConnection);
+		}
+	};
+	connect(replays_, &QListWidget::currentItemChanged, this, [pick](QListWidgetItem *item) { pick(item, false); });
+	connect(replays_, &QListWidget::itemClicked, this, [pick](QListWidgetItem *item) { pick(item, true); });
 	connect(startStop_, &QPushButton::clicked, this, [this] {
 		guarded([this] { backend_.toggleRunning(); });
 		refresh();
@@ -247,6 +335,8 @@ void TapeloopDock::refresh()
 			updateEncoders(settings.replayEncoder);
 		}
 
+		updateReplays();
+
 		startStop_->setText(backend_.running() ? text_("Dock.Stop") : text_("Dock.Start"));
 		const bool enabled = backend_.manualControlEnabled();
 		startStop_->setEnabled(enabled);
@@ -268,6 +358,43 @@ bool TapeloopDock::eventFilter(QObject *watched, QEvent *event)
 		if (key == Qt::Key_Return || key == Qt::Key_Enter) {
 			openSourceSettings(sources_->currentRow());
 			return true;
+		}
+	}
+	// A dialog that opens during a press takes its release, and the pointer may never come
+	// back over the list to end it.
+	if (watched == replays_ && event->type() == QEvent::FocusOut) {
+		leftButtonHeld_ = false;
+	}
+	if (watched == replays_->viewport()) {
+		const QEvent::Type type = event->type();
+		if (type == QEvent::MouseButtonPress || type == QEvent::MouseButtonDblClick ||
+		    type == QEvent::MouseButtonRelease) {
+			// Qt makes the row under any button current, and the list has no menu, so only
+			// the left button picks.
+			if (static_cast<QMouseEvent *>(event)->button() != Qt::LeftButton) {
+				return true;
+			}
+			leftButtonHeld_ = type != QEvent::MouseButtonRelease;
+			// The second press of a double click ends in a click too.
+			if (type != QEvent::MouseButtonRelease) {
+				currentAtPress_.reset();
+				guarded([this] { currentAtPress_ = backend_.currentReplay(); });
+			}
+			// The second press of a double click comes after the first click's refresh,
+			// which can have put another replay under the pointer; the first click
+			// picked already.
+			if (type == QEvent::MouseButtonDblClick) {
+				return true;
+			}
+		}
+		if (type == QEvent::MouseMove) {
+			if (static_cast<QMouseEvent *>(event)->buttons() & Qt::LeftButton) {
+				// Dragging would make the row under the pointer current, which another one
+				// is once Qt scrolls a row pressed at the edge into view.
+				return true;
+			}
+			// A release that never came, as when a dialog opened during the press.
+			leftButtonHeld_ = false;
 		}
 	}
 	return QWidget::eventFilter(watched, event);
@@ -362,6 +489,72 @@ QString TapeloopDock::statusText(const DockSource &source) const
 		break;
 	}
 	return text_("Dock.Status.Stopped");
+}
+
+void TapeloopDock::updateReplays()
+{
+	// The filter offers every tag, rebuilt when they change and never while it is open.
+	const std::vector<std::string> tags = backend_.replayTags();
+	if (tags != shownTags_ && !tagFilter_->view()->isVisible()) {
+		const QString chosen = tagFilter_->currentData().toString();
+		const QSignalBlocker block(tagFilter_);
+		tagFilter_->clear();
+		tagFilter_->addItem(text_("Dock.TagFilter.All"), QString());
+		for (const std::string &tag : tags) {
+			tagFilter_->addItem(QString::fromStdString(tag), QString::fromStdString(tag));
+		}
+		tagFilter_->setCurrentIndex(std::max(tagFilter_->findData(chosen), 0));
+		shownTags_ = tags;
+	}
+	// A replay just captured is the one to show next and carries no tag yet, so a filter
+	// would hide it.
+	const uint64_t current = backend_.currentReplay();
+	if (current > newestReplay_) {
+		newestReplay_ = current;
+		const QSignalBlocker block(tagFilter_);
+		tagFilter_->setCurrentIndex(0);
+	}
+
+	const std::vector<DockReplay> replays = backend_.replays(tagFilter_->currentData().toString().toStdString());
+	std::vector<uint64_t> ids;
+	std::vector<QString> texts;
+	for (const DockReplay &replay : replays) {
+		const QDateTime captured = QDateTime::fromMSecsSinceEpoch(
+			std::chrono::duration_cast<std::chrono::milliseconds>(replay.capturedAt.time_since_epoch())
+				.count());
+		QString text = text_("Dock.Replay")
+				       .arg(captured.toString(QStringLiteral("HH:mm:ss")))
+				       .arg(static_cast<qulonglong>(replay.sources));
+		for (const std::string &tag : replay.tags) {
+			text += QStringLiteral(" #") + QString::fromStdString(tag);
+		}
+		ids.push_back(replay.id);
+		texts.push_back(std::move(text));
+	}
+	// Never while the left button is held on the list: moving the pointer then makes the
+	// row under it current, which after a rebuild can be another replay.
+	if (!leftButtonHeld_ && (ids != shownReplays_ || texts != shownReplayTexts_)) {
+		const QSignalBlocker block(replays_);
+		replays_->clear();
+		for (size_t i = 0; i < ids.size(); ++i) {
+			auto *item = new QListWidgetItem(texts[i], replays_);
+			item->setData(Qt::UserRole, static_cast<qulonglong>(ids[i]));
+		}
+		shownReplays_ = std::move(ids);
+		shownReplayTexts_ = std::move(texts);
+	}
+	// The replay that goes on air next is the one selected, and the one a tag goes on,
+	// which has to be in sight.
+	const auto shown = std::find(shownReplays_.begin(), shownReplays_.end(), current);
+	const bool listed = shown != shownReplays_.end();
+	const QSignalBlocker block(replays_);
+	// Cleared through the view rather than with setCurrentRow(-1), so that the view keeps
+	// no current row when it gains focus instead of making its first row current, which
+	// would pick that replay.
+	replays_->setCurrentIndex(listed ? replays_->model()->index(static_cast<int>(shown - shownReplays_.begin()), 0)
+					 : QModelIndex());
+	addTag_->setEnabled(listed);
+	tagName_->setEnabled(listed);
 }
 
 void TapeloopDock::updateEncoders(const std::string &chosen)
