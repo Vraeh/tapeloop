@@ -13,6 +13,7 @@
 
 #include <obs.hpp>
 #include <util/base.h>
+#include <util/dstr.h>
 #include <util/platform.h>
 
 #include <algorithm>
@@ -72,12 +73,16 @@ bool reactsToActivation(obs_source_t *source)
 	}
 	OBSDataAutoRelease settings = obs_source_get_settings(source);
 	if (std::strcmp(id, "ffmpeg_source") == 0) {
-		return obs_data_get_bool(settings, "restart_on_activate");
+		// The media source never restarts a RIST input, whatever the setting says.
+		const char *input = obs_data_get_bool(settings, "is_local_file")
+					    ? obs_data_get_string(settings, "local_file")
+					    : obs_data_get_string(settings, "input");
+		return astrcmpi_n(input, "rist", 4) != 0 && obs_data_get_bool(settings, "restart_on_activate");
 	}
 	if (std::strcmp(id, "vlc_source") == 0 || std::strcmp(id, "slideshow") == 0) {
 		// Held, one set to pause and unpause would go on playing off air and come to air
-		// elsewhere than where it stopped.
-		return std::strcmp(obs_data_get_string(settings, "playback_behavior"), "always_play") != 0;
+		// elsewhere than where it stopped. Both plugins read the setting without case.
+		return astrcmpi(obs_data_get_string(settings, "playback_behavior"), "always_play") != 0;
 	}
 	if (std::strcmp(id, "browser_source") == 0) {
 		return obs_data_get_bool(settings, "restart_when_active");
@@ -212,7 +217,7 @@ void CaptureManager::poll()
 			stop(entry);
 			outcome = start(uuid, entry, true, false, candidates);
 		} else {
-			// The restart setting of a media source can change while it is captured.
+			// What leaves a source out of activation can change while it is captured.
 			updateActivation(uuid, entry, entry.source);
 		}
 		// A failed entry stays, so that only what poll is meant to retry is tried again.

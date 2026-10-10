@@ -22,8 +22,8 @@ inline constexpr const char *kTestPatternId = "tapeloop_test_pattern";
 // The same pattern under the id of OBS's media source, which the harness does not load,
 // with its "restart_on_activate" setting, on by default as there.
 inline constexpr const char *kMediaStandInId = "ffmpeg_source";
-// The same under the ids of OBS's VLC source, image slideshow and image source, without
-// their settings.
+// The same under the ids of OBS's VLC source, image slideshow and image source, with
+// the defaults of the VLC source's and the slideshow's playback behavior.
 inline constexpr const char *kVlcStandInId = "vlc_source";
 inline constexpr const char *kSlideshowStandInId = "slideshow";
 inline constexpr const char *kImageStandInId = "image_source";
