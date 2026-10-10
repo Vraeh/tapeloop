@@ -20,6 +20,8 @@ target_sources(
     BufferSettings.hpp
     Clip.cpp
     Clip.hpp
+    Crc32c.cpp
+    Crc32c.hpp
     DecodePlanner.cpp
     DecodePlanner.hpp
     EncoderPolicy.cpp

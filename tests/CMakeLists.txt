@@ -47,6 +47,7 @@ target_sources(
     core/BufferLifecycleTests.cpp
     core/BufferSettingsTests.cpp
     core/ClipTests.cpp
+    core/Crc32cTests.cpp
     core/DecodePlannerTests.cpp
     core/EncoderPolicyTests.cpp
     core/FakeDecoder.hpp
