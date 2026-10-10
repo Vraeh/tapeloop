@@ -78,6 +78,7 @@ bool start(void *data) noexcept
 		return false;
 	}
 	capture.target->failed = false;
+	capture.target->encoderFailed = false;
 	return obs_output_begin_data_capture(capture.output, 0);
 }
 
@@ -90,6 +91,7 @@ void encodedPacket(void *data, encoder_packet *packet) noexcept
 {
 	auto &capture = *static_cast<CaptureOutput *>(data);
 	if (!packet) {
+		capture.target->encoderFailed = true;
 		capture.target->failed = true;
 		obs_output_signal_stop(capture.output, OBS_OUTPUT_ENCODE_ERROR);
 		return;

@@ -208,11 +208,80 @@ TEST_CASE("the encoders to choose from are those whose replays the buffer can ho
 	encoders.push_back(encoder("obs_qsv11_av1", "av1", Vendor::Intel, true));
 	encoders.push_back(encoder("obs_nvenc_h264_soft", "h264", Vendor::Nvidia, false, true));
 	encoders.push_back(encoder("obs_qsv11", "h264", Vendor::Intel, false, false, true));
+	// An encoder of a vendor the settings know nothing of could add B-frames.
+	encoders.push_back(encoder("plugin_h264", "h264", Vendor::Unknown, true));
+	encoders.push_back(encoder("plugin_hevc", "hevc", Vendor::Unknown, false));
 	Ids ids;
 	for (const EncoderInfo &info : tapeloop::replayEncoderChoices(encoders)) {
 		ids.push_back(info.id);
 	}
 	CHECK(ids == Ids{"obs_x264", "obs_qsv11_v2", "obs_qsv11_hevc", "obs_nvenc_h264_tex", "obs_nvenc_hevc_tex"});
+
+	// Chosen anyway, as a choice saved by an earlier version, it gets the automatic order.
+	EncoderPreferences preferences;
+	preferences.chosen = "plugin_h264";
+	CHECK(tapeloop::replayEncoderCandidates(encoders, Vendor::Nvidia, preferences).front().id ==
+	      "obs_nvenc_hevc_tex");
+}
+
+TEST_CASE("after its HEVC encoder fails a source tries the same vendor's H.264 first")
+{
+	const std::vector<EncoderInfo> encoders = combined({x264(), intel(), nvidia(), amd()});
+	const auto after = [&](const std::vector<EncoderInfo> &before, const char *failed) {
+		Ids ids;
+		for (const EncoderInfo &info : tapeloop::candidatesAfterHevcFailure(before, encoders, failed)) {
+			ids.push_back(info.id);
+		}
+		return ids;
+	};
+	const auto order = [&](Vendor render, const EncoderPreferences &preferences) {
+		return tapeloop::replayEncoderCandidates(encoders, render, preferences);
+	};
+	EncoderPreferences preferences;
+
+	// In the automatic order the vendor's H.264 comes right after its HEVC.
+	CHECK(after(order(Vendor::Nvidia, preferences), "obs_nvenc_hevc_tex") ==
+	      Ids{"obs_nvenc_h264_tex", "obs_qsv11_hevc", "obs_qsv11_v2", "h265_texture_amf", "h264_texture_amf",
+		  "obs_x264"});
+	CHECK(after(order(Vendor::Amd, preferences), "h265_texture_amf") ==
+	      Ids{"h264_texture_amf", "obs_nvenc_hevc_tex", "obs_nvenc_h264_tex", "obs_qsv11_hevc", "obs_qsv11_v2",
+		  "obs_x264"});
+
+	// A chosen encoder of another adapter: its vendor's H.264 is one a user may choose,
+	// although the automatic order leaves it out.
+	preferences.chosen = "obs_nvenc_hevc_tex";
+	preferences.otherAdapters = false;
+	const std::vector<EncoderInfo> chosen = order(Vendor::Intel, preferences);
+	REQUIRE(chosen.front().id == "obs_nvenc_hevc_tex");
+	CHECK(after(chosen, "obs_nvenc_hevc_tex") ==
+	      Ids{"obs_nvenc_h264_tex", "obs_qsv11_hevc", "obs_qsv11_v2", "obs_x264"});
+
+	// An encoder chosen after the failure stays first, and the vendor's H.264 takes the
+	// place of its HEVC.
+	preferences.chosen = "obs_x264";
+	preferences.otherAdapters = true;
+	CHECK(after(order(Vendor::Nvidia, preferences), "obs_nvenc_hevc_tex") ==
+	      Ids{"obs_x264", "obs_nvenc_h264_tex", "obs_qsv11_hevc", "obs_qsv11_v2", "h265_texture_amf",
+		  "h264_texture_amf"});
+	// Candidates without the encoder that failed, as with another adapter left out, stay
+	// as they are.
+	preferences.chosen.clear();
+	preferences.otherAdapters = false;
+	const std::vector<EncoderInfo> nvidiaOnly = order(Vendor::Nvidia, preferences);
+	Ids unchanged;
+	for (const EncoderInfo &info : nvidiaOnly) {
+		unchanged.push_back(info.id);
+	}
+	CHECK(after(nvidiaOnly, "obs_qsv11_hevc") == unchanged);
+
+	// A vendor with no H.264 to choose only loses the encoder that failed.
+	const std::vector<EncoderInfo> hevcOnly = {encoder("obs_nvenc_hevc_tex", "hevc", Vendor::Nvidia, true),
+						   x264()[0]};
+	const std::vector<EncoderInfo> left =
+		tapeloop::candidatesAfterHevcFailure(hevcOnly, hevcOnly, "obs_nvenc_hevc_tex");
+	REQUIRE(left.size() == 1);
+	CHECK(left[0].id == "obs_x264");
+	CHECK(tapeloop::candidatesAfterHevcFailure({}, {}, "obs_qsv11_hevc").empty());
 }
 
 TEST_CASE("replay candidates fall back to H.264 on a vendor without HEVC")

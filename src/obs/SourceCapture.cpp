@@ -288,6 +288,7 @@ CaptureStats SourceCapture::stats() const
 	if (output_) {
 		stats.state = target_.failed || !obs_output_active(output_) ? CaptureState::Failed
 									    : CaptureState::Running;
+		stats.encoderFailed = target_.encoderFailed;
 	} else if (view_) {
 		stats.state = CaptureState::Waiting;
 	}

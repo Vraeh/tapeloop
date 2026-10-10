@@ -176,7 +176,7 @@ void CaptureManager::poll()
 
 	for (auto it = entries_.begin(); it != entries_.end();) {
 		if (it->second->removed) {
-			stop(*it->second);
+			stop(it->first, *it->second);
 			it = entries_.erase(it);
 		} else {
 			++it;
@@ -185,7 +185,9 @@ void CaptureManager::poll()
 
 	const Nanoseconds now{static_cast<int64_t>(os_gettime_ns())};
 	for (const auto &[uuid, entry] : entries_) {
-		if (entry->capture.stats().state != CaptureState::Running) {
+		const CaptureStats stats = entry->capture.stats();
+		noteHevcFailure(uuid, *entry, stats);
+		if (stats.state != CaptureState::Running) {
 			entry->capture.expireBuffer(now);
 		}
 	}
@@ -214,7 +216,7 @@ void CaptureManager::poll()
 			// The view keeps the size it started with, so the capture restarts on the
 			// source's new size; the buffer sees the restart as a discontinuity.
 			blog(LOG_INFO, "[tapeloop] A captured source changed size, restarting its capture");
-			stop(entry);
+			stop(uuid, entry);
 			outcome = start(uuid, entry, true, false, candidates);
 		} else {
 			// What leaves a source out of activation can change while it is captured.
@@ -300,6 +302,7 @@ SourceStatus CaptureManager::status(const std::string &uuid) const
 		status.stats = found->second->capture.stats();
 		status.activationLeftOut = found->second->activationLeftOut;
 	}
+	status.hevcFailed = failedHevc_.contains(uuid);
 	return status;
 }
 
@@ -559,7 +562,7 @@ void CaptureManager::reconcile()
 	for (auto it = entries_.begin(); it != entries_.end();) {
 		const auto source = settings_.sources.find(it->first);
 		if (source == settings_.sources.end() || !source->second.selected) {
-			stop(*it->second);
+			stop(it->first, *it->second);
 			it = entries_.erase(it);
 		} else {
 			++it;
@@ -568,7 +571,7 @@ void CaptureManager::reconcile()
 
 	if (!lifecycle_.running()) {
 		for (auto &[uuid, entry] : entries_) {
-			stop(*entry);
+			stop(uuid, *entry);
 		}
 		return;
 	}
@@ -618,6 +621,12 @@ CaptureManager::StartOutcome CaptureManager::start(const std::string &uuid, Entr
 	settings.resolution = settings_.resolutionFor(uuid);
 	settings.bufferLength = settings_.lengthFor(uuid);
 	settings.candidates = *candidates;
+	if (const auto failed = failedHevc_.find(uuid); failed != failedHevc_.end()) {
+		const std::vector<EncoderInfo> encoders = registeredVideoEncoders();
+		for (const std::string &id : failed->second) {
+			settings.candidates = candidatesAfterHevcFailure(settings.candidates, encoders, id);
+		}
+	}
 	const StartResult result = entry.capture.start(source, settings, keepBuffer);
 	if (result != StartResult::Started) {
 		entry.retry = result == StartResult::NoSourceSize;
@@ -633,8 +642,29 @@ CaptureManager::StartOutcome CaptureManager::start(const std::string &uuid, Entr
 	return StartOutcome::Started;
 }
 
-void CaptureManager::stop(Entry &entry)
+void CaptureManager::noteHevcFailure(const std::string &uuid, const Entry &entry, const CaptureStats &stats)
 {
+	if (stats.state != CaptureState::Failed || !stats.encoderFailed) {
+		return;
+	}
+	const char *codec = obs_get_encoder_codec(stats.encoderId.c_str());
+	if (!codec || std::strcmp(codec, "hevc") != 0) {
+		return;
+	}
+	std::vector<std::string> &failed = failedHevc_[uuid];
+	if (std::find(failed.begin(), failed.end(), stats.encoderId) != failed.end()) {
+		return;
+	}
+	failed.push_back(stats.encoderId);
+	const char *name = entry.source ? obs_source_get_name(entry.source) : nullptr;
+	blog(LOG_WARNING, "[tapeloop] %s failed while capturing '%s', which tries H.264 first from its next start",
+	     stats.encoderId.c_str(), name ? name : uuid.c_str());
+}
+
+void CaptureManager::stop(const std::string &uuid, Entry &entry)
+{
+	// A failure is noted before the capture forgets its encoder, whenever it stops.
+	noteHevcFailure(uuid, entry, entry.capture.stats());
 	if (entry.source) {
 		signal_handler_disconnect(obs_source_get_signal_handler(entry.source), "remove", handleRemove,
 					  &entry.removed);
@@ -682,7 +712,7 @@ void CaptureManager::Activation::reset() noexcept
 void CaptureManager::releaseAll()
 {
 	for (auto &[uuid, entry] : entries_) {
-		stop(*entry);
+		stop(uuid, *entry);
 	}
 	entries_.clear();
 }

@@ -3,14 +3,17 @@
 
 #include "../core/StoredReplays.hpp"
 #include "../core/TempDirectory.hpp"
+#include "AllocationCounter.hpp"
 #include "LogCounter.hpp"
 #include "ObsFixture.hpp"
+#include "TestEncoders.hpp"
 #include "TestPattern.hpp"
 
 #include "core/FileIo.hpp"
 #include "core/GopReader.hpp"
 #include "core/ReplayWriter.hpp"
 #include "obs/CaptureManager.hpp"
+#include "obs/ManagerDockBackend.hpp"
 #include "obs/SettingsData.hpp"
 
 #include <catch2/catch_test_macros.hpp>
@@ -398,6 +401,123 @@ TEST_CASE_METHOD(ObsFixture, "a source too small to start is retried", "[obs][ma
 	REQUIRE(waitFor([&] { return obs_source_get_width(pattern) == 640; }, 5s));
 	manager.poll();
 	CHECK(manager.status(uuid).stats.state == CaptureState::Running);
+}
+
+// A manager capturing one test pattern with the given encoder, running with two GOPs.
+struct NvencCapture {
+	OBSSourceAutoRelease pattern = createTestPattern(320, 180, "Pattern");
+	std::string uuid = uuidOf(pattern);
+	FakeHost host;
+	CaptureManager manager{host};
+	BufferSettings settings = selecting(uuid);
+
+	explicit NvencCapture(const char *encoder)
+	{
+		tapeloop::test::enableTestNvenc();
+		settings.startWithOutputs = false;
+		settings.replayEncoder = encoder;
+		manager.setSettings(settings);
+		REQUIRE(manager.manualStart());
+		REQUIRE(manager.status(uuid).stats.encoderId == encoder);
+		REQUIRE(waitFor([&] { return hasGops(manager, uuid, 2); }, 60s));
+	}
+
+	void failEncoding()
+	{
+		tapeloop::test::failTestNvenc(true);
+		REQUIRE(waitFor([&] { return manager.status(uuid).stats.state == CaptureState::Failed; }, 60s));
+		tapeloop::test::failTestNvenc(false);
+	}
+
+	std::string restartedWith()
+	{
+		REQUIRE(manager.manualStop());
+		REQUIRE(manager.manualStart());
+		return manager.status(uuid).stats.encoderId;
+	}
+};
+
+TEST_CASE_METHOD(ObsFixture, "a source whose HEVC encoder fails uses that vendor's H.264 from its next start",
+		 "[obs][manager]")
+{
+	NvencCapture capture(tapeloop::test::kNvencHevcId);
+	capture.manager.poll();
+	CHECK_FALSE(capture.manager.status(capture.uuid).hevcFailed);
+
+	LogCounter noted("tries H.264 first from its next start");
+	capture.failEncoding();
+	capture.manager.poll();
+	capture.manager.poll();
+	CHECK(capture.manager.status(capture.uuid).hevcFailed);
+	CHECK(noted.lines == 1);
+
+	// The choice stays as it was; the next start goes without the encoder that failed.
+	CHECK(capture.restartedWith() == tapeloop::test::kNvencH264Id);
+	CHECK(capture.manager.settings().replayEncoder == tapeloop::test::kNvencHevcId);
+	REQUIRE(waitFor([&] { return hasGops(capture.manager, capture.uuid, 2); }, 60s));
+	CHECK(capture.manager.status(capture.uuid).stats.state == CaptureState::Running);
+	CHECK(capture.manager.status(capture.uuid).hevcFailed);
+	const std::vector<tapeloop::ui::DockSource> rows = tapeloop::obs::ManagerDockBackend(capture.manager).sources();
+	const auto row = std::find_if(rows.begin(), rows.end(), [&](const tapeloop::ui::DockSource &source) {
+		return source.uuid == capture.uuid;
+	});
+	REQUIRE(row != rows.end());
+	CHECK(row->hevcFailed);
+
+	// An encoder chosen after the failure is the one that starts.
+	capture.settings.replayEncoder = "obs_x264";
+	capture.manager.setSettings(capture.settings);
+	CHECK(capture.restartedWith() == "obs_x264");
+	capture.manager.manualStop();
+}
+
+TEST_CASE_METHOD(ObsFixture, "an HEVC failure counts when the capture stops before a poll sees it", "[obs][manager]")
+{
+	NvencCapture capture(tapeloop::test::kNvencHevcId);
+	capture.failEncoding();
+	SECTION("stopped")
+	{
+		CHECK(capture.restartedWith() == tapeloop::test::kNvencH264Id);
+	}
+	SECTION("unticked and ticked again, as during a stream")
+	{
+		capture.settings.sources[capture.uuid].selected = false;
+		capture.manager.setSettings(capture.settings);
+		capture.settings.sources[capture.uuid].selected = true;
+		capture.manager.setSettings(capture.settings);
+		CHECK(capture.manager.status(capture.uuid).stats.encoderId == tapeloop::test::kNvencH264Id);
+	}
+	CHECK(capture.manager.status(capture.uuid).hevcFailed);
+	capture.manager.manualStop();
+}
+
+TEST_CASE_METHOD(ObsFixture, "a source whose H.264 encoder fails or that cannot store a packet gets no fallback",
+		 "[obs][manager]")
+{
+	SECTION("H.264")
+	{
+		NvencCapture capture(tapeloop::test::kNvencH264Id);
+		capture.failEncoding();
+		capture.manager.poll();
+		CHECK_FALSE(capture.manager.status(capture.uuid).hevcFailed);
+		CHECK(capture.restartedWith() == tapeloop::test::kNvencH264Id);
+		capture.manager.manualStop();
+	}
+	SECTION("a packet the buffer cannot store")
+	{
+		if (!tapeloop::test::kAllocationFailures) {
+			SKIP("allocations cannot be made to fail in this configuration");
+		}
+		NvencCapture capture(tapeloop::test::kNvencHevcId);
+		tapeloop::test::failTestNvencStore();
+		REQUIRE(waitFor(
+			[&] { return capture.manager.status(capture.uuid).stats.state == CaptureState::Failed; }, 60s));
+		CHECK_FALSE(capture.manager.status(capture.uuid).stats.encoderFailed);
+		capture.manager.poll();
+		CHECK_FALSE(capture.manager.status(capture.uuid).hevcFailed);
+		CHECK(capture.restartedWith() == tapeloop::test::kNvencHevcId);
+		capture.manager.manualStop();
+	}
 }
 
 TEST_CASE_METHOD(ObsFixture, "settings are saved with the scene collection and loaded back", "[obs][manager]")
