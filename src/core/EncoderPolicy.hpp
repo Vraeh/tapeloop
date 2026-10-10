@@ -84,8 +84,7 @@ struct EncoderPreferences {
 // internal ones, nor those of an Unknown vendor. Between equals the first listed
 // comes first. Without other adapters, hardware encoders of another vendor than a hardware
 // render vendor are left out. An encoder the user chose goes before all of them, even
-// one this order leaves out, as long as OBS neither hides nor deprecates it and a replay
-// can hold what it encodes.
+// one this order leaves out, as long as it is one of the replayEncoderChoices.
 std::vector<EncoderInfo> replayEncoderCandidates(std::span<const EncoderInfo> encoders, Vendor renderVendor,
 						 const EncoderPreferences &preferences);
 
@@ -95,8 +94,10 @@ std::vector<EncoderInfo> replayEncoderCandidates(std::span<const EncoderInfo> en
 std::vector<EncoderInfo> replayEncoderChoices(std::span<const EncoderInfo> encoders);
 
 // The candidates for a source whose HEVC encoder failed while it ran: the H.264 encoders
-// of that encoder's vendor first, those among the candidates in their order, else those
-// a user may choose, then the other candidates, without the one that failed.
+// of that encoder's vendor take its place, or the place of the first of them when it
+// comes earlier, those among the candidates in their order, else those a user may
+// choose. Candidates without the encoder that failed, as after the user chose another
+// one, stay as they are.
 std::vector<EncoderInfo> candidatesAfterHevcFailure(std::span<const EncoderInfo> candidates,
 						    std::span<const EncoderInfo> encoders, std::string_view failedId);
 

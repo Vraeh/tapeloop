@@ -256,6 +256,24 @@ TEST_CASE("after its HEVC encoder fails a source tries the same vendor's H.264 f
 	CHECK(after(chosen, "obs_nvenc_hevc_tex") ==
 	      Ids{"obs_nvenc_h264_tex", "obs_qsv11_hevc", "obs_qsv11_v2", "obs_x264"});
 
+	// An encoder chosen after the failure stays first, and the vendor's H.264 takes the
+	// place of its HEVC.
+	preferences.chosen = "obs_x264";
+	preferences.otherAdapters = true;
+	CHECK(after(order(Vendor::Nvidia, preferences), "obs_nvenc_hevc_tex") ==
+	      Ids{"obs_x264", "obs_nvenc_h264_tex", "obs_qsv11_hevc", "obs_qsv11_v2", "h265_texture_amf",
+		  "h264_texture_amf"});
+	// Candidates without the encoder that failed, as with another adapter left out, stay
+	// as they are.
+	preferences.chosen.clear();
+	preferences.otherAdapters = false;
+	const std::vector<EncoderInfo> nvidiaOnly = order(Vendor::Nvidia, preferences);
+	Ids unchanged;
+	for (const EncoderInfo &info : nvidiaOnly) {
+		unchanged.push_back(info.id);
+	}
+	CHECK(after(nvidiaOnly, "obs_qsv11_hevc") == unchanged);
+
 	// A vendor with no H.264 to choose only loses the encoder that failed.
 	const std::vector<EncoderInfo> hevcOnly = {encoder("obs_nvenc_hevc_tex", "hevc", Vendor::Nvidia, true),
 						   x264()[0]};
