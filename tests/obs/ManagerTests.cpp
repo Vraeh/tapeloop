@@ -9,6 +9,7 @@
 #include "TestEncoders.hpp"
 #include "TestPattern.hpp"
 
+#include "core/EncoderPolicy.hpp"
 #include "core/FileIo.hpp"
 #include "core/GopReader.hpp"
 #include "core/ReplayWriter.hpp"
@@ -419,15 +420,16 @@ TEST_CASE_METHOD(ObsFixture, "the memory the selected sources need is known befo
 	CHECK(before > 0);
 	REQUIRE(manager.manualStart());
 	CHECK(manager.memoryNeeded() == before);
-	CHECK(manager.buffer(uuid)->byteBudget() == before);
+	// Without the margin of the buffer's own budget.
+	CHECK(tapeloop::nominalReplayBytes(manager.buffer(uuid)->byteBudget()) == before);
 	// Twice the length, twice the need; a source not selected needs nothing.
 	REQUIRE(manager.manualStop());
 	settings.length = 2 * settings.lengthFor(uuid);
 	manager.setSettings(settings);
 	// Rounded once rather than twice.
 	const uint64_t doubled = manager.memoryNeeded();
-	CHECK(doubled + 1 >= 2 * before);
-	CHECK(doubled <= 2 * before + 1);
+	CHECK(doubled + 2 >= 2 * before);
+	CHECK(doubled <= 2 * before + 2);
 	CHECK(tapeloop::obs::ManagerDockBackend(manager).memoryNeeded() == doubled);
 	CHECK(tapeloop::obs::ManagerDockBackend(manager).memoryBudget() == manager.memoryBudget());
 }
@@ -456,10 +458,23 @@ TEST_CASE_METHOD(ObsFixture, "buffers that need more memory than the budget shar
 	CHECK(manager.memoryBudget() == manager.physicalMemory() / 4);
 	CHECK_FALSE(manager.status(firstUuid).budgetLimited);
 
+	// A budget between what both need at their bitrates and what they need with their
+	// margins gives each less than its own budget, and both still hold their lengths.
+	const uint64_t nominalBoth = 2 * uint64_t{tapeloop::nominalReplayBytes(need)};
+	const int64_t betweenMiB = static_cast<int64_t>((nominalBoth + (uint64_t{1} << 20) - 1) >> 20);
+	REQUIRE((static_cast<uint64_t>(betweenMiB) << 20) < 2 * uint64_t{need});
+	settings.bufferMemoryMiB = betweenMiB;
+	manager.setSettings(settings);
+	CHECK(manager.buffer(firstUuid)->byteBudget() < need);
+	CHECK(manager.memoryNeeded() <= manager.memoryBudget());
+	CHECK_FALSE(manager.status(firstUuid).budgetLimited);
+	CHECK_FALSE(manager.status(secondUuid).budgetLimited);
+
 	// A budget of 2 MiB holds neither: each gets its share, the same part of its need.
 	settings.bufferMemoryMiB = 2;
 	manager.setSettings(settings);
 	CHECK(manager.memoryBudget() == 2u << 20);
+	CHECK(manager.memoryNeeded() > manager.memoryBudget());
 	const size_t firstShare = manager.buffer(firstUuid)->byteBudget();
 	const size_t secondShare = manager.buffer(secondUuid)->byteBudget();
 	CHECK(firstShare + secondShare <= 2u << 20);

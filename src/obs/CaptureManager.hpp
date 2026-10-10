@@ -117,8 +117,9 @@ public:
 	// The memory every buffer may hold together, from the settings and the computer's
 	// memory, which is zero when it cannot be read.
 	uint64_t memoryBudget() const;
-	// What the selected sources need for their lengths: the need of each buffer running,
-	// and for the others what a start now would give.
+	// What the selected sources need for their lengths at their target bitrates, without
+	// the margin each buffer has for a bitrate that runs over: the need of each buffer
+	// running, and for the others what a start now would give.
 	uint64_t memoryNeeded() const;
 	uint64_t physicalMemory() const noexcept { return physicalMemory_; }
 	// Each changes the library, and writes the tags of a replay stored on disk into its

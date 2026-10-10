@@ -4,6 +4,7 @@
 #include "obs/CaptureManager.hpp"
 
 #include "core/BufferBudget.hpp"
+#include "core/EncoderPolicy.hpp"
 #include "core/FileIo.hpp"
 #include "core/MomentCutter.hpp"
 #include "core/ReplayNames.hpp"
@@ -611,7 +612,9 @@ void CaptureManager::applyBudget()
 	const std::vector<size_t> shares = shareBudget(needs, memoryBudget());
 	for (size_t i = 0; i < running.size(); ++i) {
 		running[i]->capture.limitBytes(shares[i]);
-		running[i]->budgetLimited = shares[i] < needs[i];
+		// The margin of a need is for a bitrate that runs over; a share without it still
+		// holds the length.
+		running[i]->budgetLimited = shares[i] < nominalReplayBytes(needs[i]);
 	}
 }
 
@@ -654,8 +657,9 @@ uint64_t CaptureManager::memoryNeeded() const
 				need = SourceCapture::estimateByteNeed(source, captureSettings(uuid, candidates));
 			}
 		}
-		needed = need > std::numeric_limits<uint64_t>::max() - needed ? std::numeric_limits<uint64_t>::max()
-									      : needed + need;
+		const uint64_t nominal = nominalReplayBytes(need);
+		needed = nominal > std::numeric_limits<uint64_t>::max() - needed ? std::numeric_limits<uint64_t>::max()
+										 : needed + nominal;
 	}
 	return needed;
 }

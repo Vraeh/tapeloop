@@ -79,8 +79,8 @@ public:
 	virtual std::vector<EncoderChoice> encoderChoices() const = 0;
 	// The computer's memory in bytes, zero when it cannot be read.
 	virtual uint64_t physicalMemory() const = 0;
-	// What the selected sources need for their buffer lengths, and what the buffers may
-	// use together.
+	// What the selected sources need for their buffer lengths at their bitrates, and what
+	// the buffers may use together.
 	virtual uint64_t memoryNeeded() const = 0;
 	virtual uint64_t memoryBudget() const = 0;
 
