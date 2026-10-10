@@ -47,7 +47,7 @@ void SourceBuffer::push(const EncodedPacket &packet)
 		if (restarting) {
 			dropFromLocked(packet.time);
 		}
-		evictLocked();
+		evictLocked(packet.time);
 	}
 
 	builder_.append(packet);
@@ -198,14 +198,17 @@ void SourceBuffer::sealLocked()
 	sealedBytes_ += gops_.back()->byteSize();
 }
 
-void SourceBuffer::evictLocked()
+void SourceBuffer::evictLocked(Nanoseconds newest)
 {
 	const auto dropOldest = [this] {
 		sealedBytes_ -= gops_.front()->byteSize();
 		gops_.pop_front();
 	};
 
-	while (gops_.size() > 1 && saturatingSub(gops_.back()->endTime(), gops_[1]->startTime()) >= config_.window) {
+	// After a gap, as when a source comes back from an outage, what came before goes at
+	// once rather than once the new footage fills the window.
+	const Nanoseconds start = saturatingSub(newest, config_.window);
+	while (!gops_.empty() && gops_.front()->endTime() <= start) {
 		dropOldest();
 	}
 

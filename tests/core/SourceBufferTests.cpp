@@ -191,6 +191,36 @@ TEST_CASE("SourceBuffer evicts old GOPs but always keeps the window")
 	CHECK(evicted);
 }
 
+TEST_CASE("SourceBuffer lets go of what came before a gap once it is out of the window")
+{
+	SyntheticEncoder encoder({});
+	SourceBuffer buffer(makeConfig(encoder, 2s, kUnlimited));
+	pushFrames(buffer, encoder, 180);
+	REQUIRE(buffer.stats().oldestTime > encoder.timeOf(0));
+
+	// Ten seconds without a frame, as while a source is gone, then frames again.
+	for (int frame = 0; frame < 600; ++frame) {
+		encoder.next();
+	}
+	REQUIRE(encoder.isKeyframe(encoder.nextFrame()));
+	const Nanoseconds back = encoder.timeOf(encoder.nextFrame());
+	pushFrames(buffer, encoder, 1);
+	CHECK(buffer.stats().oldestTime == back);
+	CHECK(buffer.stats().gopCount == 1);
+	CHECK(buffer.clip(Nanoseconds::min(), Nanoseconds::max()).in() == back);
+
+	// Across a shorter gap, a GOP goes as soon as it ends where the window starts, and the
+	// one after it stays.
+	pushFrames(buffer, encoder, 89);
+	for (int frame = 0; frame < 60; ++frame) {
+		encoder.next();
+	}
+	const Nanoseconds after = encoder.timeOf(encoder.nextFrame());
+	pushFrames(buffer, encoder, 1);
+	CHECK(buffer.stats().oldestTime == after - 2s);
+	CHECK(buffer.stats().oldestTime == back + 500ms);
+}
+
 TEST_CASE("SourceBuffer evicts old GOPs to stay within its byte budget")
 {
 	SyntheticEncoder encoder({});

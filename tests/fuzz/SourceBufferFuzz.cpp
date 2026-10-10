@@ -10,6 +10,7 @@
 #include <cstdint>
 #include <map>
 #include <memory>
+#include <optional>
 #include <set>
 #include <span>
 #include <utility>
@@ -234,37 +235,41 @@ void checkKept(const SourceBuffer &buffer, const EncodedPacket &packet, VideoCod
 	}
 }
 
-// After a kept keyframe eviction has run on the sealed GOPs: neither rule would drop the
-// oldest of them any more, the newest is kept, and whatever was dropped from the front
-// had to go. `before` holds the sealed GOPs from before the push.
-void checkEviction(const SourceBuffer &buffer, const tapeloop::SourceBufferConfig &config, const GopList &before,
-		   bool sealedOne, bool restarted)
+// After a kept keyframe at `time` eviction has run on the sealed GOPs: neither rule would
+// drop the oldest of them any more, the GOP the keyframe sealed stays unless it ends
+// before the window, and whatever was dropped from the front had to go. `before` holds
+// the sealed GOPs from before the push, and `sealedEnd` the end of the GOP the keyframe
+// sealed, when it sealed one.
+void checkEviction(const SourceBuffer &buffer, const tapeloop::SourceBufferConfig &config, Nanoseconds time,
+		   const GopList &before, std::optional<Nanoseconds> sealedEnd, bool restarted)
 {
 	GopList sealed = heldGops(buffer);
 	sealed.pop_back();
 	const size_t bytes = bytesOf(sealed);
+	const Nanoseconds start = tapeloop::saturatingSub(time, config.window);
 
-	if (sealedOne) {
-		require(!sealed.empty());
-	}
 	if (sealed.size() > 1) {
 		require(bytes <= config.maxBytes);
-		require(tapeloop::saturatingSub(sealed.back()->endTime(), sealed[1]->startTime()) < config.window);
+	}
+	if (!sealed.empty()) {
+		require(sealed.front()->endTime() > start);
+	}
+	// The byte budget never takes the newest sealed GOP, so only its age can.
+	if (sealedEnd && *sealedEnd > start) {
+		require(!sealed.empty() && sealed.back()->endTime() == *sealedEnd);
 	}
 
 	// After a restart GOPs also leave from the back, which this check does not model.
-	if (restarted || sealed.empty()) {
+	if (restarted) {
 		return;
 	}
-	const auto survivor = std::find(before.begin(), before.end(), sealed.front());
+	const auto survivor = sealed.empty() ? before.end() : std::find(before.begin(), before.end(), sealed.front());
 	const size_t droppedCount = static_cast<size_t>(survivor - before.begin());
 	if (droppedCount == 0) {
 		return;
 	}
 	const Gop &lastDropped = *before[droppedCount - 1];
-	const bool windowAllowed = tapeloop::saturatingSub(sealed.back()->endTime(), sealed.front()->startTime()) >=
-				   config.window;
-	require(windowAllowed || bytes + lastDropped.byteSize() > config.maxBytes);
+	require(lastDropped.endTime() <= start || bytes + lastDropped.byteSize() > config.maxBytes);
 }
 
 } // namespace
@@ -305,7 +310,11 @@ extern "C" int LLVMFuzzerTestOneInput(const uint8_t *data, size_t size)
 			const bool restarted = keyframe && (!model.synced || model.breaksRun(packet));
 			const bool sealsOpenGop = keyframe && model.synced && !restarted;
 			GopList before = heldGops(buffer);
+			std::optional<Nanoseconds> sealedEnd;
 			if (model.synced && !before.empty()) {
+				if (sealsOpenGop) {
+					sealedEnd = before.back()->endTime();
+				}
 				before.pop_back();
 			}
 
@@ -313,7 +322,7 @@ extern "C" int LLVMFuzzerTestOneInput(const uint8_t *data, size_t size)
 			if (model.push(packet)) {
 				checkKept(buffer, packet, model.codec, model.codecConfig);
 				if (keyframe) {
-					checkEviction(buffer, config, before, sealsOpenGop, restarted);
+					checkEviction(buffer, config, packet.time, before, sealedEnd, restarted);
 				}
 			}
 			break;
