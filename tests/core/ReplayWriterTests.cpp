@@ -253,6 +253,12 @@ TEST_CASE("a replay whose name is taken gets a number")
 	CHECK(writer.write(captureOf(dir.path(), {sourceOf("a", gops)}, "same")).manifest ==
 	      dir.path() / "same (4).tplp");
 	CHECK(writer.write(captureOf(dir.path(), {sourceOf("a", gops)}, "a/b")).manifest == dir.path() / "a_b.tplp");
+	// A stem at the length limit still gets its number.
+	const std::string longStem(200, 's');
+	CHECK(writer.write(captureOf(dir.path(), {sourceOf("a", gops)}, longStem)).manifest ==
+	      dir.path() / (std::string(120, 's') + ".tplp"));
+	CHECK(writer.write(captureOf(dir.path(), {sourceOf("a", gops)}, longStem)).manifest ==
+	      dir.path() / (std::string(116, 's') + " (2).tplp"));
 }
 
 TEST_CASE("a writer appends only to segments it created")

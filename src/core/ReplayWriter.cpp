@@ -401,11 +401,8 @@ void ReplayWriter::flushSegments()
 std::filesystem::path ReplayWriter::publishManifest(const std::string &stem, std::span<const uint8_t> bytes)
 {
 	for (int number = 1; number <= kMaxNameTries; ++number) {
-		std::string name = stem;
-		if (number > 1) {
-			name += " (" + std::to_string(number) + ")";
-		}
-		name = safeFileName(name);
+		const std::string suffix = number > 1 ? " (" + std::to_string(number) + ")" : std::string();
+		const std::string name = safeFileName(stem, kMaxFileNameBytes - suffix.size()) + suffix;
 		const std::filesystem::path manifest = folder_ / pathFromUtf8(name + std::string(kManifestExtension));
 		const std::filesystem::path part = folder_ / pathFromUtf8(name + std::string(kPartExtension));
 		if (std::filesystem::exists(manifest) || std::filesystem::exists(part)) {

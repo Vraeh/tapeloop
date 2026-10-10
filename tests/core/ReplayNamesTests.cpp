@@ -82,7 +82,30 @@ TEST_CASE("a broadcast folder is named after the collection and the minute")
 	const LocalTime time{2026, 10, 9, 21, 5, 42};
 	CHECK(tapeloop::broadcastFolderName("Liga", time) == "Liga 2026-10-09 21-05");
 	CHECK(tapeloop::broadcastFolderName("Final: A/B", time) == "Final_ A_B 2026-10-09 21-05");
-	CHECK(tapeloop::broadcastFolderName("", LocalTime{2027, 1, 2, 3, 4, 5}) == " 2027-01-02 03-04");
+	CHECK(tapeloop::broadcastFolderName("", LocalTime{2027, 1, 2, 3, 4, 5}) == "_ 2027-01-02 03-04");
+}
+
+TEST_CASE("a long collection name is shortened so that the date stays")
+{
+	const LocalTime time{2026, 10, 9, 21, 5, 42};
+	const std::string name = tapeloop::broadcastFolderName(std::string(110, 'a'), time);
+	CHECK(name == std::string(103, 'a') + " 2026-10-09 21-05");
+	CHECK(name.size() == tapeloop::kMaxFileNameBytes);
+	// Cut at a character boundary, and without the spaces it would end with.
+	const std::string accented = std::string(102, 'a') + "\xC3\xBA" + "bbb";
+	CHECK(tapeloop::broadcastFolderName(accented, time) == std::string(102, 'a') + " 2026-10-09 21-05");
+	CHECK(tapeloop::broadcastFolderName(std::string(101, 'a') + "  x", time) ==
+	      std::string(101, 'a') + " 2026-10-09 21-05");
+}
+
+TEST_CASE("a safe file name stays within the limit asked for")
+{
+	CHECK(safeFileName("abcdef", 3) == "abc");
+	CHECK(safeFileName("CON", 3) == "_CO");
+	CHECK(safeFileName("nul.\xC3\xBA", 6) == "_nul");
+	CHECK(safeFileName("nul.\xC3\xBA", 7) == "_nul.\xC3\xBA");
+	CHECK(safeFileName("", 1) == "_");
+	CHECK(safeFileName("abc", 0) == "_");
 }
 
 TEST_CASE("a replay is named after the second it was captured")

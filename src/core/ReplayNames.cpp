@@ -11,7 +11,6 @@
 namespace tapeloop {
 namespace {
 
-constexpr size_t kMaxNameBytes = 120;
 constexpr std::string_view kSegmentExtension = ".tpls";
 constexpr size_t kSequenceDigits = 6;
 
@@ -58,6 +57,14 @@ size_t sequenceLength(std::string_view text, size_t at)
 		return 0;
 	}
 	return length;
+}
+
+// Windows drops spaces and dots at the end of a name.
+void dropTrailing(std::string &name)
+{
+	while (!name.empty() && (name.back() == ' ' || name.back() == '.')) {
+		name.pop_back();
+	}
 }
 
 char upper(char c)
@@ -138,10 +145,10 @@ LocalTime localTimeOf(std::chrono::system_clock::time_point time) noexcept
 	return {parts.tm_year + 1900, parts.tm_mon + 1, parts.tm_mday, parts.tm_hour, parts.tm_min, parts.tm_sec};
 }
 
-std::string safeFileName(std::string_view name)
+std::string safeFileName(std::string_view name, size_t maxBytes)
 {
 	std::string safe;
-	safe.reserve(std::min(name.size(), kMaxNameBytes));
+	safe.reserve(std::min(name.size(), maxBytes));
 	size_t at = 0;
 	while (at < name.size()) {
 		const size_t length = sequenceLength(name, at);
@@ -150,7 +157,7 @@ std::string safeFileName(std::string_view name)
 				     (length == 1 && (static_cast<unsigned char>(c) < 0x20 || c == 0x7F ||
 						      kRefused.find(c) != std::string_view::npos));
 		const size_t taken = length == 0 ? 1 : length;
-		if (safe.size() + (refused ? 1 : taken) > kMaxNameBytes) {
+		if (safe.size() + (refused ? 1 : taken) > maxBytes) {
 			break;
 		}
 		if (refused) {
@@ -160,24 +167,31 @@ std::string safeFileName(std::string_view name)
 		}
 		at += taken;
 	}
-	while (!safe.empty() && (safe.back() == ' ' || safe.back() == '.')) {
-		safe.pop_back();
-	}
+	dropTrailing(safe);
 	if (!safe.empty() && safe.front() == '.') {
 		safe.front() = '_';
 	}
 	if (safe.empty() || isDeviceName(safe)) {
 		safe.insert(safe.begin(), '_');
+		// The '_' in front can take the name past the limit.
+		const size_t limit = std::max(maxBytes, size_t{1});
+		if (safe.size() > limit) {
+			size_t cut = limit;
+			while (cut > 1 && isContinuation(static_cast<unsigned char>(safe[cut]))) {
+				--cut;
+			}
+			safe.resize(cut);
+			dropTrailing(safe);
+		}
 	}
 	return safe;
 }
 
 std::string broadcastFolderName(std::string_view sceneCollection, LocalTime time)
 {
-	std::string name(sceneCollection);
-	name += ' ';
-	name += dateText(time);
-	return safeFileName(name);
+	// The date goes after the name is made safe, so a long collection name never cuts it.
+	std::string date = " " + dateText(time);
+	return safeFileName(sceneCollection, kMaxFileNameBytes - date.size()) + date;
 }
 
 std::string replayFileStem(LocalTime time)

@@ -4,6 +4,7 @@
 #pragma once
 
 #include <chrono>
+#include <cstddef>
 #include <cstdint>
 #include <optional>
 #include <string>
@@ -26,14 +27,17 @@ struct LocalTime {
 // The epoch when the platform cannot convert the time.
 LocalTime localTimeOf(std::chrono::system_clock::time_point time) noexcept;
 
+inline constexpr size_t kMaxFileNameBytes = 120;
+
 // The name made valid as a file or folder name on Windows, macOS and Linux: characters
 // one of them refuses and bytes that are not UTF-8 become '_', as does a leading dot,
 // which would hide it; trailing spaces and dots go, since Windows drops them; a Windows
-// device name gets a '_' in front; and it is cut to at most 120 bytes, at a character
+// device name gets a '_' in front; and it is cut to at most maxBytes, at a character
 // boundary. Never empty.
-std::string safeFileName(std::string_view name);
+std::string safeFileName(std::string_view name, size_t maxBytes = kMaxFileNameBytes);
 
-// "<scene collection> YYYY-MM-DD HH-MM", the folder of one broadcast.
+// "<scene collection> YYYY-MM-DD HH-MM", the folder of one broadcast, with the
+// collection's name shortened when it is too long for the date to fit.
 std::string broadcastFolderName(std::string_view sceneCollection, LocalTime time);
 // "YYYY-MM-DD HH-MM-SS", the name of a replay's manifest without its extension.
 std::string replayFileStem(LocalTime time);
