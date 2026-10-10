@@ -78,8 +78,9 @@ public:
 
 	// Stops the captures of removed sources, restarts captures whose source changed size
 	// keeping their buffers, retries selected sources that had no size or were not found,
-	// and catches up with output changes the frontend did not report. Meant to run every
-	// second or so.
+	// catches up with output changes the frontend did not report, takes in what the store
+	// did, and lets the library forget the frames of replays the buffers no longer hold.
+	// Meant to run every second or so.
 	void poll();
 
 	// The settings under kSettingsKey of the scene collection's data. Saving leaves out

@@ -184,6 +184,27 @@ void ReplayLibrary::clear()
 	picked_ = 0;
 }
 
+size_t ReplayLibrary::releaseExpired()
+{
+	size_t released = 0;
+	for (auto &[id, replay] : replays_) {
+		if (replay.live.empty() || replay.state == ReplayState::Writing) {
+			continue;
+		}
+		// The GOP still being encoded at the capture expires first, so a replay the
+		// buffers still hold shows it a GOP or two from the end.
+		const bool held = std::ranges::any_of(replay.live, [](const auto &gops) {
+			return std::any_of(gops.rbegin(), gops.rend(), [](const auto &gop) { return !gop.expired(); });
+		});
+		if (!held) {
+			replay.index.reset();
+			replay.live = {};
+			++released;
+		}
+	}
+	return released;
+}
+
 std::vector<uint64_t> ReplayLibrary::list(std::string_view tag) const
 {
 	const std::string name = tag.empty() ? std::string() : canonical(tag);

@@ -1407,18 +1407,26 @@ TEST_CASE_METHOD(ObsFixture, "a stored replay holds none of the GOPs its buffer 
 	const uint64_t id = manager.captureReplay();
 	manager.finishWrites();
 
-	// Unselected, the source's buffer goes, and with it every GOP.
+	const size_t gops = manager.library().find(id)->live[0].size();
+	REQUIRE(gops != 0);
+
+	// Unselected, the source's buffer goes, and with it every GOP; the next poll lets go
+	// of the replay's frames too, which its manifest has.
 	settings.sources[uuid].selected = false;
 	manager.setSettings(settings);
 	CHECK(manager.buffer(uuid) == nullptr);
+	manager.poll();
 	const Replay *replay = manager.library().find(id);
 	REQUIRE(replay->state == ReplayState::Stored);
+	CHECK(replay->index == nullptr);
+	CHECK(replay->live.empty());
+	const std::optional<tapeloop::ReplayIndex> index = tapeloop::readReplayIndex(replay->manifest);
+	REQUIRE(index);
 	tapeloop::GopReader reader;
-	for (size_t gop = 0; gop < replay->live[0].size(); ++gop) {
-		CHECK(replay->live[0][gop].expired());
-		CHECK(reader.read(replay->manifest, replay->index->sources[0], gop, replay->live[0][gop]));
+	for (size_t gop = 0; gop < gops; ++gop) {
+		CHECK(reader.read(replay->manifest, index->sources[0], gop));
 	}
-	CHECK(reader.stats().read == replay->live[0].size());
+	CHECK(reader.stats().read == gops);
 }
 
 TEST_CASE_METHOD(ObsFixture, "a broadcast is named when the buffers start", "[obs][manager][replay]")

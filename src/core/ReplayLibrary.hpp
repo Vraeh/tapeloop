@@ -77,6 +77,10 @@ public:
 	bool notSaved(uint64_t id, std::string error);
 	bool remove(uint64_t id);
 	void clear();
+	// Lets go of what a stored or unsaved replay keeps for playing from the buffers once
+	// they hold none of its GOPs: its frame index and the references. A stored replay's
+	// manifest has the index again. Returns how many replays it let go of.
+	size_t releaseExpired();
 
 	// Newest first, by capture time; with a tag, only the replays that carry it.
 	std::vector<uint64_t> list(std::string_view tag = {}) const;

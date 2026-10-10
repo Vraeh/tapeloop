@@ -155,6 +155,7 @@ void CaptureManager::poll()
 		return;
 	}
 	takeStoreResults();
+	library_.releaseExpired();
 
 	for (auto it = entries_.begin(); it != entries_.end();) {
 		if (it->second->removed) {

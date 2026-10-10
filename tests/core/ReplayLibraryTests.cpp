@@ -325,6 +325,43 @@ TEST_CASE("ReplayLibrary points at the buffers' GOPs only while they live")
 	}
 }
 
+TEST_CASE("ReplayLibrary forgets the frames of a replay the buffers no longer hold")
+{
+	ReplayLibrary library;
+	Gops kept = makeGops(3);
+	uint64_t stored = 0;
+	uint64_t unsaved = 0;
+	uint64_t writing = 0;
+	uint64_t held = 0;
+	{
+		const Gops dropped = makeGops(2);
+		stored = library.addCaptured(captureAt(10, dropped), "Liga");
+		unsaved = library.addCaptured(captureAt(20, dropped), "Liga");
+		writing = library.addCaptured(captureAt(30, dropped), "Liga");
+		held = library.addCaptured(captureAt(40, kept), "Liga");
+	}
+	REQUIRE(library.stored(stored, "Liga/10.tplp", tapeloop::indexOf(captureAt(10, kept))));
+	REQUIRE(library.notSaved(unsaved, "disk full"));
+	REQUIRE(library.stored(held, "Liga/40.tplp", tapeloop::indexOf(captureAt(40, kept))));
+	// Only the newest GOP of the one the buffers still hold is gone.
+	kept.pop_back();
+
+	CHECK(library.releaseExpired() == 2);
+	CHECK(library.find(stored)->index == nullptr);
+	CHECK(library.find(stored)->live.empty());
+	CHECK(library.find(stored)->state == ReplayState::Stored);
+	CHECK(library.find(stored)->sources.size() == 1);
+	CHECK(library.find(unsaved)->index == nullptr);
+	// Still being written, it needs its index when the store reports it.
+	CHECK(library.find(writing)->index != nullptr);
+	CHECK(library.find(held)->index != nullptr);
+	CHECK(library.find(held)->live[0].size() == 3);
+	CHECK(library.releaseExpired() == 0);
+	kept.clear();
+	CHECK(library.releaseExpired() == 1);
+	CHECK(library.find(held)->index == nullptr);
+}
+
 TEST_CASE("ReplayLibrary takes replays found on disk with their tags")
 {
 	ReplayLibrary library;
