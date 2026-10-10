@@ -318,7 +318,7 @@ uint64_t CaptureManager::captureReplay()
 	}
 	// OBS may have had no recording folder when the buffers started.
 	if (broadcastFolder_.empty()) {
-		nameBroadcast();
+		placeBroadcast();
 	}
 	const auto capturedAt = std::chrono::system_clock::now();
 	ReplayCapture capture;
@@ -434,6 +434,11 @@ void CaptureManager::nameBroadcast()
 {
 	broadcastName_ =
 		broadcastFolderName(host_.sceneCollectionName(), localTimeOf(std::chrono::system_clock::now()));
+	placeBroadcast();
+}
+
+void CaptureManager::placeBroadcast()
+{
 	const std::filesystem::path base = replayFolder();
 	broadcastFolder_ = base.empty() ? std::filesystem::path() : base / pathFromUtf8(broadcastName_);
 	if (base.empty()) {

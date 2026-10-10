@@ -1494,14 +1494,23 @@ TEST_CASE_METHOD(ObsFixture, "a recording folder that appears later is used and 
 	REQUIRE(manager.manualStart());
 	CHECK(manager.broadcastFolder().empty());
 	REQUIRE(waitFor([&] { return hasGops(manager, uuid, 2); }, 60s));
+	// Captures with no folder keep the broadcast the buffers started, whatever the
+	// collection is called by then.
+	host.collection = "Copa";
+	const uint64_t unsaved = manager.captureReplay();
+	REQUIRE(unsaved != 0);
+	CHECK(manager.library().find(unsaved)->state == ReplayState::NotSaved);
+	const std::string broadcast = manager.library().find(unsaved)->broadcast;
+	CHECK(broadcast.starts_with("F\xC3\xBAtbol_ Liga_2026 "));
 
 	host.folder = folder;
 	const uint64_t id = manager.captureReplay();
 	REQUIRE(id != 0);
 	manager.finishWrites();
 	CHECK(manager.library().find(id)->state == ReplayState::Stored);
-	CHECK(manager.broadcastFolder().parent_path() == host.dir.path() / "Tapeloop");
-	CHECK(manager.library().size() == 2);
+	CHECK(manager.library().find(id)->broadcast == broadcast);
+	CHECK(manager.broadcastFolder() == host.dir.path() / "Tapeloop" / tapeloop::pathFromUtf8(broadcast));
+	CHECK(manager.library().size() == 3);
 	manager.manualStop();
 }
 
