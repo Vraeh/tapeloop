@@ -109,6 +109,19 @@ TEST_CASE("a directory cannot be read as a file")
 	CHECK_THROWS_AS(readDirectory(), std::system_error);
 }
 
+TEST_CASE("a failed call reports the error it got and the path")
+{
+	TempDirectory dir;
+	const auto missing = dir.path() / "missing.tplp";
+	try {
+		File file(missing, File::Mode::ReadOnly);
+		FAIL("opened a file that does not exist");
+	} catch (const std::system_error &e) {
+		CHECK(e.code() == std::errc::no_such_file_or_directory);
+		CHECK(std::string(e.what()).find("missing.tplp") != std::string::npos);
+	}
+}
+
 TEST_CASE("a file opened read-only refuses writes")
 {
 	TempDirectory dir;

@@ -46,16 +46,20 @@ std::string describe(std::string_view what, const std::filesystem::path &path)
 
 #ifdef _WIN32
 
-[[noreturn]] void throwLastError(const std::string &what)
+// The code is read before the message is built, which can change it.
+[[noreturn]] void throwLastError(std::string_view what, const std::filesystem::path *path = nullptr)
 {
-	throw std::system_error(static_cast<int>(GetLastError()), std::system_category(), what);
+	const auto code = static_cast<int>(GetLastError());
+	throw std::system_error(code, std::system_category(), path ? describe(what, *path) : std::string(what));
 }
 
 #else
 
-[[noreturn]] void throwErrno(const std::string &what)
+// The code is read before the message is built, which can change it.
+[[noreturn]] void throwErrno(std::string_view what, const std::filesystem::path *path = nullptr)
 {
-	throw std::system_error(errno, std::generic_category(), what);
+	const int code = errno;
+	throw std::system_error(code, std::generic_category(), path ? describe(what, *path) : std::string(what));
 }
 
 int openFile(const std::filesystem::path &path, int flags)
@@ -157,7 +161,7 @@ File::File(const std::filesystem::path &path, Mode mode)
 	const DWORD share = FILE_SHARE_READ | FILE_SHARE_WRITE | FILE_SHARE_DELETE;
 	HANDLE handle = CreateFileW(path.c_str(), access, share, nullptr, disposition, FILE_ATTRIBUTE_NORMAL, nullptr);
 	if (handle == INVALID_HANDLE_VALUE) {
-		throwLastError(describe("cannot open", path));
+		throwLastError("cannot open", &path);
 	}
 	handle_ = handle;
 }
@@ -236,7 +240,7 @@ void syncDirectory(const std::filesystem::path &) {}
 void renameFile(const std::filesystem::path &from, const std::filesystem::path &to)
 {
 	if (!MoveFileExW(from.c_str(), to.c_str(), MOVEFILE_REPLACE_EXISTING | MOVEFILE_WRITE_THROUGH)) {
-		throwLastError(describe("cannot rename", from));
+		throwLastError("cannot rename", &from);
 	}
 }
 
@@ -258,7 +262,7 @@ File::File(const std::filesystem::path &path, Mode mode)
 	}
 	fd_ = openFile(path, flags);
 	if (fd_ < 0) {
-		throwErrno(describe("cannot open", path));
+		throwErrno("cannot open", &path);
 	}
 }
 
@@ -340,7 +344,7 @@ void syncDirectory(const std::filesystem::path &directory)
 {
 	const int fd = openFile(directory, O_RDONLY | O_DIRECTORY);
 	if (fd < 0) {
-		throwErrno(describe("cannot open the directory", directory));
+		throwErrno("cannot open the directory", &directory);
 	}
 	const int result = ::fsync(fd);
 	const int error = errno;
@@ -354,7 +358,7 @@ void syncDirectory(const std::filesystem::path &directory)
 void renameFile(const std::filesystem::path &from, const std::filesystem::path &to)
 {
 	if (::rename(from.c_str(), to.c_str()) != 0) {
-		throwErrno(describe("cannot rename", from));
+		throwErrno("cannot rename", &from);
 	}
 	syncDirectory(to.parent_path());
 }
