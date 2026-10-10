@@ -15,6 +15,7 @@
 #include <QKeyEvent>
 #include <QLabel>
 #include <QLineEdit>
+#include <QMessageBox>
 #include <QCheckBox>
 #include <QComboBox>
 #include <QDialog>
@@ -341,7 +342,19 @@ TEST_CASE("a tag comes off the selected replay, and a deleted one off every repl
 	filter->setCurrentIndex(filter->findData("goal"));
 	REQUIRE(list->count() == 1);
 	CHECK(erase->isEnabled());
-	erase->click();
+	// It asks first, and No keeps the tag.
+	const auto answer = [&](QMessageBox::StandardButton button) {
+		erase->click();
+		auto *question = dock.findChild<QMessageBox *>("deleteTagQuestion");
+		REQUIRE(question);
+		CHECK(question->text().contains("#goal"));
+		question->button(button)->click();
+		QCoreApplication::processEvents();
+	};
+	answer(QMessageBox::No);
+	CHECK(backend.tags == std::vector<std::string>{"goal", "save"});
+	CHECK(backend.captured[1].tags == std::vector<std::string>{"goal"});
+	answer(QMessageBox::Yes);
 	CHECK(backend.tags == std::vector<std::string>{"save"});
 	CHECK(backend.captured[1].tags.empty());
 	CHECK(filter->currentIndex() == 0);
