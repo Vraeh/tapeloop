@@ -6,6 +6,7 @@
 #include <algorithm>
 #include <array>
 #include <cctype>
+#include <iterator>
 #include <limits>
 #include <optional>
 #include <string>
@@ -226,11 +227,42 @@ std::vector<EncoderInfo> replayEncoderChoices(std::span<const EncoderInfo> encod
 {
 	std::vector<EncoderInfo> choices;
 	for (const EncoderInfo &encoder : encoders) {
-		if (!encoder.deprecated && !encoder.internal && (encoder.codec == "h264" || encoder.codec == "hevc")) {
+		if (!encoder.deprecated && !encoder.internal && encoder.vendor != Vendor::Unknown &&
+		    (encoder.codec == "h264" || encoder.codec == "hevc")) {
 			choices.push_back(encoder);
 		}
 	}
 	return choices;
+}
+
+std::vector<EncoderInfo> candidatesAfterHevcFailure(std::span<const EncoderInfo> candidates,
+						    std::span<const EncoderInfo> encoders, std::string_view failedId)
+{
+	if (std::none_of(candidates.begin(), candidates.end(),
+			 [&](const EncoderInfo &candidate) { return candidate.id == failedId; })) {
+		return {candidates.begin(), candidates.end()};
+	}
+	const Vendor vendor = encoderVendor(failedId);
+	const auto sameVendorH264 = [vendor](const EncoderInfo &encoder) {
+		return encoder.vendor == vendor && encoder.codec == "h264";
+	};
+	std::vector<EncoderInfo> replacements;
+	std::copy_if(candidates.begin(), candidates.end(), std::back_inserter(replacements), sameVendorH264);
+	if (replacements.empty()) {
+		const std::vector<EncoderInfo> choices = replayEncoderChoices(encoders);
+		std::copy_if(choices.begin(), choices.end(), std::back_inserter(replacements), sameVendorH264);
+	}
+	std::vector<EncoderInfo> ordered;
+	bool placed = false;
+	for (const EncoderInfo &candidate : candidates) {
+		if (candidate.id != failedId && !sameVendorH264(candidate)) {
+			ordered.push_back(candidate);
+		} else if (!placed) {
+			ordered.insert(ordered.end(), replacements.begin(), replacements.end());
+			placed = true;
+		}
+	}
+	return ordered;
 }
 
 EncoderSettings buildReplaySettings(const EncoderInfo &encoder, const ReplayEncoderParams &params)

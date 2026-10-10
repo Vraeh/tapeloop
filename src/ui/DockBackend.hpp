@@ -31,6 +31,8 @@ struct DockSource {
 	bool activationLeftOut = false;
 	// How its running encoder takes the frames; anything but Texture gets a note.
 	EncoderPath encoderPath = EncoderPath::Texture;
+	// Its HEVC encoder failed while it ran, and it uses H.264 from its next start.
+	bool hevcFailed = false;
 };
 
 // A replay as the dock lists it.

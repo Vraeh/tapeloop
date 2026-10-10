@@ -226,7 +226,7 @@ TEST_CASE("a source on an encoder path that is not the optimal one says so")
 	// With another note, both show, a paragraph each.
 	backend.shown[0].activationLeftOut = true;
 	dock.refresh();
-	CHECK(table->item(0, 1)->toolTip().contains("restarts when it becomes active"));
+	CHECK(table->item(0, 1)->toolTip().contains("unpauses or refreshes when it becomes active"));
 	CHECK(table->item(0, 1)->toolTip().contains("x264"));
 	CHECK(table->item(0, 1)->toolTip().contains("\n\n"));
 
@@ -584,7 +584,7 @@ TEST_CASE("a media source left out of activation says why")
 	TapeloopDock dock(backend, localeText());
 	const QTableWidgetItem *status = child<QTableWidget>(dock, "sources")->item(0, 1);
 	CHECK_FALSE(status->icon().isNull());
-	CHECK(status->toolTip().contains("restarts when it becomes active"));
+	CHECK(status->toolTip().contains("unpauses or refreshes when it becomes active"));
 
 	// Unselected, it has nothing to explain.
 	backend.current.sources["uuid-camera-1"].selected = false;
@@ -592,6 +592,32 @@ TEST_CASE("a media source left out of activation says why")
 	const QTableWidgetItem *refreshed = child<QTableWidget>(dock, "sources")->item(0, 1);
 	CHECK(refreshed->icon().isNull());
 	CHECK(refreshed->toolTip().isEmpty());
+}
+
+TEST_CASE("a source whose HEVC encoder failed says it goes on in H.264")
+{
+	FakeBackend backend = backendWithSources();
+	backend.shown[0].state = SourceState::Failed;
+	backend.shown[0].hevcFailed = true;
+	backend.current.sources["uuid-camera-1"].selected = true;
+	TapeloopDock dock(backend, localeText());
+	const QTableWidgetItem *status = child<QTableWidget>(dock, "sources")->item(0, 1);
+	CHECK(status->text() == localeText()("Dock.Status.Failed"));
+	CHECK_FALSE(status->icon().isNull());
+	CHECK(status->toolTip() == localeText()("Dock.Status.HevcFailed.Tooltip"));
+
+	// Running again, on the CPU as the order went on to x264, it says both.
+	backend.shown[0].state = SourceState::Running;
+	backend.shown[0].encoderPath = tapeloop::EncoderPath::Software;
+	dock.refresh();
+	const QString both = child<QTableWidget>(dock, "sources")->item(0, 1)->toolTip();
+	CHECK(both.startsWith(localeText()("Dock.Status.Software.Tooltip")));
+	CHECK(both.endsWith(localeText()("Dock.Status.HevcFallback.Tooltip")));
+
+	// Unticked, it has nothing to say.
+	backend.current.sources["uuid-camera-1"].selected = false;
+	dock.refresh();
+	CHECK(child<QTableWidget>(dock, "sources")->item(0, 1)->toolTip().isEmpty());
 }
 
 TEST_CASE("the activation checkbox follows the settings")

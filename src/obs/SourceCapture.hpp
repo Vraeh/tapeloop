@@ -42,6 +42,9 @@ enum class StartResult {
 
 struct CaptureStats {
 	CaptureState state = CaptureState::Stopped;
+	// Failed because the encoder reported an error, not because a packet could not be
+	// stored.
+	bool encoderFailed = false;
 	std::string encoderId;
 	// Of the encoder running; Texture while none is.
 	EncoderPath encoderPath = EncoderPath::Texture;

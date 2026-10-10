@@ -492,6 +492,11 @@ void TapeloopDock::updateSources(const std::vector<DockSource> &sources)
 		if (path) {
 			note += (note.isEmpty() ? QString() : QStringLiteral("\n\n")) + text_(path);
 		}
+		if (sources[i].selected && sources[i].hevcFailed) {
+			note += (note.isEmpty() ? QString() : QStringLiteral("\n\n")) +
+				text_(sources[i].state == SourceState::Running ? "Dock.Status.HevcFallback.Tooltip"
+									       : "Dock.Status.HevcFailed.Tooltip");
+		}
 		status->setIcon(note.isEmpty() ? QIcon() : style()->standardIcon(QStyle::SP_MessageBoxInformation));
 		status->setToolTip(note);
 	}

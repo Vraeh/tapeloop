@@ -78,6 +78,21 @@ void mediaDefaults(obs_data_t *settings) noexcept
 	obs_data_set_default_bool(settings, "restart_on_activate", true);
 }
 
+void browserDefaults(obs_data_t *settings) noexcept
+{
+	obs_data_set_default_bool(settings, "restart_when_active", false);
+}
+
+void vlcDefaults(obs_data_t *settings) noexcept
+{
+	obs_data_set_default_string(settings, "playback_behavior", "stop_restart");
+}
+
+void slideshowDefaults(obs_data_t *settings) noexcept
+{
+	obs_data_set_default_string(settings, "playback_behavior", "always_play");
+}
+
 void *create(obs_data_t *settings, obs_source_t *source) noexcept
 {
 	auto *pattern = new (std::nothrow) TestPattern;
@@ -250,12 +265,25 @@ void registerTestPattern()
 	media.get_defaults = mediaDefaults;
 	obs_register_source(&media);
 
-	for (const char *id : {kVlcStandInId, kSlideshowStandInId, kImageStandInId}) {
+	struct StandIn {
+		const char *id;
+		void (*defaults)(obs_data_t *);
+	};
+	for (const StandIn &standIn :
+	     {StandIn{kVlcStandInId, vlcDefaults}, StandIn{kSlideshowStandInId, slideshowDefaults},
+	      StandIn{kImageStandInId, nullptr}}) {
 		obs_source_info other = info;
-		other.id = id;
+		other.id = standIn.id;
 		other.get_name = mediaName;
+		other.get_defaults = standIn.defaults;
 		obs_register_source(&other);
 	}
+
+	obs_source_info browser = info;
+	browser.id = kBrowserStandInId;
+	browser.get_name = mediaName;
+	browser.get_defaults = browserDefaults;
+	obs_register_source(&browser);
 }
 
 void registerTone()
