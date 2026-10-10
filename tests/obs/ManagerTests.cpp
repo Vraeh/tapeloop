@@ -403,6 +403,35 @@ TEST_CASE_METHOD(ObsFixture, "a source too small to start is retried", "[obs][ma
 	CHECK(manager.status(uuid).stats.state == CaptureState::Running);
 }
 
+TEST_CASE_METHOD(ObsFixture, "the memory the selected sources need is known before they start", "[obs][manager]")
+{
+	OBSSourceAutoRelease pattern = createTestPattern(320, 180, "Pattern");
+	OBSSourceAutoRelease other = createTestPattern(320, 180, "Other");
+	const std::string uuid = uuidOf(pattern);
+	FakeHost host;
+	CaptureManager manager(host);
+	BufferSettings settings = selecting(uuid);
+	settings.startWithOutputs = false;
+	// x264 first, so that the estimate is for the encoder that starts.
+	settings.replayEncoder = "obs_x264";
+	manager.setSettings(settings);
+	const uint64_t before = manager.memoryNeeded();
+	CHECK(before > 0);
+	REQUIRE(manager.manualStart());
+	CHECK(manager.memoryNeeded() == before);
+	CHECK(manager.buffer(uuid)->byteBudget() == before);
+	// Twice the length, twice the need; a source not selected needs nothing.
+	REQUIRE(manager.manualStop());
+	settings.length = 2 * settings.lengthFor(uuid);
+	manager.setSettings(settings);
+	// Rounded once rather than twice.
+	const uint64_t doubled = manager.memoryNeeded();
+	CHECK(doubled + 1 >= 2 * before);
+	CHECK(doubled <= 2 * before + 1);
+	CHECK(tapeloop::obs::ManagerDockBackend(manager).memoryNeeded() == doubled);
+	CHECK(tapeloop::obs::ManagerDockBackend(manager).memoryBudget() == manager.memoryBudget());
+}
+
 TEST_CASE_METHOD(ObsFixture, "buffers that need more memory than the budget share it", "[obs][manager]")
 {
 	OBSSourceAutoRelease first = createTestPattern(320, 180, "First");

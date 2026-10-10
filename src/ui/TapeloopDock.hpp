@@ -70,6 +70,7 @@ private:
 	QCheckBox *otherAdapters_;
 	QSpinBox *bufferMemory_;
 	QLabel *memoryWarning_;
+	QLabel *memoryShort_;
 	QLabel *note_;
 	QPushButton *startStop_;
 	QLabel *followsOutputs_;

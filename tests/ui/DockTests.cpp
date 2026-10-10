@@ -225,6 +225,18 @@ TEST_CASE("the advanced settings set the memory the buffers may use")
 	CHECK(backend.current.bufferMemoryMiB == 0);
 	CHECK_FALSE(warning->isVisible());
 
+	// The selected sources needing more than the budget says so, before the buffers start
+	// too.
+	auto *short_ = child<QLabel>(dock, "memoryShort");
+	CHECK_FALSE(short_->isVisible());
+	backend.needed = (uint64_t{5} << 30) + 1;
+	dock.refresh();
+	CHECK(short_->isVisible());
+	CHECK(short_->text() == localeText()("Dock.MemoryShort").arg(5121).arg(4096));
+	backend.needed = uint64_t{4} << 30;
+	dock.refresh();
+	CHECK_FALSE(short_->isVisible());
+
 	// With the computer's memory unknown, automatic sets no limit.
 	backend.memory = 0;
 	dock.refresh();

@@ -21,6 +21,7 @@
 #include <chrono>
 #include <cstring>
 #include <filesystem>
+#include <limits>
 #include <optional>
 #include <string>
 #include <string_view>
@@ -614,6 +615,51 @@ void CaptureManager::applyBudget()
 	}
 }
 
+CaptureSettings CaptureManager::captureSettings(const std::string &uuid,
+						std::optional<std::vector<EncoderInfo>> &candidates) const
+{
+	if (!candidates) {
+		candidates = replayEncoderCandidates(registeredVideoEncoders(), renderAdapterVendor(),
+						     settings_.encoderPreferences());
+	}
+	CaptureSettings settings;
+	settings.encoderPreferences = settings_.encoderPreferences();
+	settings.resolution = settings_.resolutionFor(uuid);
+	settings.bufferLength = settings_.lengthFor(uuid);
+	settings.candidates = *candidates;
+	if (const auto failed = failedHevc_.find(uuid); failed != failedHevc_.end()) {
+		const std::vector<EncoderInfo> encoders = registeredVideoEncoders();
+		for (const std::string &id : failed->second) {
+			settings.candidates = candidatesAfterHevcFailure(settings.candidates, encoders, id);
+		}
+		// A choice whose HEVC failed gives way to its H.264, which the dock says already.
+		if (std::find(failed->second.begin(), failed->second.end(), settings.encoderPreferences.chosen) !=
+		    failed->second.end()) {
+			settings.encoderPreferences.chosen.clear();
+		}
+	}
+	return settings;
+}
+
+uint64_t CaptureManager::memoryNeeded() const
+{
+	uint64_t needed = 0;
+	std::optional<std::vector<EncoderInfo>> candidates;
+	for (const std::string &uuid : settings_.selectedSources()) {
+		const auto found = entries_.find(uuid);
+		size_t need = found != entries_.end() ? found->second->capture.byteNeed() : 0;
+		if (need == 0) {
+			OBSSourceAutoRelease source = obs_get_source_by_uuid(uuid.c_str());
+			if (source) {
+				need = SourceCapture::estimateByteNeed(source, captureSettings(uuid, candidates));
+			}
+		}
+		needed = need > std::numeric_limits<uint64_t>::max() - needed ? std::numeric_limits<uint64_t>::max()
+									      : needed + need;
+	}
+	return needed;
+}
+
 uint64_t CaptureManager::memoryBudget() const
 {
 	return bufferBudget(settings_.bufferMemoryMiB, physicalMemory_);
@@ -642,27 +688,7 @@ CaptureManager::StartOutcome CaptureManager::start(const std::string &uuid, Entr
 		return StartOutcome::Failed;
 	}
 
-	if (!candidates) {
-		candidates = replayEncoderCandidates(registeredVideoEncoders(), renderAdapterVendor(),
-						     settings_.encoderPreferences());
-	}
-	CaptureSettings settings;
-	settings.encoderPreferences = settings_.encoderPreferences();
-	settings.resolution = settings_.resolutionFor(uuid);
-	settings.bufferLength = settings_.lengthFor(uuid);
-	settings.candidates = *candidates;
-	if (const auto failed = failedHevc_.find(uuid); failed != failedHevc_.end()) {
-		const std::vector<EncoderInfo> encoders = registeredVideoEncoders();
-		for (const std::string &id : failed->second) {
-			settings.candidates = candidatesAfterHevcFailure(settings.candidates, encoders, id);
-		}
-		// A choice whose HEVC failed gives way to its H.264, which the dock says already.
-		if (std::find(failed->second.begin(), failed->second.end(), settings.encoderPreferences.chosen) !=
-		    failed->second.end()) {
-			settings.encoderPreferences.chosen.clear();
-		}
-	}
-	const StartResult result = entry.capture.start(source, settings, keepBuffer);
+	const StartResult result = entry.capture.start(source, captureSettings(uuid, candidates), keepBuffer);
 	if (result != StartResult::Started) {
 		entry.retry = result == StartResult::NoSourceSize;
 		if (!entry.retry) {

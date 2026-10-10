@@ -102,6 +102,10 @@ public:
 	size_t byteNeed() const noexcept { return byteNeed_; }
 	// Has the buffer hold no more than this, nor more than its need.
 	void limitBytes(size_t bytes);
+	// What a buffer started now with these settings would need, as start() works it out
+	// for the first encoder it tries; zero when the source has no size yet, or nothing
+	// could capture it.
+	static size_t estimateByteNeed(obs_source_t *source, const CaptureSettings &settings);
 	CaptureStats stats() const;
 
 	// Null before the first start. The object only changes at a start that needs a new

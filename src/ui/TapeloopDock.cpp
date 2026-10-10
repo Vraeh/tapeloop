@@ -116,6 +116,7 @@ TapeloopDock::TapeloopDock(DockBackend &backend, TextLookup text, QWidget *paren
 	  otherAdapters_(new QCheckBox(text_("Dock.OtherAdapters"), this)),
 	  bufferMemory_(new QSpinBox(this)),
 	  memoryWarning_(new QLabel(text_("Dock.BufferMemory.Unsafe"), this)),
+	  memoryShort_(new QLabel(this)),
 	  note_(new QLabel(text_("Dock.ApplyNote"), this)),
 	  startStop_(new QPushButton(this)),
 	  followsOutputs_(new QLabel(text_("Dock.FollowsOutputs"), this)),
@@ -169,6 +170,9 @@ TapeloopDock::TapeloopDock(DockBackend &backend, TextLookup text, QWidget *paren
 	memoryWarning_->setObjectName("memoryWarning");
 	memoryWarning_->setWordWrap(true);
 	memoryWarning_->hide();
+	memoryShort_->setObjectName("memoryShort");
+	memoryShort_->setWordWrap(true);
+	memoryShort_->hide();
 	otherAdapters_->setToolTip(text_("Dock.OtherAdapters.Tooltip"));
 	note_->setObjectName("note");
 	note_->setWordWrap(true);
@@ -215,6 +219,7 @@ TapeloopDock::TapeloopDock(DockBackend &backend, TextLookup text, QWidget *paren
 	layout->addLayout(form);
 	layout->addWidget(advancedSettings_);
 	layout->addWidget(note_);
+	layout->addWidget(memoryShort_);
 	layout->addWidget(startStop_);
 	layout->addWidget(followsOutputs_);
 	layout->addWidget(captureReplay_);
@@ -749,6 +754,16 @@ void TapeloopDock::updateMemory(int64_t settingMiB)
 		bufferMemory_->setValue(static_cast<int>(std::min<int64_t>(settingMiB, bufferMemory_->maximum())));
 	}
 	memoryWarning_->setVisible(budgetAboveSafeShare(bufferBudget(settingMiB, physical), physical));
+
+	// Said before the buffers start too, from what a start would give them.
+	const uint64_t needed = backend_.memoryNeeded();
+	const uint64_t budget = backend_.memoryBudget();
+	memoryShort_->setVisible(needed > budget);
+	if (needed > budget) {
+		memoryShort_->setText(text_("Dock.MemoryShort")
+					      .arg(QString::number((needed + (uint64_t{1} << 20) - 1) >> 20))
+					      .arg(QString::number(budget >> 20)));
+	}
 }
 
 void TapeloopDock::updateEncoders(const std::string &chosen)

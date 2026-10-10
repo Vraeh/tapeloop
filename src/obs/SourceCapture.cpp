@@ -77,6 +77,15 @@ int32_t toInt32(uint32_t value)
 // entered and the graphics thread stuck; Direct3D 11 at feature level 10 allows 8192.
 constexpr uint32_t kMaxViewSize = 8192;
 
+ReplayEncoderParams encoderParams(FrameSize outputSize, const obs_video_info &video)
+{
+	ReplayEncoderParams params;
+	params.width = outputSize.width;
+	params.height = outputSize.height;
+	params.frameDuration = {toInt32(video.fps_den), toInt32(video.fps_num)};
+	return params;
+}
+
 // A buffer can take a new byte budget but not a new length or frame duration.
 bool canReuse(const SourceBufferConfig &existing, const SourceBufferConfig &wanted)
 {
@@ -138,10 +147,7 @@ StartResult SourceCapture::start(obs_source_t *source, const CaptureSettings &se
 			return StartResult::NoEncoder;
 		}
 
-		ReplayEncoderParams params;
-		params.width = outputSize->width;
-		params.height = outputSize->height;
-		params.frameDuration = {toInt32(video.fps_den), toInt32(video.fps_num)};
+		const ReplayEncoderParams params = encoderParams(*outputSize, video);
 
 		SourceBufferConfig bufferConfig;
 		bufferConfig.window = settings.bufferLength;
@@ -327,6 +333,28 @@ bool SourceCapture::sourceSizeMatches() const
 		return true;
 	}
 	return obs_source_get_width(source) == sourceSize_.width && obs_source_get_height(source) == sourceSize_.height;
+}
+
+size_t SourceCapture::estimateByteNeed(obs_source_t *source, const CaptureSettings &settings)
+{
+	obs_video_info video = {};
+	const FrameSize sourceSize{obs_source_get_width(source), obs_source_get_height(source)};
+	if (!obs_get_video_info(&video) || sourceSize.width == 0 || sourceSize.height == 0 ||
+	    sourceSize.width > kMaxViewSize || sourceSize.height > kMaxViewSize) {
+		return 0;
+	}
+	const uint32_t height = targetHeight(settings.resolution, {video.base_width, video.base_height},
+					     {video.output_width, video.output_height});
+	const std::optional<FrameSize> outputSize = replayOutputSize(sourceSize, height);
+	const std::vector<EncoderInfo> candidates =
+		settings.candidates.empty() ? replayEncoderCandidates(registeredVideoEncoders(), renderAdapterVendor(),
+								      settings.encoderPreferences)
+					    : settings.candidates;
+	if (!outputSize || candidates.empty()) {
+		return 0;
+	}
+	return replayByteBudget(replayBitrateKbps(encoderParams(*outputSize, video), candidates.front().codec),
+				settings.bufferLength);
 }
 
 void SourceCapture::limitBytes(size_t bytes)

@@ -117,6 +117,9 @@ public:
 	// The memory every buffer may hold together, from the settings and the computer's
 	// memory, which is zero when it cannot be read.
 	uint64_t memoryBudget() const;
+	// What the selected sources need for their lengths: the need of each buffer running,
+	// and for the others what a start now would give.
+	uint64_t memoryNeeded() const;
 	uint64_t physicalMemory() const noexcept { return physicalMemory_; }
 	// Each changes the library, and writes the tags of a replay stored on disk into its
 	// manifest.
@@ -178,6 +181,9 @@ private:
 	// shows it on the capture's view, without logging.
 	StartOutcome start(const std::string &uuid, Entry &entry, bool keepBuffer, bool quiet,
 			   std::optional<std::vector<EncoderInfo>> &candidates);
+	// What a start of the source is given, candidates filled as for start.
+	CaptureSettings captureSettings(const std::string &uuid,
+					std::optional<std::vector<EncoderInfo>> &candidates) const;
 	void stop(const std::string &uuid, Entry &entry);
 	// Holds the source active or lets go of it, as the settings and the source's own
 	// restart setting now say.
