@@ -109,6 +109,7 @@ uint64_t ReplayLibrary::addCaptured(const ReplayCapture &capture, std::string br
 	replay.index = std::make_shared<const ReplayIndex>(std::move(index));
 	const uint64_t id = add(std::move(replay));
 	picked_ = 0;
+	lastCaptured_ = id;
 	return id;
 }
 

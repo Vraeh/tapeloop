@@ -24,6 +24,8 @@ public:
 	uint64_t picked = 0;
 	int picks = 0;
 	std::vector<tapeloop::ui::DockReplay> captured;
+	// The broadcast the next capture belongs to.
+	std::string capturing;
 	std::vector<std::string> tags;
 	std::vector<tapeloop::ui::EncoderChoice> choices = {{"obs_nvenc_hevc_tex", "NVIDIA NVENC HEVC"},
 							    {"obs_x264", "x264"}};
@@ -54,7 +56,12 @@ public:
 	uint64_t captureReplay() override
 	{
 		const uint64_t id = ++captures;
-		captured.insert(captured.begin(), {id, std::chrono::system_clock::now(), 2, {}});
+		tapeloop::ui::DockReplay replay;
+		replay.id = id;
+		replay.capturedAt = std::chrono::system_clock::now();
+		replay.sources = 2;
+		replay.broadcast = capturing;
+		captured.insert(captured.begin(), replay);
 		picked = id;
 		return id;
 	}
@@ -85,6 +92,7 @@ public:
 		return false;
 	}
 	uint64_t currentReplay() const override { return picked; }
+	uint64_t lastCapture() const override { return captures; }
 	void pickReplay(uint64_t id) override
 	{
 		picked = id;

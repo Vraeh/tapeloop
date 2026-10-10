@@ -27,6 +27,7 @@ public:
 	std::vector<std::string> replayTags() const override;
 	bool tagReplay(uint64_t id, const std::string &tag) override { return manager_.tagReplay(id, tag); }
 	uint64_t currentReplay() const override { return manager_.library().current(); }
+	uint64_t lastCapture() const override { return manager_.library().lastCaptured(); }
 	void pickReplay(uint64_t id) override { manager_.pickReplay(id); }
 
 private:

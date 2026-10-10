@@ -351,6 +351,68 @@ TEST_CASE("the dock captures replays and picks the one that goes on air")
 	CHECK(backend.toggles == 0);
 }
 
+TEST_CASE("the dock groups replays by broadcast and says what became of each")
+{
+	using tapeloop::ReplayState;
+	FakeBackend backend = backendWithSources();
+	const auto at = std::chrono::system_clock::now();
+	backend.captured = {
+		{5, at, 3, {}, "Copa 2026-10-10 18-30", ReplayState::Stored, "2026-10-10 18-41-02", ""},
+		{4, at, 3, {}, "Copa 2026-10-10 18-30", ReplayState::Writing, "", ""},
+		{3, at, 2, {"goal"}, "Liga 2026-10-09 21-00", ReplayState::NotSaved, "", "disk full"},
+		{9, at, 2, {"goal"}, "Liga 2026-10-09 21-00", ReplayState::Stored, "2026-10-09 21-03-11", ""},
+		{2, at, 0, {}, "Liga 2026-10-09 21-00", ReplayState::Damaged, "2026-10-09 21-01-40", ""},
+	};
+	backend.tags = {"goal"};
+	backend.captures = 5;
+	backend.picked = 5;
+	TapeloopDock dock(backend, localeText());
+	dock.refresh();
+	auto *list = child<QListWidget>(dock, "replays");
+	REQUIRE(list->count() == 7);
+	const auto idAt = [&](int row) {
+		return list->item(row)->data(Qt::UserRole).toULongLong();
+	};
+	CHECK(list->item(0)->text() == "Copa 2026-10-10 18-30");
+	CHECK(list->item(0)->flags() == Qt::NoItemFlags);
+	CHECK(idAt(0) == 0u);
+	CHECK(idAt(1) == 5u);
+	CHECK(list->item(1)->text().endsWith(", 3 sources"));
+	CHECK(list->item(1)->toolTip().isEmpty());
+	CHECK(list->item(2)->text().endsWith(", 3 sources, saving"));
+	CHECK(list->item(3)->text() == "Liga 2026-10-09 21-00");
+	CHECK(list->item(3)->flags() == Qt::NoItemFlags);
+	CHECK(list->item(4)->text().endsWith(", 2 sources, not saved #goal"));
+	CHECK(list->item(4)->toolTip().contains("disk full"));
+	CHECK(idAt(5) == 9u);
+	CHECK(list->item(6)->text() == "2026-10-09 21-01-40, damaged");
+	CHECK_FALSE(list->item(6)->toolTip().isEmpty());
+	CHECK(list->currentRow() == 1);
+
+	// Moving down from the last replay of a broadcast skips the row that names the next.
+	QKeyEvent down(QEvent::KeyPress, Qt::Key_Down, Qt::NoModifier);
+	QApplication::sendEvent(list, &down);
+	CHECK(backend.picked == 4u);
+	QApplication::sendEvent(list, &down);
+	CHECK(backend.picked == 3u);
+	CHECK(list->currentRow() == 4);
+	// A row naming a broadcast picks nothing.
+	const int picks = backend.picks;
+	Q_EMIT list->itemClicked(list->item(3));
+	CHECK(backend.picks == picks);
+
+	// Picking a replay found on disk, which has a higher id than the last capture, keeps
+	// the filter the user chose.
+	auto *filter = child<QComboBox>(dock, "tagFilter");
+	filter->setCurrentIndex(1);
+	REQUIRE(list->count() == 3);
+	list->setCurrentRow(2);
+	CHECK(backend.picked == 9u);
+	QCoreApplication::processEvents();
+	CHECK(filter->currentIndex() == 1);
+	CHECK(list->currentRow() == 2);
+}
+
 TEST_CASE("a press on a replay picks that replay, whatever the list does meanwhile")
 {
 	FakeBackend backend = backendWithSources();
@@ -772,6 +834,25 @@ TEST_CASE("dock screenshots", "[.screenshots]")
 		TapeloopDock dock(backend, localeText());
 		dock.resize(380, 520);
 		CHECK(dock.grab().save(out.filePath("dock-running.png")));
+	}
+
+	using tapeloop::ReplayState;
+	const auto at = std::chrono::system_clock::now();
+	backend.captured = {
+		{5, at, 3, {}, "Copa 2026-10-10 18-30", ReplayState::Writing, "", ""},
+		{4, at - 95s, 3, {"goal"}, "Copa 2026-10-10 18-30", ReplayState::Stored, "", ""},
+		{3, at - 26h, 2, {"goal", "foul"}, "Liga 2026-10-09 21-00", ReplayState::Stored, "", ""},
+		{2, at - 26h - 4min, 2, {}, "Liga 2026-10-09 21-00", ReplayState::NotSaved, "", "disk full"},
+		{1, at, 0, {}, "Liga 2026-10-09 21-00", ReplayState::Damaged, "2026-10-09 21-01-40", ""},
+	};
+	backend.tags = {"foul", "goal"};
+	backend.captures = 5;
+	backend.picked = 5;
+	{
+		TapeloopDock dock(backend, localeText());
+		dock.resize(380, 640);
+		dock.refresh();
+		CHECK(dock.grab().save(out.filePath("dock-replays.png")));
 	}
 
 	SourceSettings current;

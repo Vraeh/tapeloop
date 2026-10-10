@@ -361,6 +361,25 @@ TEST_CASE("ReplayLibrary does not take a replay twice")
 	CHECK(library.current() == captured);
 }
 
+TEST_CASE("ReplayLibrary knows the replay captured last")
+{
+	ReplayLibrary library;
+	CHECK(library.lastCaptured() == 0);
+	library.addFound(foundAt(5));
+	CHECK(library.lastCaptured() == 0);
+	const uint64_t first = library.addCaptured(captureAt(10), "Liga");
+	CHECK(library.lastCaptured() == first);
+	const uint64_t found = library.addFound(foundAt(20));
+	REQUIRE(library.pick(found));
+	CHECK(library.lastCaptured() == first);
+	const uint64_t second = library.addCaptured(captureAt(30), "Liga");
+	CHECK(library.lastCaptured() == second);
+	ReplayCapture empty = captureAt(40);
+	empty.sources.clear();
+	library.addCaptured(empty, "Liga");
+	CHECK(library.lastCaptured() == second);
+}
+
 TEST_CASE("ReplayLibrary orders replays by when they were captured")
 {
 	ReplayLibrary library;

@@ -3,6 +3,8 @@
 
 #include "obs/ManagerDockBackend.hpp"
 
+#include "core/FileIo.hpp"
+
 #include "obs/ObsEncoders.hpp"
 
 #include <algorithm>
@@ -78,16 +80,33 @@ std::vector<ui::DockReplay> ManagerDockBackend::replays(const std::string &tag) 
 	const ReplayLibrary &library = manager_.library();
 	std::vector<ui::DockReplay> replays;
 	for (const uint64_t id : library.list(tag)) {
+		const Replay *found = library.find(id);
+		if (!found) {
+			continue;
+		}
 		ui::DockReplay replay;
 		replay.id = id;
-		if (const Replay *found = library.find(id)) {
-			replay.capturedAt = found->capturedAt;
-			replay.sources = found->sources.size();
-		}
-		const std::span<const std::string> tags = library.tagsOf(id);
-		replay.tags.assign(tags.begin(), tags.end());
+		replay.capturedAt = found->capturedAt;
+		replay.sources = found->sources.size();
+		replay.tags = found->tags;
+		replay.broadcast = found->broadcast;
+		replay.state = found->state;
+		replay.fileName = utf8FromPath(found->manifest.stem());
+		replay.error = found->error;
 		replays.push_back(std::move(replay));
 	}
+	// A broadcast's replays together, the broadcast with the newest replay first; the
+	// order within each stays newest first.
+	std::vector<std::string> order;
+	for (const ui::DockReplay &replay : replays) {
+		if (std::find(order.begin(), order.end(), replay.broadcast) == order.end()) {
+			order.push_back(replay.broadcast);
+		}
+	}
+	std::stable_sort(replays.begin(), replays.end(), [&](const ui::DockReplay &a, const ui::DockReplay &b) {
+		return std::find(order.begin(), order.end(), a.broadcast) <
+		       std::find(order.begin(), order.end(), b.broadcast);
+	});
 	return replays;
 }
 

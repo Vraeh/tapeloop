@@ -102,6 +102,9 @@ public:
 	uint64_t current() const noexcept;
 	// False for an unknown or damaged replay.
 	bool pick(uint64_t id);
+	// The replay captured last, whatever has been picked or found since; zero before the
+	// first capture.
+	uint64_t lastCaptured() const noexcept { return lastCaptured_; }
 	void unpick() noexcept { picked_ = 0; }
 	bool picked() const noexcept { return picked_ != 0; }
 
@@ -114,6 +117,7 @@ private:
 	std::vector<std::string> tags_;
 	uint64_t nextId_ = 1;
 	uint64_t picked_ = 0;
+	uint64_t lastCaptured_ = 0;
 };
 
 } // namespace tapeloop

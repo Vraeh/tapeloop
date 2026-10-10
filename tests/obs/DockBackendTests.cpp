@@ -1,12 +1,14 @@
 // SPDX-License-Identifier: GPL-2.0-or-later
 // Copyright (C) 2026 Vicente Aedo <ryde1337@gmail.com>
 
+#include "../core/StoredReplays.hpp"
 #include "../core/TempDirectory.hpp"
 #include "ObsFixture.hpp"
 #include "TestEncoders.hpp"
 #include "TestPattern.hpp"
 
 #include "core/FileIo.hpp"
+#include "core/ReplayWriter.hpp"
 #include "obs/CaptureManager.hpp"
 #include "obs/ManagerDockBackend.hpp"
 
@@ -15,7 +17,10 @@
 
 #include <algorithm>
 #include <chrono>
+#include <cstdint>
+#include <filesystem>
 #include <string>
+#include <tuple>
 #include <vector>
 
 using tapeloop::BufferSettings;
@@ -219,6 +224,53 @@ TEST_CASE_METHOD(ObsFixture, "the dock captures replays through the manager", "[
 	REQUIRE(tagged.size() == 1);
 	CHECK(tagged[0].id == first);
 	CHECK(tagged[0].tags == std::vector<std::string>{"goal"});
+	CHECK(backend.lastCapture() == second);
 	REQUIRE(backend.toggleRunning());
 	manager.finishWrites();
+	for (const tapeloop::ui::DockReplay &replay : backend.replays()) {
+		CHECK(replay.state == tapeloop::ReplayState::Stored);
+		CHECK(replay.broadcast.starts_with("Liga 20"));
+		CHECK_FALSE(replay.fileName.empty());
+	}
+	// Picking one keeps the last capture where it was.
+	backend.pickReplay(first);
+	CHECK(backend.lastCapture() == second);
+}
+
+TEST_CASE_METHOD(ObsFixture, "the dock lists the replays on disk by broadcast", "[obs][dock][replay]")
+{
+	OfflineHost host;
+	const std::filesystem::path base = host.dir.path() / "Tapeloop";
+	// Two broadcasts whose replays interleave in time, as after a clock was set back.
+	tapeloop::ReplayWriter writer;
+	const tapeloop::test::Gops gops = tapeloop::test::makeGops(2);
+	for (const auto &[folder, stem, seconds] :
+	     {std::tuple{"Liga 2026-10-09 21-00", "early", 10}, std::tuple{"Copa 2026-10-10 18-30", "middle", 20},
+	      std::tuple{"Liga 2026-10-09 21-00", "late", 30}}) {
+		tapeloop::ReplayCapture capture =
+			tapeloop::test::captureOf(base / folder, {tapeloop::test::sourceOf("a", gops)}, stem);
+		capture.capturedAtUtc += int64_t{seconds} * 1'000'000'000;
+		writer.write(capture);
+	}
+	tapeloop::File(base / "Copa 2026-10-10 18-30" / "broken.tplp", tapeloop::File::Mode::CreateNew)
+		.writeAt(0, std::vector<uint8_t>(100, 1));
+
+	CaptureManager manager(host);
+	ManagerDockBackend backend(manager);
+	manager.loadLibrary();
+	manager.finishWrites();
+	const auto replays = backend.replays();
+	REQUIRE(replays.size() == 4);
+	CHECK(replays[0].fileName == "late");
+	CHECK(replays[0].broadcast == "Liga 2026-10-09 21-00");
+	CHECK(replays[1].fileName == "early");
+	CHECK(replays[1].broadcast == "Liga 2026-10-09 21-00");
+	CHECK(replays[2].fileName == "middle");
+	CHECK(replays[2].broadcast == "Copa 2026-10-10 18-30");
+	CHECK(replays[2].sources == 1);
+	CHECK(replays[2].state == tapeloop::ReplayState::Stored);
+	CHECK(replays[3].fileName == "broken");
+	CHECK(replays[3].state == tapeloop::ReplayState::Damaged);
+	CHECK(backend.currentReplay() == replays[0].id);
+	CHECK(backend.lastCapture() == 0);
 }

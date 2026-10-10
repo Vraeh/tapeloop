@@ -9,6 +9,7 @@
 #include <QCheckBox>
 #include <QComboBox>
 #include <QDateTime>
+#include <QFont>
 #include <QFormLayout>
 #include <QHBoxLayout>
 #include <QHeaderView>
@@ -226,7 +227,7 @@ TapeloopDock::TapeloopDock(DockBackend &backend, TextLookup text, QWidget *paren
 	connect(tagFilter_, &QComboBox::currentIndexChanged, this, [this] {
 		// A filter chosen after a capture the list has not shown yet is the user's choice
 		// over that capture.
-		guarded([this] { newestReplay_ = std::max(newestReplay_, backend_.currentReplay()); });
+		guarded([this] { lastCaptureSeen_ = std::max(lastCaptureSeen_, backend_.lastCapture()); });
 		refresh();
 	});
 	const auto addTag = [this] {
@@ -250,7 +251,7 @@ TapeloopDock::TapeloopDock(DockBackend &backend, TextLookup text, QWidget *paren
 		}
 		guarded([&] {
 			const uint64_t id = item->data(Qt::UserRole).toULongLong();
-			if (id != backend_.currentReplay()) {
+			if (id != 0 && id != backend_.currentReplay()) {
 				backend_.pickReplay(id);
 			}
 		});
@@ -472,45 +473,85 @@ void TapeloopDock::updateReplays()
 		shownTags_ = tags;
 	}
 	// A replay just captured is the one to show next and carries no tag yet, so a filter
-	// would hide it.
+	// would hide it; unless a replay was picked since, which is the one to show then.
 	const uint64_t current = backend_.currentReplay();
-	if (current > newestReplay_) {
-		newestReplay_ = current;
-		const QSignalBlocker block(tagFilter_);
-		tagFilter_->setCurrentIndex(0);
+	const uint64_t lastCapture = backend_.lastCapture();
+	if (lastCapture > lastCaptureSeen_) {
+		lastCaptureSeen_ = lastCapture;
+		if (current == lastCapture) {
+			const QSignalBlocker block(tagFilter_);
+			tagFilter_->setCurrentIndex(0);
+		}
 	}
 
 	const std::vector<DockReplay> replays = backend_.replays(tagFilter_->currentData().toString().toStdString());
+	// A row per replay, after a row naming its broadcast; those rows hold id 0.
 	std::vector<uint64_t> ids;
 	std::vector<QString> texts;
-	for (const DockReplay &replay : replays) {
+	std::vector<QString> tips;
+	for (size_t i = 0; i < replays.size(); ++i) {
+		const DockReplay &replay = replays[i];
+		if (!replay.broadcast.empty() && (i == 0 || replays[i - 1].broadcast != replay.broadcast)) {
+			ids.push_back(0);
+			texts.push_back(QString::fromStdString(replay.broadcast));
+			tips.emplace_back();
+		}
 		const QDateTime captured = QDateTime::fromMSecsSinceEpoch(
 			std::chrono::duration_cast<std::chrono::milliseconds>(replay.capturedAt.time_since_epoch())
 				.count());
-		QString text = text_("Dock.Replay")
-				       .arg(captured.toString(QStringLiteral("HH:mm:ss")))
-				       .arg(static_cast<qulonglong>(replay.sources));
+		const QString time = captured.toString(QStringLiteral("HH:mm:ss"));
+		const auto sources = static_cast<qulonglong>(replay.sources);
+		QString text;
+		QString tip;
+		switch (replay.state) {
+		case ReplayState::Writing:
+			text = text_("Dock.Replay.Saving").arg(time).arg(sources);
+			break;
+		case ReplayState::Stored:
+			text = text_("Dock.Replay").arg(time).arg(sources);
+			break;
+		case ReplayState::NotSaved:
+			text = text_("Dock.Replay.NotSaved").arg(time).arg(sources);
+			tip = text_("Dock.Replay.NotSaved.Tooltip").arg(QString::fromStdString(replay.error));
+			break;
+		case ReplayState::Damaged:
+			text = text_("Dock.Replay.Damaged").arg(QString::fromStdString(replay.fileName));
+			tip = text_("Dock.Replay.Damaged.Tooltip");
+			break;
+		}
 		for (const std::string &tag : replay.tags) {
 			text += QStringLiteral(" #") + QString::fromStdString(tag);
 		}
 		ids.push_back(replay.id);
 		texts.push_back(std::move(text));
+		tips.push_back(std::move(tip));
 	}
 	// Never while the left button is held on the list: moving the pointer then makes the
 	// row under it current, which after a rebuild can be another replay.
-	if (!leftButtonHeld_ && (ids != shownReplays_ || texts != shownReplayTexts_)) {
+	if (!leftButtonHeld_ && (ids != shownReplays_ || texts != shownReplayTexts_ || tips != shownReplayTips_)) {
 		const QSignalBlocker block(replays_);
 		replays_->clear();
 		for (size_t i = 0; i < ids.size(); ++i) {
 			auto *item = new QListWidgetItem(texts[i], replays_);
 			item->setData(Qt::UserRole, static_cast<qulonglong>(ids[i]));
+			if (ids[i] == 0) {
+				// A heading, which can be neither selected nor made current.
+				item->setFlags(Qt::NoItemFlags);
+				QFont font = item->font();
+				font.setBold(true);
+				item->setFont(font);
+			} else if (!tips[i].isEmpty()) {
+				item->setToolTip(tips[i]);
+			}
 		}
 		shownReplays_ = std::move(ids);
 		shownReplayTexts_ = std::move(texts);
+		shownReplayTips_ = std::move(tips);
 	}
 	// The replay that goes on air next is the one selected, and the one a tag goes on,
 	// which has to be in sight.
-	const auto shown = std::find(shownReplays_.begin(), shownReplays_.end(), current);
+	const auto shown = current == 0 ? shownReplays_.end()
+					: std::find(shownReplays_.begin(), shownReplays_.end(), current);
 	const bool listed = shown != shownReplays_.end();
 	const QSignalBlocker block(replays_);
 	// Cleared through the view rather than with setCurrentRow(-1), so that the view keeps

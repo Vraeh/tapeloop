@@ -5,6 +5,7 @@
 
 #include "core/BufferSettings.hpp"
 #include "core/EncoderPolicy.hpp"
+#include "core/ReplayLibrary.hpp"
 
 #include <chrono>
 #include <cstdint>
@@ -38,6 +39,14 @@ struct DockReplay {
 	std::chrono::system_clock::time_point capturedAt;
 	size_t sources = 0;
 	std::vector<std::string> tags;
+	// The broadcast it belongs to; the dock groups replays under it.
+	std::string broadcast;
+	ReplayState state = ReplayState::Stored;
+	// The name of its file without the extension, which is all a damaged replay has to
+	// show.
+	std::string fileName;
+	// Why it was not saved.
+	std::string error;
 };
 
 // An encoder a user may choose for replays.
@@ -66,7 +75,8 @@ public:
 
 	// Keeps what every buffer holds as a replay; zero when there was nothing to keep.
 	virtual uint64_t captureReplay() = 0;
-	// Newest first; with a tag, only the replays that carry it.
+	// Newest first, the replays of a broadcast together; with a tag, only the replays
+	// that carry it.
 	virtual std::vector<DockReplay> replays(const std::string &tag = {}) const = 0;
 	// Every tag, sorted.
 	virtual std::vector<std::string> replayTags() const = 0;
@@ -74,6 +84,8 @@ public:
 	virtual bool tagReplay(uint64_t id, const std::string &tag) = 0;
 	// The replay that goes on air next; zero when there is none.
 	virtual uint64_t currentReplay() const = 0;
+	// The replay captured last, from the dock or by the hotkey; zero before the first.
+	virtual uint64_t lastCapture() const = 0;
 	virtual void pickReplay(uint64_t id) = 0;
 };
 
