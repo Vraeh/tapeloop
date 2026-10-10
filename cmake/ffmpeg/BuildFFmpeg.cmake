@@ -363,8 +363,8 @@ file(
   "Tapeloop includes FFmpeg ${version}, linked statically, under the GNU Lesser General\n"
   "Public License version 2.1 or later. The license is in FFmpeg-LICENSE.txt, FFmpeg's\n"
   "own account of its licensing in FFmpeg-LICENSE.md, the notices of the few files\n"
-  "under other licenses in FFmpeg-THIRD-PARTY.txt, and the README the Independent JPEG\n"
-  "Group's license asks for in FFmpeg-IJG-README.txt.\n"
+  "under other licenses in FFmpeg-THIRD-PARTY.txt, and the READMEs the Independent JPEG\n"
+  "Group's license asks for in FFmpeg-IJG-README-6b.txt and FFmpeg-IJG-README-4.txt.\n"
   "\n"
   "Source: ${url}\n"
   "SHA-256: ${sha256}\n"
@@ -388,9 +388,10 @@ string(
   "This software is based in part on the work of the Independent JPEG Group. FFmpeg's\n"
   "jfdctfst.c, jfdctint_template.c and jrevdct.c are its changed copies of libjpeg's\n"
   "jfdctfst.c, jfdctint.c and jrevdct.c; FFmpeg's history of them is at\n"
-  "https://git.ffmpeg.org/ffmpeg.git. The README their license asks to go with them is\n"
-  "in FFmpeg-IJG-README.txt, unaltered, from libjpeg 6b, whose jfdctfst.c and jfdctint.c\n"
-  "carry the copyright years FFmpeg's copies do.\n"
+  "https://git.ffmpeg.org/ffmpeg.git. The READMEs their license asks to go with them are\n"
+  "in FFmpeg-IJG-README-6b.txt, from libjpeg 6b, whose jfdctfst.c and jfdctint.c are the\n"
+  "files FFmpeg's first two come from, and FFmpeg-IJG-README-4.txt, from release 4, the\n"
+  "last with a jrevdct.c, the one FFmpeg's comes from. Both are unaltered.\n"
 )
 # The notice of the SHA-2 code libavutil/sha.c and sha512.c are based on, from sha2.c in
 # sha2-1.0.1.tgz, its author's latest release, without the comment markers.
