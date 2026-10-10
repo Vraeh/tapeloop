@@ -346,7 +346,16 @@ void syncDirectory(const std::filesystem::path &directory)
 	if (fd < 0) {
 		throwErrno("cannot open the directory", &directory);
 	}
+#ifdef __APPLE__
+	// As for a file: plain fsync leaves the rename in the drive's cache.
+	// NOLINTNEXTLINE(cppcoreguidelines-pro-type-vararg): fcntl takes its argument as a variadic one.
+	int result = ::fcntl(fd, F_FULLFSYNC);
+	if (result != 0) {
+		result = ::fsync(fd);
+	}
+#else
 	const int result = ::fsync(fd);
+#endif
 	const int error = errno;
 	::close(fd);
 	if (result != 0) {
