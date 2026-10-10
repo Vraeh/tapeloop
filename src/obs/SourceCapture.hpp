@@ -97,6 +97,19 @@ public:
 	// does not follow it until a restart.
 	bool sourceSizeMatches() const;
 
+	// The bytes the buffer would hold over its whole length at the bitrate of the encoder
+	// running; zero while none runs. The buffers share the memory budget by these.
+	size_t byteNeed() const noexcept { return byteNeed_; }
+	// Has the buffer hold no more than this, nor more than its need.
+	void limitBytes(size_t bytes);
+	// A buffer kept through a restart needs what the encoder before wrote until its whole
+	// length has passed, and from then on what the encoder running writes.
+	void settleByteNeed(Nanoseconds now) noexcept;
+	// What a buffer started now with these settings would need, as start() works it out
+	// for the first encoder it tries; zero when nothing could capture the source. A source
+	// with no picture yet, as a camera not shown since OBS started, is taken at the size of
+	// the canvas.
+	static size_t estimateByteNeed(obs_source_t *source, const CaptureSettings &settings);
 	CaptureStats stats() const;
 
 	// Null before the first start. The object only changes at a start that needs a new
@@ -122,6 +135,9 @@ private:
 	std::string encoderId_;
 	EncoderPath encoderPath_ = EncoderPath::Texture;
 	ReadbackReason readbackReason_ = ReadbackReason::None;
+	size_t byteNeed_ = 0;
+	size_t encoderNeed_ = 0;
+	Nanoseconds keptNeedUntil_{0};
 	bool chosenEncoder_ = false;
 	bool choiceSkipped_ = false;
 };

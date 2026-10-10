@@ -45,6 +45,7 @@ private:
 	void updateSources(const std::vector<DockSource> &sources);
 	void updateReplays();
 	QString statusText(const DockSource &source) const;
+	void updateMemory(int64_t settingMiB);
 	void updateEncoders(const std::string &chosen);
 	void changeSettings(void (*change)(BufferSettings &, int), int value);
 	void openSourceSettings(int row);
@@ -67,6 +68,9 @@ private:
 	QWidget *advancedSettings_;
 	QComboBox *replayEncoder_;
 	QCheckBox *otherAdapters_;
+	QSpinBox *bufferMemory_;
+	QLabel *memoryWarning_;
+	QLabel *memoryShort_;
 	QLabel *note_;
 	QPushButton *startStop_;
 	QLabel *followsOutputs_;

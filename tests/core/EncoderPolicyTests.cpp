@@ -551,6 +551,16 @@ TEST_CASE("replay byte budget is the bitrate over the length plus half")
 	CHECK(tapeloop::replayByteBudget(100'000, Nanoseconds::max()) == 172'938'225'691'027'046);
 }
 
+TEST_CASE("the nominal bytes of a byte budget leave its margin out")
+{
+	CHECK(tapeloop::nominalReplayBytes(tapeloop::replayByteBudget(30'000, 60s)) == 225'000'000);
+	CHECK(tapeloop::nominalReplayBytes(0) == 0);
+	CHECK(tapeloop::nominalReplayBytes(2) == 1);
+	CHECK(tapeloop::nominalReplayBytes(3) == 2);
+	CHECK(tapeloop::nominalReplayBytes(std::numeric_limits<size_t>::max()) ==
+	      std::numeric_limits<size_t>::max() / 3 * 2);
+}
+
 TEST_CASE("GOP length in frames rounds to the nearest frame")
 {
 	CHECK(tapeloop::gopFrames(500ms, {1, 60}) == 30);

@@ -41,6 +41,9 @@ struct DockSource {
 	bool choiceSkipped = false;
 	// Its HEVC encoder failed while it ran, and it uses H.264 from its next start.
 	bool hevcFailed = false;
+	// It holds less than its length, as the buffers together need more memory than they
+	// may use.
+	bool budgetLimited = false;
 };
 
 // A replay as the dock lists it.
@@ -74,6 +77,12 @@ public:
 	virtual BufferSettings settings() const = 0;
 	virtual void setSettings(const BufferSettings &settings) = 0;
 	virtual std::vector<EncoderChoice> encoderChoices() const = 0;
+	// The computer's memory in bytes, zero when it cannot be read.
+	virtual uint64_t physicalMemory() const = 0;
+	// What the selected sources need for their buffer lengths at their bitrates, and what
+	// the buffers may use together.
+	virtual uint64_t memoryNeeded() const = 0;
+	virtual uint64_t memoryBudget() const = 0;
 
 	virtual bool running() const = 0;
 	virtual bool manualControlEnabled() const = 0;

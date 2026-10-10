@@ -112,6 +112,7 @@ SavedSettings saveSettings(const BufferSettings &settings)
 	saved.replayEncoder = settings.replayEncoder;
 	saved.allowOtherAdapters = settings.allowOtherAdapters;
 	saved.showAdvanced = settings.showAdvanced;
+	saved.bufferMemoryMiB = settings.bufferMemoryMiB;
 	for (const auto &[uuid, source] : settings.sources) {
 		SavedSource entry;
 		entry.uuid = uuid;
@@ -144,6 +145,7 @@ std::optional<BufferSettings> loadSettings(const SavedSettings &saved)
 	settings.replayEncoder = saved.replayEncoder;
 	settings.allowOtherAdapters = saved.allowOtherAdapters;
 	settings.showAdvanced = saved.showAdvanced;
+	settings.bufferMemoryMiB = std::max<int64_t>(saved.bufferMemoryMiB, 0);
 	for (const SavedSource &entry : saved.sources) {
 		if (entry.uuid.empty()) {
 			continue;

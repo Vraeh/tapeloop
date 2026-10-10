@@ -145,6 +145,10 @@ int64_t replayBitrateKbps(const ReplayEncoderParams &params, std::string_view co
 // The packet bytes a buffer of the given length may hold at the given bitrate, with
 // room for the bitrate to run over its target: half as much again, for now.
 size_t replayByteBudget(int64_t bitrateKbps, Nanoseconds length);
+// What a buffer with this byte budget holds at its target bitrate: the budget without the
+// margin replayByteBudget adds. A buffer given that much holds its length unless the
+// bitrate runs over.
+size_t nominalReplayBytes(size_t byteBudget) noexcept;
 // The GOP length in frames, rounded to the nearest frame and at least one.
 int64_t gopFrames(Nanoseconds gop, Rational frameDuration);
 

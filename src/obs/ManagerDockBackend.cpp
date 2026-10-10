@@ -64,6 +64,7 @@ std::vector<ui::DockSource> ManagerDockBackend::sources() const
 		source.chosenEncoder = status.stats.chosenEncoder;
 		source.choiceSkipped = status.stats.choiceSkipped;
 		source.hevcFailed = status.hevcFailed;
+		source.budgetLimited = status.budgetLimited;
 	}
 	std::sort(sources.begin(), sources.end(), [](const ui::DockSource &a, const ui::DockSource &b) {
 		return std::lexicographical_compare(a.name.begin(), a.name.end(), b.name.begin(), b.name.end(),

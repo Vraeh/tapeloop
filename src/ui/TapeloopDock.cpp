@@ -3,6 +3,8 @@
 
 #include "ui/TapeloopDock.hpp"
 
+#include "core/BufferBudget.hpp"
+
 #include "ui/SourceSettingsDialog.hpp"
 
 #include <QAbstractItemView>
@@ -29,6 +31,8 @@
 
 #include <algorithm>
 #include <chrono>
+#include <cstdint>
+#include <limits>
 #include <utility>
 
 namespace tapeloop::ui {
@@ -36,6 +40,9 @@ namespace {
 
 constexpr int kSourceColumn = 0;
 constexpr int kStatusColumn = 1;
+// Below this the buffers would keep little more than a keyframe each, which is a slip
+// rather than a budget.
+constexpr int kMinBufferMemoryMiB = 256;
 
 int seconds(Nanoseconds length)
 {
@@ -110,6 +117,9 @@ TapeloopDock::TapeloopDock(DockBackend &backend, TextLookup text, QWidget *paren
 	  advancedSettings_(new QWidget(this)),
 	  replayEncoder_(new QComboBox(this)),
 	  otherAdapters_(new QCheckBox(text_("Dock.OtherAdapters"), this)),
+	  bufferMemory_(new QSpinBox(this)),
+	  memoryWarning_(new QLabel(text_("Dock.BufferMemory.Unsafe"), this)),
+	  memoryShort_(new QLabel(this)),
 	  note_(new QLabel(text_("Dock.ApplyNote"), this)),
 	  startStop_(new QPushButton(this)),
 	  followsOutputs_(new QLabel(text_("Dock.FollowsOutputs"), this)),
@@ -156,6 +166,20 @@ TapeloopDock::TapeloopDock(DockBackend &backend, TextLookup text, QWidget *paren
 	replayEncoder_->setObjectName("replayEncoder");
 	replayEncoder_->setToolTip(text_("Dock.ReplayEncoder.Tooltip"));
 	otherAdapters_->setObjectName("otherAdapters");
+	bufferMemory_->setObjectName("bufferMemory");
+	bufferMemory_->setToolTip(text_("Dock.BufferMemory.Tooltip"));
+	bufferMemory_->setSuffix(text_("Dock.MiBSuffix"));
+	bufferMemory_->setKeyboardTracking(false);
+	bufferMemory_->setSingleStep(kMinBufferMemoryMiB);
+	// A wheel turned over the dock does not cut the buffers short in the middle of a match.
+	bufferMemory_->setFocusPolicy(Qt::StrongFocus);
+	bufferMemory_->installEventFilter(this);
+	memoryWarning_->setObjectName("memoryWarning");
+	memoryWarning_->setWordWrap(true);
+	memoryWarning_->hide();
+	memoryShort_->setObjectName("memoryShort");
+	memoryShort_->setWordWrap(true);
+	memoryShort_->hide();
 	otherAdapters_->setToolTip(text_("Dock.OtherAdapters.Tooltip"));
 	note_->setObjectName("note");
 	note_->setWordWrap(true);
@@ -193,6 +217,8 @@ TapeloopDock::TapeloopDock(DockBackend &backend, TextLookup text, QWidget *paren
 	advanced->addRow(text_("Dock.ReplayEncoder"), replayEncoder_);
 	advanced->addRow(otherAdapters_);
 	advanced->addRow(forceH264_);
+	advanced->addRow(text_("Dock.BufferMemory"), bufferMemory_);
+	advanced->addRow(memoryWarning_);
 
 	auto *layout = new QVBoxLayout(this);
 	layout->addWidget(sources_, 1);
@@ -200,6 +226,7 @@ TapeloopDock::TapeloopDock(DockBackend &backend, TextLookup text, QWidget *paren
 	layout->addLayout(form);
 	layout->addWidget(advancedSettings_);
 	layout->addWidget(note_);
+	layout->addWidget(memoryShort_);
 	layout->addWidget(startStop_);
 	layout->addWidget(followsOutputs_);
 	layout->addWidget(captureReplay_);
@@ -267,7 +294,16 @@ TapeloopDock::TapeloopDock(DockBackend &backend, TextLookup text, QWidget *paren
 	setTabOrder(advanced_, replayEncoder_);
 	setTabOrder(replayEncoder_, otherAdapters_);
 	setTabOrder(otherAdapters_, forceH264_);
-	setTabOrder(forceH264_, startStop_);
+	setTabOrder(forceH264_, bufferMemory_);
+	setTabOrder(bufferMemory_, startStop_);
+	connect(bufferMemory_, &QSpinBox::valueChanged, this, [this](int value) {
+		const int mib = value == 0 ? 0 : std::max(value, kMinBufferMemoryMiB);
+		if (mib != value) {
+			const QSignalBlocker block(bufferMemory_);
+			bufferMemory_->setValue(mib);
+		}
+		changeSettings([](BufferSettings &settings, int set) { settings.bufferMemoryMiB = set; }, mib);
+	});
 	connect(otherAdapters_, &QCheckBox::toggled, this, [this](bool checked) {
 		changeSettings([](BufferSettings &settings, int on) { settings.allowOtherAdapters = on != 0; },
 			       checked ? 1 : 0);
@@ -404,6 +440,7 @@ void TapeloopDock::refresh()
 		const QSignalBlocker blockEncoder(replayEncoder_);
 		const QSignalBlocker blockOtherAdapters(otherAdapters_);
 		const QSignalBlocker blockAdvanced(advanced_);
+		const QSignalBlocker blockMemory(bufferMemory_);
 		// A value being typed is not overwritten.
 		if (!length_->hasFocus()) {
 			length_->setValue(seconds(settings.length));
@@ -417,6 +454,7 @@ void TapeloopDock::refresh()
 		otherAdapters_->setChecked(settings.allowOtherAdapters);
 		advanced_->setChecked(settings.showAdvanced);
 		advancedSettings_->setVisible(settings.showAdvanced);
+		updateMemory(settings.bufferMemoryMiB);
 		// The encoders are looked up only while the advanced settings show them.
 		if (settings.showAdvanced) {
 			updateEncoders(settings.replayEncoder);
@@ -440,6 +478,9 @@ void TapeloopDock::showEvent(QShowEvent *event)
 
 bool TapeloopDock::eventFilter(QObject *watched, QEvent *event)
 {
+	if (watched == bufferMemory_ && event->type() == QEvent::Wheel && !bufferMemory_->hasFocus()) {
+		return true;
+	}
 	if (watched == sources_ && event->type() == QEvent::KeyPress) {
 		const int key = static_cast<QKeyEvent *>(event)->key();
 		if (key == Qt::Key_Return || key == Qt::Key_Enter) {
@@ -561,6 +602,10 @@ void TapeloopDock::updateSources(const std::vector<DockSource> &sources)
 		if (sources[i].selected && sources[i].state == SourceState::Running && sources[i].choiceSkipped) {
 			note += (note.isEmpty() ? QString() : QStringLiteral("\n\n")) +
 				text_("Dock.Status.ChoiceSkipped.Tooltip");
+		}
+		if (sources[i].selected && sources[i].state == SourceState::Running && sources[i].budgetLimited) {
+			note += (note.isEmpty() ? QString() : QStringLiteral("\n\n")) +
+				text_("Dock.Status.BudgetLimited.Tooltip");
 		}
 		if (sources[i].selected && sources[i].hevcFailed) {
 			note += (note.isEmpty() ? QString() : QStringLiteral("\n\n")) +
@@ -708,6 +753,41 @@ void TapeloopDock::updateReplays()
 	removeTag_->setEnabled(listed);
 	tagName_->setEnabled(listed);
 	deleteTag_->setEnabled(!tagFilter_->currentData().toString().isEmpty());
+}
+
+void TapeloopDock::updateMemory(int64_t settingMiB)
+{
+	const uint64_t physical = backend_.physicalMemory();
+	// Unknown memory sets no limit of its own, so any amount may be set. A setting made on
+	// a computer with more memory, which travels with the scene collection, shows as it is.
+	const uint64_t most = std::max(physical == 0 ? uint64_t{1} << 24 : physical >> 20,
+				       static_cast<uint64_t>(std::max<int64_t>(settingMiB, 0)));
+	const int maximum = static_cast<int>(std::min<uint64_t>(most, std::numeric_limits<int>::max()));
+	const QString automatic =
+		physical == 0 ? text_("Dock.BufferMemory.AutomaticUnknown")
+			      : text_("Dock.BufferMemory.Automatic").arg(automaticBufferBudget(physical) >> 20);
+	// Either one rewrites the text being typed, so they are set only when they change.
+	if (bufferMemory_->maximum() != maximum) {
+		bufferMemory_->setRange(0, maximum);
+	}
+	if (bufferMemory_->specialValueText() != automatic) {
+		bufferMemory_->setSpecialValueText(automatic);
+	}
+	// A value being typed is not overwritten.
+	if (!bufferMemory_->hasFocus()) {
+		bufferMemory_->setValue(static_cast<int>(std::min<int64_t>(settingMiB, bufferMemory_->maximum())));
+	}
+	memoryWarning_->setVisible(budgetAboveSafeShare(bufferBudget(settingMiB, physical), physical));
+
+	// Said before the buffers start too, from what a start would give them.
+	const uint64_t needed = backend_.memoryNeeded();
+	const uint64_t budget = backend_.memoryBudget();
+	memoryShort_->setVisible(needed > budget);
+	if (needed > budget) {
+		memoryShort_->setText(text_("Dock.MemoryShort")
+					      .arg(QString::number((needed + (uint64_t{1} << 20) - 1) >> 20))
+					      .arg(QString::number(budget >> 20)));
+	}
 }
 
 void TapeloopDock::updateEncoders(const std::string &chosen)
