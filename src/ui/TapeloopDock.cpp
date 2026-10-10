@@ -51,9 +51,9 @@ template<typename Function> void guarded(Function &&function) noexcept
 	}
 }
 
-// Qt goes past the rows that cannot be current only on the arrow keys, so Home, End and a
-// page key that stopped on a heading or a damaged replay did nothing. Such a move now
-// ends on the nearest row that can be current, back toward where it came from.
+// Qt goes past the rows that cannot be current on the arrow keys only, and ignores Home,
+// End or a page key that stops on a heading or a damaged replay; such a move ends on the
+// nearest row that can be current instead, back toward where it came from.
 class ReplayList : public QListWidget {
 public:
 	using QListWidget::QListWidget;
