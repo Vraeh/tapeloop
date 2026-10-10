@@ -37,7 +37,9 @@
 
 using namespace std::chrono_literals;
 using tapeloop::BufferSettings;
+using tapeloop::ExportFormat;
 using tapeloop::ReplayResolution;
+using tapeloop::ReplayState;
 using tapeloop::ResolutionMode;
 using tapeloop::SourceSettings;
 using tapeloop::test::FakeBackend;
@@ -1093,7 +1095,7 @@ TEST_CASE("every control of the dock can be reached with the keyboard")
 		CAPTURE(widget->objectName().toStdString());
 		CHECK((widget->focusPolicy() & Qt::TabFocus) != 0);
 	}
-	CHECK(controls == 19);
+	CHECK(controls == 21);
 }
 
 TEST_CASE("every string the dock asks for is in the locale file")
@@ -1118,6 +1120,16 @@ TEST_CASE("every string the dock asks for is in the locale file")
 	backend.isRunning = true;
 	dock.refresh();
 	backend.memory = 0;
+	dock.refresh();
+	tapeloop::ui::DockExport shown;
+	shown.state = tapeloop::ui::DockExport::State::Running;
+	backend.exportList = {shown, shown};
+	dock.refresh();
+	backend.exportList = {shown};
+	dock.refresh();
+	backend.exportList.front().state = tapeloop::ui::DockExport::State::Done;
+	dock.refresh();
+	backend.exportList.front().state = tapeloop::ui::DockExport::State::Failed;
 	dock.refresh();
 	CHECK(missing.empty());
 
@@ -1372,4 +1384,90 @@ TEST_CASE("typing a length in the dock writes the settings once, when it is ente
 	QApplication::sendEvent(length, &enter);
 	CHECK(length->value() == 120);
 	CHECK(backend.settingsChanges == before + 1);
+}
+
+TEST_CASE("the dock exports the replay that goes on air next")
+{
+	FakeBackend backend = backendWithSources();
+	TapeloopDock dock(backend, localeText());
+	dock.show();
+	auto *mp4 = child<QPushButton>(dock, "exportMp4");
+	auto *replayFile = child<QPushButton>(dock, "exportReplay");
+	CHECK_FALSE(mp4->isEnabled());
+	CHECK_FALSE(replayFile->isEnabled());
+	const uint64_t id = backend.captureReplay();
+	dock.refresh();
+	REQUIRE(mp4->isEnabled());
+	REQUIRE(replayFile->isEnabled());
+	mp4->click();
+	replayFile->click();
+	CHECK(backend.exported ==
+	      std::vector<std::pair<uint64_t, ExportFormat>>{{id, ExportFormat::Mp4}, {id, ExportFormat::Replay}});
+
+	// Only a replay on disk exports.
+	for (const ReplayState state : {ReplayState::Writing, ReplayState::NotSaved}) {
+		backend.captured.front().state = state;
+		dock.refresh();
+		CHECK_FALSE(mp4->isEnabled());
+		CHECK_FALSE(replayFile->isEnabled());
+	}
+}
+
+TEST_CASE("without MP4 the dock offers only the replay file")
+{
+	FakeBackend backend = backendWithSources();
+	backend.mp4 = false;
+	TapeloopDock dock(backend, localeText());
+	dock.show();
+	backend.captureReplay();
+	dock.refresh();
+	CHECK_FALSE(child<QPushButton>(dock, "exportMp4")->isVisible());
+	CHECK(child<QPushButton>(dock, "exportReplay")->isEnabled());
+}
+
+TEST_CASE("the dock says how the exports go")
+{
+	using tapeloop::ui::DockExport;
+	FakeBackend backend = backendWithSources();
+	TapeloopDock dock(backend, localeText());
+	dock.show();
+	auto *status = child<QLabel>(dock, "exportStatus");
+	CHECK_FALSE(status->isVisible());
+
+	DockExport running;
+	running.replay = 1;
+	running.name = "2026-10-10 21-05-42";
+	running.state = DockExport::State::Running;
+	running.progress = 0.456;
+	DockExport waiting = running;
+	waiting.name = "2026-10-10 21-06-10";
+	waiting.state = DockExport::State::Waiting;
+	waiting.progress = 0.0;
+	backend.exportList = {running};
+	dock.refresh();
+	CHECK(status->isVisible());
+	CHECK(status->text() == localeText()("Dock.Export.Running").arg("2026-10-10 21-05-42").arg(45));
+	backend.exportList = {running, waiting, waiting};
+	dock.refresh();
+	CHECK(status->text() == localeText()("Dock.Export.Waiting").arg("2026-10-10 21-05-42").arg(45).arg(2));
+	// Before the first one starts.
+	backend.exportList = {waiting, waiting};
+	dock.refresh();
+	CHECK(status->text() == localeText()("Dock.Export.Waiting").arg("2026-10-10 21-06-10").arg(0).arg(1));
+
+	// Once none runs or waits, the one asked for last.
+	DockExport done = running;
+	done.state = DockExport::State::Done;
+	done.folder = "/media/Tapeloop/Liga 2026-10-10 21-00/Export";
+	DockExport failed = waiting;
+	failed.state = DockExport::State::Failed;
+	failed.error = "no space left on the disk";
+	backend.exportList = {failed, done};
+	dock.refresh();
+	CHECK(status->text() ==
+	      localeText()("Dock.Export.Done").arg("2026-10-10 21-05-42").arg(QString::fromStdString(done.folder)));
+	backend.exportList = {done, failed};
+	dock.refresh();
+	CHECK(status->text() ==
+	      localeText()("Dock.Export.Failed").arg("2026-10-10 21-06-10").arg("no space left on the disk"));
 }

@@ -2170,6 +2170,13 @@ TEST_CASE_METHOD(ObsFixture, "a stored replay exports to MP4 and as a replay fil
 		CHECK(status.name == tapeloop::utf8FromPath(manifest.stem()));
 	}
 	CHECK(exported.lines == 2);
+	const std::vector<tapeloop::ui::DockExport> shown = tapeloop::obs::ManagerDockBackend(manager).exports();
+	REQUIRE(shown.size() == 2);
+	CHECK(shown[0].state == tapeloop::ui::DockExport::State::Done);
+	CHECK(shown[0].format == ExportFormat::Mp4);
+	CHECK(shown[0].folder == tapeloop::utf8FromPath(manifest.parent_path() / "Export"));
+	CHECK(shown[1].format == ExportFormat::Replay);
+	CHECK(tapeloop::obs::ManagerDockBackend(manager).canExport(ExportFormat::Mp4));
 
 	const fs::path folder = manifest.parent_path() / "Export";
 	REQUIRE(exports[0].files.size() == 1);
@@ -2221,5 +2228,10 @@ TEST_CASE_METHOD(ObsFixture, "an export that fails says why", "[obs][manager][re
 	CHECK_FALSE(exports[0].error.empty());
 	CHECK(exports[0].files.empty());
 	CHECK(failed.lines == 1);
+	const std::vector<tapeloop::ui::DockExport> shown = tapeloop::obs::ManagerDockBackend(manager).exports();
+	REQUIRE(shown.size() == 1);
+	CHECK(shown[0].state == tapeloop::ui::DockExport::State::Failed);
+	CHECK(shown[0].error == exports[0].error);
+	CHECK(shown[0].folder.empty());
 	manager.manualStop();
 }
