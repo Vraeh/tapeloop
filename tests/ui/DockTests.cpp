@@ -594,6 +594,32 @@ TEST_CASE("a media source left out of activation says why")
 	CHECK(refreshed->toolTip().isEmpty());
 }
 
+TEST_CASE("a source whose HEVC encoder failed says it goes on in H.264")
+{
+	FakeBackend backend = backendWithSources();
+	backend.shown[0].state = SourceState::Failed;
+	backend.shown[0].hevcFailed = true;
+	backend.current.sources["uuid-camera-1"].selected = true;
+	TapeloopDock dock(backend, localeText());
+	const QTableWidgetItem *status = child<QTableWidget>(dock, "sources")->item(0, 1);
+	CHECK(status->text() == localeText()("Dock.Status.Failed"));
+	CHECK_FALSE(status->icon().isNull());
+	CHECK(status->toolTip() == localeText()("Dock.Status.HevcFailed.Tooltip"));
+
+	// Running again, on the CPU as the order went on to x264, it says both.
+	backend.shown[0].state = SourceState::Running;
+	backend.shown[0].encoderPath = tapeloop::EncoderPath::Software;
+	dock.refresh();
+	const QString both = child<QTableWidget>(dock, "sources")->item(0, 1)->toolTip();
+	CHECK(both.startsWith(localeText()("Dock.Status.Software.Tooltip")));
+	CHECK(both.endsWith(localeText()("Dock.Status.HevcFallback.Tooltip")));
+
+	// Unticked, it has nothing to say.
+	backend.current.sources["uuid-camera-1"].selected = false;
+	dock.refresh();
+	CHECK(child<QTableWidget>(dock, "sources")->item(0, 1)->toolTip().isEmpty());
+}
+
 TEST_CASE("the activation checkbox follows the settings")
 {
 	FakeBackend backend = backendWithSources();

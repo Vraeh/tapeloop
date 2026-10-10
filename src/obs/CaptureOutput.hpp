@@ -20,6 +20,8 @@ struct CaptureTarget {
 	// Set on the encoder's thread when the encoder reports an error or a packet cannot
 	// be stored; the output stops itself then.
 	std::atomic<bool> failed{false};
+	// Set with failed when it was the encoder's error.
+	std::atomic<bool> encoderFailed{false};
 };
 
 // An encoded video output that gives its buffer the encoder's codec configuration on
