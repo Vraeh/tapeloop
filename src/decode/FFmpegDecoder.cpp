@@ -278,6 +278,7 @@ DecodeStatus FFmpegDecoder::send(std::span<const uint8_t> data, int64_t pts, int
 	const size_t size =
 		copyWithoutKnownParameterSets(codec_, runConfig_, data, std::span<uint8_t>(buffer->data, data.size()));
 	std::memset(buffer->data + size, 0, AV_INPUT_BUFFER_PADDING_SIZE);
+	skippedBytes_ += data.size() - size;
 
 	packet_->buf = buffer;
 	packet_->data = buffer->data;

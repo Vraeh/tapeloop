@@ -71,6 +71,9 @@ public:
 	// Whether a D3D11 device was created for the adapter of the configuration.
 	bool hasDevice() const noexcept;
 	size_t heldFrames() const noexcept;
+	// The bytes of parameter sets left out of the packets sent so far, those the
+	// configuration had already given.
+	uint64_t skippedBytes() const noexcept { return skippedBytes_; }
 
 private:
 	struct Slot;
@@ -107,6 +110,7 @@ private:
 	size_t packetBufferSize_ = 0;
 	VideoCodec codec_ = VideoCodec::H264;
 	std::vector<uint8_t> runConfig_;
+	uint64_t skippedBytes_ = 0;
 	std::vector<Slot> slots_;
 	std::vector<uint32_t> freeSlots_;
 };

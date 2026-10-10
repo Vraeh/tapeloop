@@ -344,8 +344,11 @@ TEST_CASE_METHOD(ObsFixture, "the FFmpeg decoder takes packets that repeat the c
 	DecodePlanner planner(decoder);
 	planner.load(h264Buffer.clip(Nanoseconds::min(), Nanoseconds::max()));
 	checkEveryWay(planner, decoder, h264Expected);
+	const uint64_t h264Skipped = decoder.skippedBytes();
+	CHECK(h264Skipped > 0);
 	planner.load(hevcBuffer.clip(Nanoseconds::min(), Nanoseconds::max()));
 	checkEveryWay(planner, decoder, hevcExpected);
+	CHECK(decoder.skippedBytes() > h264Skipped);
 }
 
 TEST_CASE_METHOD(ObsFixture, "the FFmpeg decoder takes parameter sets that differ from the configuration", "[decode]")
@@ -366,6 +369,7 @@ TEST_CASE_METHOD(ObsFixture, "the FFmpeg decoder takes parameter sets that diffe
 	DecodePlanner planner(decoder);
 	planner.load(buffer.clip(Nanoseconds::min(), Nanoseconds::max()));
 	checkEveryWay(planner, decoder, expected);
+	CHECK(decoder.skippedBytes() == 0);
 }
 
 TEST_CASE_METHOD(ObsFixture, "the FFmpeg decoder follows a clip from an HEVC run into an H.264 run", "[decode]")
