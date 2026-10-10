@@ -155,6 +155,7 @@ void CaptureManager::onSceneCollectionCleanup()
 	savedNames_.clear();
 	foreignSettings_ = nullptr;
 	lifecycle_.reset(settings_.startWithOutputs, lifecycle_.streaming(), lifecycle_.recording());
+	library_.unpick();
 }
 
 void CaptureManager::onExit()

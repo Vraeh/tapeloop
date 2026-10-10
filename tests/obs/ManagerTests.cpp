@@ -1627,6 +1627,37 @@ TEST_CASE_METHOD(ObsFixture, "a broadcast is named when the buffers start", "[ob
 	manager.manualStop();
 }
 
+TEST_CASE_METHOD(ObsFixture, "a collection switch keeps the replays and drops the pick", "[obs][manager][replay]")
+{
+	OBSSourceAutoRelease pattern = createTestPattern(320, 180, "Pattern");
+	const std::string uuid = uuidOf(pattern);
+	FakeHost host;
+	CaptureManager manager(host);
+	BufferSettings settings = selecting(uuid);
+	settings.startWithOutputs = false;
+	manager.setSettings(settings);
+	REQUIRE(manager.manualStart());
+	REQUIRE(waitFor([&] { return hasGops(manager, uuid, 2); }, 60s));
+	const uint64_t first = manager.captureReplay();
+	const uint64_t second = manager.captureReplay();
+	REQUIRE(first != 0);
+	REQUIRE(second != 0);
+	REQUIRE(manager.tagReplay(first, "Goal"));
+	REQUIRE(manager.pickReplay(first));
+	REQUIRE(manager.library().current() == first);
+
+	manager.onSceneCollectionCleanup();
+	manager.finishWrites();
+	CHECK(manager.library().list() == std::vector<uint64_t>{second, first});
+	CHECK(manager.library().list("Goal") == std::vector<uint64_t>{first});
+	CHECK_FALSE(manager.library().picked());
+	CHECK(manager.library().current() == second);
+	// The next collection picks among them as before.
+	manager.setSettings(settings);
+	CHECK(manager.pickReplay(first));
+	CHECK(manager.library().current() == first);
+}
+
 TEST_CASE_METHOD(ObsFixture, "a collection switched while streaming starts a new broadcast", "[obs][manager][replay]")
 {
 	OBSSourceAutoRelease pattern = createTestPattern(320, 180, "Pattern");
