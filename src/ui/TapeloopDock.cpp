@@ -113,6 +113,7 @@ TapeloopDock::TapeloopDock(DockBackend &backend, TextLookup text, QWidget *paren
 	sources_->setEditTriggers(QAbstractItemView::NoEditTriggers);
 	sources_->setTabKeyNavigation(false);
 	sources_->installEventFilter(this);
+	replays_->installEventFilter(this);
 	replays_->viewport()->installEventFilter(this);
 	// Moves without a button reach the filter only with tracking on.
 	replays_->viewport()->setMouseTracking(true);
@@ -386,6 +387,11 @@ bool TapeloopDock::eventFilter(QObject *watched, QEvent *event)
 			return true;
 		}
 	}
+	// A dialog that opens during a press takes its release, and the pointer may never come
+	// back over the list to end it.
+	if (watched == replays_ && event->type() == QEvent::FocusOut) {
+		leftButtonHeld_ = false;
+	}
 	if (watched == replays_->viewport()) {
 		const QEvent::Type type = event->type();
 		if (type == QEvent::MouseButtonPress || type == QEvent::MouseButtonDblClick ||
@@ -396,7 +402,8 @@ bool TapeloopDock::eventFilter(QObject *watched, QEvent *event)
 				return true;
 			}
 			leftButtonHeld_ = type != QEvent::MouseButtonRelease;
-			if (type == QEvent::MouseButtonPress) {
+			// The second press of a double click ends in a click too.
+			if (type != QEvent::MouseButtonRelease) {
 				currentAtPress_.reset();
 				guarded([this] { currentAtPress_ = backend_.currentReplay(); });
 			}
