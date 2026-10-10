@@ -26,6 +26,8 @@ target_sources(
     DecodePlanner.hpp
     EncoderPolicy.cpp
     EncoderPolicy.hpp
+    FailurePacer.cpp
+    FailurePacer.hpp
     FileIo.cpp
     FileIo.hpp
     FrameDecoder.hpp
