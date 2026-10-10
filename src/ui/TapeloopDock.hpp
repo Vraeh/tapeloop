@@ -80,6 +80,8 @@ private:
 	std::vector<std::string> shownTags_;
 	// The newest replay seen current, to tell a new capture from a pick.
 	uint64_t newestReplay_ = 0;
+	bool refreshQueued_ = false;
+	bool leftButtonHeld_ = false;
 };
 
 } // namespace tapeloop::ui

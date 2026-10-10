@@ -16,6 +16,7 @@
 #include <QLabel>
 #include <QLineEdit>
 #include <QListWidget>
+#include <QMouseEvent>
 #include <QPushButton>
 #include <QSignalBlocker>
 #include <QSpinBox>
@@ -85,6 +86,7 @@ TapeloopDock::TapeloopDock(DockBackend &backend, TextLookup text, QWidget *paren
 	sources_->setEditTriggers(QAbstractItemView::NoEditTriggers);
 	sources_->setTabKeyNavigation(false);
 	sources_->installEventFilter(this);
+	replays_->viewport()->installEventFilter(this);
 
 	sourceSettings_->setObjectName("sourceSettings");
 	sourceSettings_->setEnabled(false);
@@ -240,12 +242,27 @@ TapeloopDock::TapeloopDock(DockBackend &backend, TextLookup text, QWidget *paren
 	connect(tagName_, &QLineEdit::returnPressed, this, addTag);
 	// Moving through the list with the keyboard picks as a click does, and a click on the
 	// row already current picks it again after a capture the list has not shown yet. The
-	// list is rebuilt once the view has finished with the event, which may still select
-	// the row under the pointer.
+	// list is refreshed once the view is done with the event, since a rebuild inside it
+	// would leave the view selecting the row now under the pointer.
 	const auto pick = [this](QListWidgetItem *item) {
-		if (item) {
-			guarded([&] { backend_.pickReplay(item->data(Qt::UserRole).toULongLong()); });
-			QMetaObject::invokeMethod(this, [this] { refresh(); }, Qt::QueuedConnection);
+		if (!item) {
+			return;
+		}
+		guarded([&] {
+			const uint64_t id = item->data(Qt::UserRole).toULongLong();
+			if (id != backend_.currentReplay()) {
+				backend_.pickReplay(id);
+			}
+		});
+		if (!refreshQueued_) {
+			refreshQueued_ = true;
+			QMetaObject::invokeMethod(
+				this,
+				[this] {
+					refreshQueued_ = false;
+					refresh();
+				},
+				Qt::QueuedConnection);
 		}
 	};
 	connect(replays_, &QListWidget::currentItemChanged, this, pick);
@@ -331,6 +348,18 @@ bool TapeloopDock::eventFilter(QObject *watched, QEvent *event)
 		if (key == Qt::Key_Return || key == Qt::Key_Enter) {
 			openSourceSettings(sources_->currentRow());
 			return true;
+		}
+	}
+	if (watched == replays_->viewport()) {
+		const QEvent::Type type = event->type();
+		if (type == QEvent::MouseButtonPress || type == QEvent::MouseButtonDblClick ||
+		    type == QEvent::MouseButtonRelease) {
+			// Qt makes the row under any button current, and the list has no menu, so only
+			// the left button picks.
+			if (static_cast<QMouseEvent *>(event)->button() != Qt::LeftButton) {
+				return true;
+			}
+			leftButtonHeld_ = type != QEvent::MouseButtonRelease;
 		}
 	}
 	return QWidget::eventFilter(watched, event);
@@ -467,7 +496,9 @@ void TapeloopDock::updateReplays()
 		ids.push_back(replay.id);
 		texts.push_back(std::move(text));
 	}
-	if (ids != shownReplays_ || texts != shownReplayTexts_) {
+	// Never while the left button is held on the list: moving the pointer then makes the
+	// row under it current, which after a rebuild can be another replay.
+	if (!leftButtonHeld_ && (ids != shownReplays_ || texts != shownReplayTexts_)) {
 		const QSignalBlocker block(replays_);
 		replays_->clear();
 		for (size_t i = 0; i < ids.size(); ++i) {
@@ -482,8 +513,9 @@ void TapeloopDock::updateReplays()
 	const auto shown = std::find(shownReplays_.begin(), shownReplays_.end(), current);
 	const bool listed = shown != shownReplays_.end();
 	const QSignalBlocker block(replays_);
-	// No current row has to be set as such, or the view makes its first row current when
-	// it gains focus, which would pick that replay.
+	// Cleared through the view rather than with setCurrentRow(-1), so that the view keeps
+	// no current row when it gains focus instead of making its first row current, which
+	// would pick that replay.
 	replays_->setCurrentIndex(listed ? replays_->model()->index(static_cast<int>(shown - shownReplays_.begin()), 0)
 					 : QModelIndex());
 	addTag_->setEnabled(listed);

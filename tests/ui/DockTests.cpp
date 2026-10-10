@@ -22,6 +22,7 @@
 #include <QFocusEvent>
 #include <QPushButton>
 #include <QListWidget>
+#include <QMouseEvent>
 #include <QSpinBox>
 #include <QTableWidget>
 
@@ -348,6 +349,52 @@ TEST_CASE("the dock captures replays and picks the one that goes on air")
 	// Buffers and settings are left alone.
 	CHECK(backend.settingsChanges == 0);
 	CHECK(backend.toggles == 0);
+}
+
+TEST_CASE("a press on a replay picks that replay, whatever the list does meanwhile")
+{
+	FakeBackend backend = backendWithSources();
+	TapeloopDock dock(backend, localeText());
+	dock.show();
+	auto *capture = child<QPushButton>(dock, "captureReplay");
+	auto *list = child<QListWidget>(dock, "replays");
+	capture->click();
+	capture->click();
+	capture->click();
+	REQUIRE(list->count() == 3);
+	QCoreApplication::processEvents();
+	// A hotkey capture the list has not shown yet.
+	backend.captureReplay();
+	const int picks = backend.picks;
+
+	QWidget *viewport = list->viewport();
+	const auto send = [&](QEvent::Type type, QPoint at, Qt::MouseButton button, Qt::MouseButtons buttons) {
+		QMouseEvent event(type, at, viewport->mapToGlobal(at), button, buttons, Qt::NoModifier);
+		QApplication::sendEvent(viewport, &event);
+	};
+	// The oldest replay, pressed, with the pointer moving a little before the release.
+	const QPoint oldest = list->visualItemRect(list->item(2)).center();
+	send(QEvent::MouseButtonPress, oldest, Qt::LeftButton, Qt::LeftButton);
+	QCoreApplication::processEvents();
+	send(QEvent::MouseMove, oldest + QPoint(0, 1), Qt::NoButton, Qt::LeftButton);
+	send(QEvent::MouseButtonRelease, oldest + QPoint(0, 1), Qt::LeftButton, Qt::NoButton);
+	QCoreApplication::processEvents();
+	CHECK(backend.picked == 1u);
+	CHECK(backend.picks == picks + 1);
+	REQUIRE(list->count() == 4);
+	REQUIRE(list->currentItem());
+	CHECK(list->currentItem()->data(Qt::UserRole).toULongLong() == 1u);
+	REQUIRE(list->selectedItems().size() == 1);
+	CHECK(list->selectedItems().front()->data(Qt::UserRole).toULongLong() == 1u);
+
+	// The other buttons pick nothing.
+	const QPoint newest = list->visualItemRect(list->item(0)).center();
+	send(QEvent::MouseButtonPress, newest, Qt::RightButton, Qt::RightButton);
+	send(QEvent::MouseButtonRelease, newest, Qt::RightButton, Qt::NoButton);
+	send(QEvent::MouseButtonPress, newest, Qt::MiddleButton, Qt::MiddleButton);
+	send(QEvent::MouseButtonRelease, newest, Qt::MiddleButton, Qt::NoButton);
+	QCoreApplication::processEvents();
+	CHECK(backend.picked == 1u);
 }
 
 TEST_CASE("a media source left out of activation says why")

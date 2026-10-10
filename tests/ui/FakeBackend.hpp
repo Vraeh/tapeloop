@@ -22,6 +22,7 @@ public:
 	int settingsChanges = 0;
 	uint64_t captures = 0;
 	uint64_t picked = 0;
+	int picks = 0;
 	std::vector<tapeloop::ui::DockReplay> captured;
 	std::vector<std::string> tags;
 	std::vector<tapeloop::ui::EncoderChoice> choices = {{"obs_nvenc_hevc_tex", "NVIDIA NVENC HEVC"},
@@ -84,7 +85,11 @@ public:
 		return false;
 	}
 	uint64_t currentReplay() const override { return picked; }
-	void pickReplay(uint64_t id) override { picked = id; }
+	void pickReplay(uint64_t id) override
+	{
+		picked = id;
+		++picks;
+	}
 
 	bool toggleRunning() override
 	{
