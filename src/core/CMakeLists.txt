@@ -37,6 +37,8 @@ target_sources(
     MomentList.hpp
     Playhead.cpp
     Playhead.hpp
+    ReplayFormat.cpp
+    ReplayFormat.hpp
     ReplayLibrary.cpp
     ReplayLibrary.hpp
     ReplayPlayerState.cpp
