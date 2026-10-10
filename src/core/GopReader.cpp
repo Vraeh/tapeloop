@@ -53,6 +53,11 @@ std::shared_ptr<const Gop> GopReader::readSegment(const std::filesystem::path &s
 {
 	try {
 		File file(segment, File::Mode::ReadOnly);
+		// The size comes from the manifest, and the buffer keeps what it grows to.
+		const uint64_t fileSize = file.size();
+		if (stored.offset > fileSize || stored.size > fileSize - stored.offset) {
+			return nullptr;
+		}
 		chunk_.resize(static_cast<size_t>(stored.size));
 		if (file.readAt(stored.offset, chunk_) != chunk_.size()) {
 			return nullptr;

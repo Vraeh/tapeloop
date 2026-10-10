@@ -170,6 +170,16 @@ TEST_CASE("a GOP whose segment is damaged or gone is not read")
 		changed.gops[2].packetCount += 1;
 		CHECK_FALSE(reader.read(stored.manifest(), changed, 2));
 	}
+	SECTION("larger than the segment holds")
+	{
+		StoredSource changed = stored.source();
+		changed.gops[1].size = uint64_t{1} << 40;
+		changed.gops[2].offset = uint64_t{1} << 40;
+		GopReader reader;
+		CHECK_FALSE(reader.read(stored.manifest(), changed, 1));
+		CHECK_FALSE(reader.read(stored.manifest(), changed, 2));
+		CHECK(reader.read(stored.manifest(), changed, 3));
+	}
 	SECTION("past the end of the replay")
 	{
 		GopReader reader;
