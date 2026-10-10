@@ -1220,14 +1220,18 @@ TEST_CASE_METHOD(ObsFixture, "a replay reaches back the length its buffer starte
 	CHECK(reachOf(running) >= 2s - 100ms);
 
 	// A stopped buffer gives what still lies in the window, and nothing once it all lies
-	// before it.
+	// before it, when the next poll lets go of it.
 	REQUIRE(manager.manualStop());
 	REQUIRE(held().gopCount != 0);
 	const uint64_t stopped = manager.captureReplay();
 	REQUIRE(stopped != 0);
 	CHECK(reachOf(stopped) <= 2s);
+	manager.poll();
+	CHECK(held().gopCount != 0);
 	std::this_thread::sleep_for(2500ms);
 	CHECK(manager.captureReplay() == 0);
+	manager.poll();
+	CHECK(held().gopCount == 0);
 	manager.finishWrites();
 }
 

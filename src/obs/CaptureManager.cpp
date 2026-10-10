@@ -175,6 +175,13 @@ void CaptureManager::poll()
 		}
 	}
 
+	const Nanoseconds now{static_cast<int64_t>(os_gettime_ns())};
+	for (const auto &[uuid, entry] : entries_) {
+		if (entry->capture.stats().state != CaptureState::Running) {
+			entry->capture.expireBuffer(now);
+		}
+	}
+
 	followOutputs();
 	if (!lifecycle_.running()) {
 		return;
@@ -305,10 +312,12 @@ uint64_t CaptureManager::captureReplay()
 	// Packets carry the time of the frames they encode, on the clock OBS stamps video with.
 	const Nanoseconds now{static_cast<int64_t>(os_gettime_ns())};
 	// Each source gives the window of its own buffer, the length the buffer started with,
-	// so the moment reaches back as far as the longest of them.
+	// so the moment reaches back as far as the longest of those that hold anything.
 	Nanoseconds reach{0};
 	for (const MomentSource &source : sources) {
-		reach = std::max(reach, source.buffer.get().window());
+		if (source.buffer.get().stats().gopCount != 0) {
+			reach = std::max(reach, source.buffer.get().window());
+		}
 	}
 	MomentCut cut = cutMoment(sources, now, reach);
 	if (cut.moment.clips.empty()) {

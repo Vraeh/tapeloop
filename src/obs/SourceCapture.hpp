@@ -93,6 +93,9 @@ public:
 	// Null before the first start. The object only changes at a start that needs a new
 	// buffer.
 	const SourceBuffer *buffer() const noexcept { return buffer_.get(); }
+	// Lets the buffer go of what ends before its window back from now; for a capture that
+	// is not running, whose buffer gets no packets to evict at.
+	void expireBuffer(Nanoseconds now);
 
 private:
 	void tearDown();

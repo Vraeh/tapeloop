@@ -20,7 +20,7 @@ struct MomentClip {
 	Clip clip;
 };
 
-// One marked instant, cut from one or more sources over the same range.
+// One marked instant, cut from one or more sources, each over its own part of the range.
 struct Moment {
 	Nanoseconds start{0};
 	Nanoseconds end{0};
