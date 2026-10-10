@@ -238,6 +238,39 @@ TEST_CASE("SourceBuffer keeps a GOP that ends one frame into the window")
 	CHECK(heldGops(buffer).size() == 2);
 }
 
+TEST_CASE("SourceBuffer that gets no packets lets go of what ends before the window")
+{
+	// GOPs of 30 frames at 60 fps; frames 0 to 209 held, the last GOP still being built.
+	SyntheticEncoder encoder({});
+	SourceBuffer buffer(makeConfig(encoder, 2s, kUnlimited));
+	pushFrames(buffer, encoder, 210);
+	REQUIRE(buffer.stats().oldestTime == encoder.timeOf(60));
+
+	// A second later the window starts at frame 150: the GOPs up to frame 149 go.
+	buffer.expire(encoder.timeOf(270));
+	CHECK(buffer.stats().oldestTime == encoder.timeOf(150));
+	CHECK(buffer.stats().newestTime == encoder.timeOf(209));
+	// Expiring with the window where it was changes nothing.
+	buffer.expire(encoder.timeOf(270));
+	CHECK(buffer.stats().gopCount == 2);
+
+	// Once the window starts after the last frame, nothing is left, and the buffer waits
+	// for a keyframe again.
+	buffer.expire(encoder.timeOf(330));
+	CHECK(buffer.stats().gopCount == 0);
+	CHECK(buffer.clip(Nanoseconds::min(), Nanoseconds::max()).empty());
+	while (encoder.nextFrame() < 335) {
+		encoder.next();
+	}
+	pushFrames(buffer, encoder, 1);
+	CHECK(buffer.stats().gopCount == 0);
+	while (encoder.nextFrame() < 360) {
+		encoder.next();
+	}
+	pushFrames(buffer, encoder, 1);
+	CHECK(buffer.stats().oldestTime == encoder.timeOf(360));
+}
+
 TEST_CASE("SourceBuffer evicts old GOPs to stay within its byte budget")
 {
 	SyntheticEncoder encoder({});

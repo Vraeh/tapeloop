@@ -198,22 +198,33 @@ void SourceBuffer::sealLocked()
 	sealedBytes_ += gops_.back()->byteSize();
 }
 
+void SourceBuffer::expire(Nanoseconds now)
+{
+	std::lock_guard lock(mutex_);
+	const Nanoseconds start = saturatingSub(now, config_.window);
+	if (!builder_.empty() && saturatingAdd(builder_.lastTime(), config_.frameDuration) <= start) {
+		builder_.clear();
+		synced_ = false;
+	}
+	dropEndingByLocked(start);
+}
+
 void SourceBuffer::evictLocked(Nanoseconds newest)
 {
-	const auto dropOldest = [this] {
+	// After a gap, as when a source comes back from an outage, what came before and ends
+	// before the window goes at once rather than once the new footage fills the window.
+	dropEndingByLocked(saturatingSub(newest, config_.window));
+	while (gops_.size() > 1 && sealedBytes_ > maxBytes_) {
 		sealedBytes_ -= gops_.front()->byteSize();
 		gops_.pop_front();
-	};
-
-	// After a gap, as when a source comes back from an outage, what came before goes at
-	// once rather than once the new footage fills the window.
-	const Nanoseconds start = saturatingSub(newest, config_.window);
-	while (!gops_.empty() && gops_.front()->endTime() <= start) {
-		dropOldest();
 	}
+}
 
-	while (gops_.size() > 1 && sealedBytes_ > maxBytes_) {
-		dropOldest();
+void SourceBuffer::dropEndingByLocked(Nanoseconds start)
+{
+	while (!gops_.empty() && gops_.front()->endTime() <= start) {
+		sealedBytes_ -= gops_.front()->byteSize();
+		gops_.pop_front();
 	}
 }
 

@@ -74,6 +74,10 @@ public:
 	// Drops every packet and the counters, keeps the codec configuration, and waits for a
 	// keyframe again.
 	void clear();
+	// Lets go of what ends before the window back from now, for a buffer that gets no
+	// packets: eviction runs only at keyframes, and a capture can take none of it. When
+	// that is everything, the next packet kept is a keyframe.
+	void expire(Nanoseconds now);
 
 	// Replaces the configured byte budget; eviction applies it at the next keyframe.
 	void setByteBudget(size_t maxBytes);
@@ -86,6 +90,7 @@ private:
 	// Measures the window back from newest, the time of the keyframe that starts the next
 	// GOP.
 	void evictLocked(Nanoseconds newest);
+	void dropEndingByLocked(Nanoseconds start);
 	void dropFromLocked(Nanoseconds time);
 	Nanoseconds newestTimeLocked() const noexcept;
 
