@@ -436,12 +436,15 @@ TEST_CASE_METHOD(ObsFixture, "a capture says when the encoder chosen for it coul
 	capture.stop();
 	CHECK_FALSE(capture.stats().chosenEncoder);
 
-	// A choice the candidates leave out, as one an HEVC failure replaced, was not tried.
+	// A choice the candidates leave out, as one OBS does not offer, was not tried, and
+	// says so.
+	LogCounter unavailable("the encoder chosen for replays, is not available");
 	settings.encoderPreferences.chosen = tapeloop::test::kNvencHevcId;
 	REQUIRE(capture.start(pattern, settings) == StartResult::Started);
-	CHECK_FALSE(capture.stats().choiceSkipped);
+	CHECK(capture.stats().choiceSkipped);
 	CHECK_FALSE(capture.stats().chosenEncoder);
 	CHECK(said.lines == 1);
+	CHECK(unavailable.lines == 1);
 	capture.stop();
 }
 

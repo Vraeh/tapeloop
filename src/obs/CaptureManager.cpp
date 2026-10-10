@@ -628,6 +628,11 @@ CaptureManager::StartOutcome CaptureManager::start(const std::string &uuid, Entr
 		for (const std::string &id : failed->second) {
 			settings.candidates = candidatesAfterHevcFailure(settings.candidates, encoders, id);
 		}
+		// A choice whose HEVC failed gives way to its H.264, which the dock says already.
+		if (std::find(failed->second.begin(), failed->second.end(), settings.encoderPreferences.chosen) !=
+		    failed->second.end()) {
+			settings.encoderPreferences.chosen.clear();
+		}
 	}
 	const StartResult result = entry.capture.start(source, settings, keepBuffer);
 	if (result != StartResult::Started) {

@@ -51,7 +51,8 @@ struct CaptureStats {
 	ReadbackReason readbackReason = ReadbackReason::None;
 	// The encoder running is the one the user chose.
 	bool chosenEncoder = false;
-	// The encoder the user chose was tried and could not start, so another one runs.
+	// The user chose an encoder that could not start, or that OBS does not offer, so
+	// another one runs.
 	bool choiceSkipped = false;
 	FrameSize outputSize;
 	SourceBufferStats buffer;

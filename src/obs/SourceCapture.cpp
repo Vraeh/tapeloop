@@ -203,15 +203,22 @@ StartResult SourceCapture::start(obs_source_t *source, const CaptureSettings &se
 				warnAboutPath(name, candidate.id.c_str(), encoderPath_, readbackReason_);
 				const std::string &chosen = settings.encoderPreferences.chosen;
 				chosenEncoder_ = !chosen.empty() && candidate.id == chosen;
-				choiceSkipped_ =
-					!chosen.empty() && !chosenEncoder_ &&
+				choiceSkipped_ = !chosen.empty() && !chosenEncoder_;
+				// A choice OBS does not offer, as one of a plugin gone or of a card
+				// turned off, is not among the candidates at all.
+				const bool tried =
 					std::any_of(candidates.begin(), candidates.end(),
-						    [&](const EncoderInfo &tried) { return tried.id == chosen; });
-				if (choiceSkipped_) {
+						    [&](const EncoderInfo &info) { return info.id == chosen; });
+				if (choiceSkipped_ && tried) {
 					blog(LOG_WARNING,
 					     "[tapeloop] %s, the encoder chosen for replays, could not start for '%s', "
 					     "which %s encodes instead, the next encoder in the automatic order",
 					     chosen.c_str(), name, candidate.id.c_str());
+				} else if (choiceSkipped_) {
+					blog(LOG_WARNING,
+					     "[tapeloop] %s, the encoder chosen for replays, is not available, so %s "
+					     "encodes '%s' instead, the next encoder in the automatic order",
+					     chosen.c_str(), candidate.id.c_str(), name);
 				}
 				return StartResult::Started;
 			}

@@ -36,8 +36,8 @@ struct DockSource {
 	// Its running encoder is the one chosen in the advanced settings, which explains a
 	// path that is not the optimal one.
 	bool chosenEncoder = false;
-	// The encoder chosen in the advanced settings could not start for it, and the
-	// automatic order went on.
+	// The encoder chosen in the advanced settings could not start for it, or is not
+	// available, and the automatic order went on.
 	bool choiceSkipped = false;
 	// Its HEVC encoder failed while it ran, and it uses H.264 from its next start.
 	bool hevcFailed = false;
