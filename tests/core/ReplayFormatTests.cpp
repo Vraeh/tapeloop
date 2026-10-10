@@ -203,6 +203,23 @@ TEST_CASE("a GOP chunk gives back the GOP it was written from")
 					     run.headerCrc, runOf(*gops[0])));
 }
 
+TEST_CASE("a chunk's size is known before it is appended")
+{
+	// A configuration that takes the RUN chunk past one aligned block.
+	const auto large = std::make_shared<const CodecConfig>(CodecConfig(5000, 0x42));
+	for (const auto &config : {std::shared_ptr<const CodecConfig>(), large}) {
+		const Gops gops = makeGops(2, VideoCodec::H264, config);
+		std::vector<uint8_t> segment(tapeloop::kReplayAlignment, 0);
+		size_t before = segment.size();
+		tapeloop::appendRunChunk(segment, 0, *gops[0]);
+		CHECK(segment.size() - before == tapeloop::runChunkSize(*gops[0]));
+		before = segment.size();
+		tapeloop::appendGopChunk(segment, 1, *gops[1]);
+		CHECK(segment.size() - before == tapeloop::gopChunkSize(*gops[1]));
+	}
+	CHECK(tapeloop::runChunkSize(*makeGops(1, VideoCodec::H264, large)[0]) == 2 * tapeloop::kReplayAlignment);
+}
+
 TEST_CASE("a GOP chunk that is damaged, cut short or not the one meant is refused")
 {
 	const Gops gops = makeGops(1, VideoCodec::H264, nullptr);

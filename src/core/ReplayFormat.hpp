@@ -80,6 +80,10 @@ struct ChunkPlace {
 // number of aligned blocks.
 ChunkPlace appendRunChunk(std::vector<uint8_t> &out, uint32_t sequence, const Gop &gop);
 ChunkPlace appendGopChunk(std::vector<uint8_t> &out, uint32_t sequence, const Gop &gop);
+// How many bytes appendRunChunk and appendGopChunk add to out for this GOP, padding
+// included.
+uint64_t runChunkSize(const Gop &gop) noexcept;
+uint64_t gopChunkSize(const Gop &gop) noexcept;
 
 struct StoredRun {
 	VideoCodec codec = VideoCodec::H264;

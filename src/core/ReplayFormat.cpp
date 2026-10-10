@@ -306,6 +306,18 @@ ChunkPlace appendGopChunk(std::vector<uint8_t> &out, uint32_t sequence, const Go
 	return sealChunk(out, offset, kGopChunk, sequence, payloadSize);
 }
 
+uint64_t runChunkSize(const Gop &gop) noexcept
+{
+	const CodecConfig *config = gop.codecConfig();
+	return aligned(kChunkHeaderSize + kRunHeadSize + (config ? config->size() : 0));
+}
+
+uint64_t gopChunkSize(const Gop &gop) noexcept
+{
+	return aligned(kChunkHeaderSize + kGopHeadSize + kPacketEntrySize * gop.packets().size() +
+		       gopBytes(gop).size());
+}
+
 std::shared_ptr<const Gop> decodeGopChunk(std::span<const uint8_t> chunk, uint32_t headerCrc, const StoredRun &run)
 {
 	if (chunk.size() < kChunkHeaderSize || get32(chunk, 28) != headerCrc) {
