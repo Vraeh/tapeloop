@@ -434,8 +434,12 @@ TEST_CASE_METHOD(ObsFixture, "a capture says when the encoder chosen for it coul
 
 	settings.encoderPreferences.chosen = "obs_x264";
 	settings.candidates = {testEncoder("obs_x264")};
+	LogCounter chosenX264("on the CPU, the encoder chosen for replays");
+	LogCounter noHardware("because no hardware encoder could take it");
 	REQUIRE(capture.start(pattern, settings) == StartResult::Started);
 	CHECK(capture.stats().chosenEncoder);
+	CHECK(chosenX264.lines == 1);
+	CHECK(noHardware.lines == 0);
 	CHECK_FALSE(capture.stats().choiceSkipped);
 	capture.stop();
 	CHECK_FALSE(capture.stats().chosenEncoder);

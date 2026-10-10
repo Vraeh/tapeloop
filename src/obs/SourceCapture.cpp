@@ -18,10 +18,17 @@ namespace tapeloop::obs {
 namespace {
 
 // Paths that are not the optimal one work, and say so in the log in plain words.
-void warnAboutPath(const char *name, const char *encoder, EncoderPath path, ReadbackReason reason) noexcept
+void warnAboutPath(const char *name, const char *encoder, EncoderPath path, ReadbackReason reason, bool chosen) noexcept
 {
 	constexpr const char *kCost =
 		"Replays work, but this costs CPU time and memory bandwidth: it is not the optimal path";
+	if (path == EncoderPath::Software && chosen) {
+		blog(LOG_WARNING,
+		     "[tapeloop] '%s' is encoded by %s on the CPU, the encoder chosen for replays. Replays work, "
+		     "but this costs CPU time: it is not the optimal path",
+		     name, encoder);
+		return;
+	}
 	if (path == EncoderPath::Software) {
 		blog(LOG_WARNING,
 		     "[tapeloop] '%s' is encoded by %s on the CPU because no hardware encoder could take it. "
@@ -207,9 +214,10 @@ StartResult SourceCapture::start(obs_source_t *source, const CaptureSettings &se
 				readbackReason_ = readbackReasonOf(candidate, renderVendor, textures);
 				blog(LOG_INFO, "[tapeloop] Capturing '%s' at %ux%u with %s", name, outputSize->width,
 				     outputSize->height, candidate.id.c_str());
-				warnAboutPath(name, candidate.id.c_str(), encoderPath_, readbackReason_);
 				const std::string &chosen = settings.encoderPreferences.chosen;
 				chosenEncoder_ = !chosen.empty() && candidate.id == chosen;
+				warnAboutPath(name, candidate.id.c_str(), encoderPath_, readbackReason_,
+					      chosenEncoder_);
 				choiceSkipped_ = !chosen.empty() && !chosenEncoder_;
 				// A choice OBS does not offer, as one of a plugin gone or of a card
 				// turned off, is not among the candidates at all.
