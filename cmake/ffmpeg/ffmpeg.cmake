@@ -80,6 +80,7 @@ function(tapeloop_add_ffmpeg)
         "${prefix}/FFmpeg-LICENSE.txt"
         "${prefix}/FFmpeg-LICENSE.md"
         "${prefix}/FFmpeg-THIRD-PARTY.txt"
+        "${_tapeloop_ffmpeg_dir}/FFmpeg-IJG-README.txt"
   )
   file(READ "${prefix}/configure-line.txt" configure_line)
   string(STRIP "${configure_line}" configure_line)

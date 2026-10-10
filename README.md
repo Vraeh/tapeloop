@@ -57,8 +57,9 @@ GPL-2.0-or-later. See [LICENSE](LICENSE).
 
 The Windows and Linux builds include [FFmpeg](https://ffmpeg.org) 8.1, linked
 statically for decoding, under the LGPL 2.1 or later. Its notice, with the exact version,
-the source and the configure options, its license, FFmpeg's own account of its licensing
-and the notices of the few files under other licenses are installed with the plugin's data
-(`FFmpeg-NOTICE.txt`, `FFmpeg-LICENSE.txt`, `FFmpeg-LICENSE.md`, `FFmpeg-THIRD-PARTY.txt`);
+the source and the configure options, its license, FFmpeg's own account of its licensing,
+the notices of the few files under other licenses and the Independent JPEG Group's README
+are installed with the plugin's data (`FFmpeg-NOTICE.txt`, `FFmpeg-LICENSE.txt`,
+`FFmpeg-LICENSE.md`, `FFmpeg-THIRD-PARTY.txt`, `FFmpeg-IJG-README.txt`);
 `cmake/ffmpeg/BuildFFmpeg.cmake` builds it. Every release carries the exact FFmpeg source
 it was built from.

@@ -73,10 +73,11 @@ set(
   "libavutil/uuid.c|BSD-3-Clause|Redistribution and use"
   "libavutil/x86/x86inc.asm|ISC|Permission to use"
 )
-# Files whose permissive text FFmpeg carries without a notice to ship: code after
+# Files whose permissive text FFmpeg carries without a notice of its own: code after
 # Boost's algorithms, whose license covers object code without its notice, and SHA code
-# that credits public-domain and BSD-licensed code it is based on, whose notices
-# FFmpeg's source does not hold.
+# that credits public-domain and BSD-licensed code it is based on. FFmpeg's source does
+# not hold the BSD notice, so it goes into FFmpeg-THIRD-PARTY.txt from the code's own
+# release, as sha2_notice below.
 set(reviewed_licenses "libavutil/libm.h" "libavutil/mathematics.c" "libavutil/sha.c" "libavutil/sha512.c")
 # What marks a notice other than the LGPL's, matched in lower case with line breaks and
 # comment leaders taken out.
@@ -361,8 +362,9 @@ file(
   "${PREFIX}/FFmpeg-NOTICE.txt"
   "Tapeloop includes FFmpeg ${version}, linked statically, under the GNU Lesser General\n"
   "Public License version 2.1 or later. The license is in FFmpeg-LICENSE.txt, FFmpeg's\n"
-  "own account of its licensing in FFmpeg-LICENSE.md, and the notices of the few files\n"
-  "under other licenses in FFmpeg-THIRD-PARTY.txt.\n"
+  "own account of its licensing in FFmpeg-LICENSE.md, the notices of the few files\n"
+  "under other licenses in FFmpeg-THIRD-PARTY.txt, and the README the Independent JPEG\n"
+  "Group's license asks for in FFmpeg-IJG-README.txt.\n"
   "\n"
   "Source: ${url}\n"
   "SHA-256: ${sha256}\n"
@@ -386,7 +388,46 @@ string(
   "This software is based in part on the work of the Independent JPEG Group. FFmpeg's\n"
   "jfdctfst.c, jfdctint_template.c and jrevdct.c are its changed copies of libjpeg's\n"
   "jfdctfst.c, jfdctint.c and jrevdct.c; FFmpeg's history of them is at\n"
-  "https://git.ffmpeg.org/ffmpeg.git.\n"
+  "https://git.ffmpeg.org/ffmpeg.git. The README their license asks to go with them is\n"
+  "in FFmpeg-IJG-README.txt, unaltered, from libjpeg 6b, whose jfdctfst.c and jfdctint.c\n"
+  "carry the copyright years FFmpeg's copies do.\n"
+)
+# The notice of the SHA-2 code libavutil/sha.c and sha512.c are based on, from sha2.c in
+# sha2-1.0.1.tgz, its author's latest release, without the comment markers.
+string(
+  CONCAT
+  sha2_notice
+  "\nlibavutil/sha.c and libavutil/sha512.c (BSD-3-Clause):\n"
+  "\n"
+  "Both are based on BSD-licensed SHA-2 code by Aaron D. Gifford, whose notice FFmpeg's\n"
+  "source does not hold. It follows as it stands in his sha2.c, release 1.0.1.\n"
+  "\n"
+  "Copyright (c) 2000-2001, Aaron D. Gifford\n"
+  "All rights reserved.\n"
+  "\n"
+  "Redistribution and use in source and binary forms, with or without\n"
+  "modification, are permitted provided that the following conditions\n"
+  "are met:\n"
+  "1. Redistributions of source code must retain the above copyright\n"
+  "   notice, this list of conditions and the following disclaimer.\n"
+  "2. Redistributions in binary form must reproduce the above copyright\n"
+  "   notice, this list of conditions and the following disclaimer in the\n"
+  "   documentation and/or other materials provided with the distribution.\n"
+  "3. Neither the name of the copyright holder nor the names of contributors\n"
+  "   may be used to endorse or promote products derived from this software\n"
+  "   without specific prior written permission.\n"
+  "\n"
+  "THIS SOFTWARE IS PROVIDED BY THE AUTHOR AND CONTRIBUTOR(S) ``AS IS'' AND\n"
+  "ANY EXPRESS OR IMPLIED WARRANTIES, INCLUDING, BUT NOT LIMITED TO, THE\n"
+  "IMPLIED WARRANTIES OF MERCHANTABILITY AND FITNESS FOR A PARTICULAR PURPOSE\n"
+  "ARE DISCLAIMED.  IN NO EVENT SHALL THE AUTHOR OR CONTRIBUTOR(S) BE LIABLE\n"
+  "FOR ANY DIRECT, INDIRECT, INCIDENTAL, SPECIAL, EXEMPLARY, OR CONSEQUENTIAL\n"
+  "DAMAGES (INCLUDING, BUT NOT LIMITED TO, PROCUREMENT OF SUBSTITUTE GOODS\n"
+  "OR SERVICES; LOSS OF USE, DATA, OR PROFITS; OR BUSINESS INTERRUPTION)\n"
+  "HOWEVER CAUSED AND ON ANY THEORY OF LIABILITY, WHETHER IN CONTRACT, STRICT\n"
+  "LIABILITY, OR TORT (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY\n"
+  "OUT OF THE USE OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF\n"
+  "SUCH DAMAGE.\n"
 )
 foreach(entry IN LISTS other_licenses)
   string(REPLACE "|" ";" entry "${entry}")
@@ -418,6 +459,7 @@ foreach(entry IN LISTS other_licenses)
   endif()
   string(APPEND third_party "\n${path} (${license}):\n\n${opening}${closing}")
 endforeach()
+string(APPEND third_party "${sha2_notice}")
 file(WRITE "${PREFIX}/FFmpeg-THIRD-PARTY.txt" "${third_party}")
 
 # Written last: ffmpeg.cmake takes the prefix as complete only once this file is there.
