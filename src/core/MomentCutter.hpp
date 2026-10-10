@@ -40,9 +40,11 @@ struct MomentCut {
 };
 
 // Cuts the range [anchor - preRoll, anchor] from every source, with a negative
-// pre-roll taken as zero. Each clip covers the part of the range its buffer holds and
-// records its own in and out frames; the moment's start and end are the range asked
-// for, not the part the clips cover.
+// pre-roll taken as zero, but never reaching back further than the source's own buffer
+// window: what is older than that is footage the buffer only kept for decoding, or that
+// came before the buffer stopped or before an outage. Each clip covers the part of its
+// range the buffer holds and records its own in and out frames; the moment's start and
+// end are the range asked for, not the part the clips cover.
 MomentCut cutMoment(std::span<const MomentSource> sources, Nanoseconds anchor, Nanoseconds preRoll);
 
 } // namespace tapeloop

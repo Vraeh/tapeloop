@@ -139,6 +139,34 @@ TEST_CASE("cutMoment cuts the same range from every source")
 	}
 }
 
+TEST_CASE("cutMoment takes from each source no more than its own window")
+{
+	Camera wide(0ms, 2s);
+	Camera close(3ms, 5s);
+	wide.pushUntil(10s);
+	close.pushUntil(10s);
+	// A buffer that stopped longer ago than its window holds nothing a replay takes.
+	Camera stopped(0ms, 1s);
+	stopped.pushUntil(8s);
+	const std::vector<MomentSource> sources = {{"wide", wide.buffer},
+						   {"close", close.buffer},
+						   {"stopped", stopped.buffer}};
+
+	const MomentCut cut = cutMoment(sources, 10s, 1h);
+	CHECK(cut.moment.start == 10s - 1h);
+	REQUIRE(cut.moment.clips.size() == 2);
+	CHECK(cut.skipped == std::vector<std::string>{"stopped"});
+	const Clip *wideClip = clipOf(cut.moment, "wide");
+	const Clip *closeClip = clipOf(cut.moment, "close");
+	REQUIRE(wideClip);
+	REQUIRE(closeClip);
+	CHECK(wideClip->in() == firstFrameFrom(wide, 8s));
+	CHECK(closeClip->in() == firstFrameFrom(close, 5s));
+	CHECK(closeClip->out() == lastFrameUntil(close, 10s));
+	// A shorter pre-roll still wins over a longer window.
+	CHECK(clipOf(cutMoment(sources, 10s, 1s).moment, "close")->in() == firstFrameFrom(close, 9s));
+}
+
 TEST_CASE("cutMoment skips a source whose history does not reach the range")
 {
 	Camera current(0ms, 2s);
