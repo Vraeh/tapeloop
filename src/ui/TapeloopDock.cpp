@@ -40,6 +40,9 @@ namespace {
 
 constexpr int kSourceColumn = 0;
 constexpr int kStatusColumn = 1;
+// Below this the buffers would keep little more than a keyframe each, which is a slip
+// rather than a budget.
+constexpr int kMinBufferMemoryMiB = 256;
 
 int seconds(Nanoseconds length)
 {
@@ -167,6 +170,10 @@ TapeloopDock::TapeloopDock(DockBackend &backend, TextLookup text, QWidget *paren
 	bufferMemory_->setToolTip(text_("Dock.BufferMemory.Tooltip"));
 	bufferMemory_->setSuffix(text_("Dock.MiBSuffix"));
 	bufferMemory_->setKeyboardTracking(false);
+	bufferMemory_->setSingleStep(kMinBufferMemoryMiB);
+	// A wheel turned over the dock does not cut the buffers short in the middle of a match.
+	bufferMemory_->setFocusPolicy(Qt::StrongFocus);
+	bufferMemory_->installEventFilter(this);
 	memoryWarning_->setObjectName("memoryWarning");
 	memoryWarning_->setWordWrap(true);
 	memoryWarning_->hide();
@@ -290,7 +297,12 @@ TapeloopDock::TapeloopDock(DockBackend &backend, TextLookup text, QWidget *paren
 	setTabOrder(forceH264_, bufferMemory_);
 	setTabOrder(bufferMemory_, startStop_);
 	connect(bufferMemory_, &QSpinBox::valueChanged, this, [this](int value) {
-		changeSettings([](BufferSettings &settings, int mib) { settings.bufferMemoryMiB = mib; }, value);
+		const int mib = value == 0 ? 0 : std::max(value, kMinBufferMemoryMiB);
+		if (mib != value) {
+			const QSignalBlocker block(bufferMemory_);
+			bufferMemory_->setValue(mib);
+		}
+		changeSettings([](BufferSettings &settings, int set) { settings.bufferMemoryMiB = set; }, mib);
 	});
 	connect(otherAdapters_, &QCheckBox::toggled, this, [this](bool checked) {
 		changeSettings([](BufferSettings &settings, int on) { settings.allowOtherAdapters = on != 0; },
@@ -466,6 +478,9 @@ void TapeloopDock::showEvent(QShowEvent *event)
 
 bool TapeloopDock::eventFilter(QObject *watched, QEvent *event)
 {
+	if (watched == bufferMemory_ && event->type() == QEvent::Wheel && !bufferMemory_->hasFocus()) {
+		return true;
+	}
 	if (watched == sources_ && event->type() == QEvent::KeyPress) {
 		const int key = static_cast<QKeyEvent *>(event)->key();
 		if (key == Qt::Key_Return || key == Qt::Key_Enter) {
@@ -743,12 +758,21 @@ void TapeloopDock::updateReplays()
 void TapeloopDock::updateMemory(int64_t settingMiB)
 {
 	const uint64_t physical = backend_.physicalMemory();
-	// Unknown memory sets no limit of its own, so any amount may be set.
-	const uint64_t most = physical == 0 ? uint64_t{1} << 24 : physical >> 20;
-	bufferMemory_->setRange(0, static_cast<int>(std::min<uint64_t>(most, std::numeric_limits<int>::max())));
-	bufferMemory_->setSpecialValueText(
+	// Unknown memory sets no limit of its own, so any amount may be set. A setting made on
+	// a computer with more memory, which travels with the scene collection, shows as it is.
+	const uint64_t most = std::max(physical == 0 ? uint64_t{1} << 24 : physical >> 20,
+				       static_cast<uint64_t>(std::max<int64_t>(settingMiB, 0)));
+	const int maximum = static_cast<int>(std::min<uint64_t>(most, std::numeric_limits<int>::max()));
+	const QString automatic =
 		physical == 0 ? text_("Dock.BufferMemory.AutomaticUnknown")
-			      : text_("Dock.BufferMemory.Automatic").arg(automaticBufferBudget(physical) >> 20));
+			      : text_("Dock.BufferMemory.Automatic").arg(automaticBufferBudget(physical) >> 20);
+	// Either one rewrites the text being typed, so they are set only when they change.
+	if (bufferMemory_->maximum() != maximum) {
+		bufferMemory_->setRange(0, maximum);
+	}
+	if (bufferMemory_->specialValueText() != automatic) {
+		bufferMemory_->setSpecialValueText(automatic);
+	}
 	// A value being typed is not overwritten.
 	if (!bufferMemory_->hasFocus()) {
 		bufferMemory_->setValue(static_cast<int>(std::min<int64_t>(settingMiB, bufferMemory_->maximum())));

@@ -26,6 +26,7 @@
 #include <QMouseEvent>
 #include <QSpinBox>
 #include <QTableWidget>
+#include <QWheelEvent>
 
 #include <chrono>
 #include <cstdlib>
@@ -242,6 +243,103 @@ TEST_CASE("the advanced settings set the memory the buffers may use")
 	dock.refresh();
 	CHECK(memory->text() == localeText()("Dock.BufferMemory.AutomaticUnknown"));
 	CHECK_FALSE(warning->isVisible());
+}
+
+TEST_CASE("the memory for buffers steps in large amounts and never to almost nothing")
+{
+	FakeBackend backend = backendWithSources();
+	backend.current.showAdvanced = true;
+	TapeloopDock dock(backend, localeText());
+	auto *memory = child<QSpinBox>(dock, "bufferMemory");
+	memory->stepUp();
+	CHECK(backend.current.bufferMemoryMiB == 256);
+	memory->stepUp();
+	CHECK(backend.current.bufferMemoryMiB == 512);
+	// A value below the smallest step is a slip, and gets the smallest step.
+	memory->setValue(100);
+	CHECK(memory->value() == 256);
+	CHECK(backend.current.bufferMemoryMiB == 256);
+	memory->setValue(0);
+	CHECK(backend.current.bufferMemoryMiB == 0);
+}
+
+TEST_CASE("a wheel over the memory for buffers changes it only once it has the focus")
+{
+	FakeBackend backend = backendWithSources();
+	backend.current.showAdvanced = true;
+	TapeloopDock dock(backend, localeText());
+	dock.show();
+	dock.activateWindow();
+	auto *memory = child<QSpinBox>(dock, "bufferMemory");
+	// A real wheel reaches the spin box through its line edit, which does not take it;
+	// one sent from a test goes only where it is sent.
+	const auto turnWheel = [&] {
+		const QPointF at(memory->rect().center());
+		QWheelEvent wheel(at, memory->mapToGlobal(at), QPoint(), QPoint(0, 120), Qt::NoButton, Qt::NoModifier,
+				  Qt::NoScrollPhase, false);
+		QApplication::sendEvent(memory, &wheel);
+		QApplication::processEvents();
+	};
+	CHECK((memory->focusPolicy() & Qt::WheelFocus) != Qt::WheelFocus);
+	child<QSpinBox>(dock, "length")->setFocus();
+	QApplication::processEvents();
+	turnWheel();
+	CHECK_FALSE(memory->hasFocus());
+	CHECK(memory->value() == 0);
+	CHECK(backend.current.bufferMemoryMiB == 0);
+
+	memory->setFocus();
+	QApplication::processEvents();
+	REQUIRE(memory->hasFocus());
+	turnWheel();
+	CHECK(backend.current.bufferMemoryMiB == 256);
+}
+
+TEST_CASE("a memory for buffers being typed in the dock is not overwritten")
+{
+	FakeBackend backend = backendWithSources();
+	backend.current.showAdvanced = true;
+	TapeloopDock dock(backend, localeText());
+	dock.show();
+	dock.activateWindow();
+	auto *memory = child<QSpinBox>(dock, "bufferMemory");
+	memory->setFocus();
+	QApplication::processEvents();
+	REQUIRE(memory->hasFocus());
+	const auto type = [&](const char *digits) {
+		memory->selectAll();
+		for (const char *digit = digits; *digit != '\0'; ++digit) {
+			QKeyEvent key(QEvent::KeyPress, Qt::Key_0 + (*digit - '0'), Qt::NoModifier,
+				      QString(QChar(*digit)));
+			QApplication::sendEvent(memory, &key);
+		}
+		// The dock refreshes every second, also while a value is being typed.
+		dock.refresh();
+		QKeyEvent enter(QEvent::KeyPress, Qt::Key_Return, Qt::NoModifier);
+		QApplication::sendEvent(memory, &enter);
+	};
+	// From automatic, and from a value.
+	type("8192");
+	CHECK(backend.current.bufferMemoryMiB == 8192);
+	type("6000");
+	CHECK(backend.current.bufferMemoryMiB == 6000);
+}
+
+TEST_CASE("a memory for buffers set on a computer with more memory shows as it is")
+{
+	FakeBackend backend = backendWithSources();
+	backend.current.showAdvanced = true;
+	backend.current.bufferMemoryMiB = 65536;
+	TapeloopDock dock(backend, localeText());
+	dock.show();
+	auto *memory = child<QSpinBox>(dock, "bufferMemory");
+	CHECK(memory->value() == 65536);
+	CHECK(child<QLabel>(dock, "memoryWarning")->isVisible());
+	// Set lower, it is held to this computer's memory again.
+	memory->setValue(4096);
+	dock.refresh();
+	CHECK(memory->maximum() == 16384);
+	CHECK(backend.settingsChanges == 1);
 }
 
 TEST_CASE("the encoder list holds still while it is open")
@@ -1008,6 +1106,8 @@ TEST_CASE("every string the dock asks for is in the locale file")
 		backend.current.sources[source.uuid].selected = true;
 	}
 	backend.manualEnabled = false;
+	backend.shown[0].budgetLimited = true;
+	backend.needed = uint64_t{8} << 30;
 
 	std::set<std::string> missing;
 	TapeloopDock dock(backend, tapeloop::test::recordingLocaleText(missing));
@@ -1016,6 +1116,8 @@ TEST_CASE("every string the dock asks for is in the locale file")
 	child<QPushButton>(dock, "sourceSettings")->click();
 	REQUIRE(sourceDialog(dock));
 	backend.isRunning = true;
+	dock.refresh();
+	backend.memory = 0;
 	dock.refresh();
 	CHECK(missing.empty());
 
