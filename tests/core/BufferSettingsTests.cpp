@@ -76,6 +76,7 @@ TEST_CASE("buffer settings survive a save and a load")
 	settings.replayEncoder = "obs_nvenc_hevc_tex";
 	settings.allowOtherAdapters = false;
 	settings.showAdvanced = true;
+	settings.bufferMemoryMiB = 2048;
 	settings.sources["a"] = {true, 120s, ReplayResolution{ResolutionMode::Fixed, 2160}, std::nullopt};
 	settings.sources["b"] = {false, std::nullopt, ReplayResolution{ResolutionMode::Canvas, 1080}, std::nullopt};
 	settings.sources["c"] = {true, std::nullopt, std::nullopt, std::nullopt};
@@ -94,6 +95,11 @@ TEST_CASE("buffer settings survive a save and a load")
 	const std::optional<BufferSettings> loaded = tapeloop::loadSettings(saved);
 	REQUIRE(loaded);
 	CHECK(*loaded == settings);
+
+	// A memory budget below nothing is the automatic one.
+	SavedSettings negative = saved;
+	negative.bufferMemoryMiB = -1;
+	CHECK(tapeloop::loadSettings(negative)->bufferMemoryMiB == 0);
 }
 
 TEST_CASE("settings of another version are not loaded")

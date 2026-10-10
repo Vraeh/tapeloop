@@ -283,6 +283,12 @@ TEST_CASE("a source on an encoder path that is not the optimal one says so")
 	backend.shown[0].chosenEncoder = false;
 	backend.shown[1].chosenEncoder = false;
 
+	// A buffer the memory budget holds to less than its length.
+	backend.shown[2].budgetLimited = true;
+	dock.refresh();
+	CHECK(table->item(2, 1)->toolTip() == localeText()("Dock.Status.BudgetLimited.Tooltip"));
+	backend.shown[2].budgetLimited = false;
+
 	// A choice that could not start, whatever path the encoder after it takes.
 	backend.shown[2].choiceSkipped = true;
 	dock.refresh();

@@ -403,6 +403,62 @@ TEST_CASE_METHOD(ObsFixture, "a source too small to start is retried", "[obs][ma
 	CHECK(manager.status(uuid).stats.state == CaptureState::Running);
 }
 
+TEST_CASE_METHOD(ObsFixture, "buffers that need more memory than the budget share it", "[obs][manager]")
+{
+	OBSSourceAutoRelease first = createTestPattern(320, 180, "First");
+	OBSSourceAutoRelease second = createTestPattern(320, 180, "Second");
+	const std::string firstUuid = uuidOf(first);
+	const std::string secondUuid = uuidOf(second);
+	FakeHost host;
+	CaptureManager manager(host);
+	BufferSettings settings = selecting(firstUuid);
+	settings.sources[secondUuid].selected = true;
+	settings.startWithOutputs = false;
+	settings.length = 60s;
+	manager.setSettings(settings);
+	REQUIRE(manager.manualStart());
+	REQUIRE(manager.status(firstUuid).stats.state == CaptureState::Running);
+	REQUIRE(manager.status(secondUuid).stats.state == CaptureState::Running);
+	// x264 at 320x180 needs a few MB for a minute; the automatic budget, a quarter of this
+	// machine's memory, holds both.
+	const size_t need = manager.buffer(firstUuid)->byteBudget();
+	REQUIRE(need > 2u << 20);
+	CHECK(manager.physicalMemory() > 0);
+	CHECK(manager.memoryBudget() == manager.physicalMemory() / 4);
+	CHECK_FALSE(manager.status(firstUuid).budgetLimited);
+
+	// A budget of 2 MiB holds neither: each gets its share, the same part of its need.
+	settings.bufferMemoryMiB = 2;
+	manager.setSettings(settings);
+	CHECK(manager.memoryBudget() == 2u << 20);
+	const size_t firstShare = manager.buffer(firstUuid)->byteBudget();
+	const size_t secondShare = manager.buffer(secondUuid)->byteBudget();
+	CHECK(firstShare + secondShare <= 2u << 20);
+	CHECK(firstShare >= (1u << 20) - 1);
+	CHECK(manager.status(firstUuid).budgetLimited);
+	CHECK(manager.status(secondUuid).budgetLimited);
+	// The buffer then holds no more than its share once a few keyframes have come.
+	REQUIRE(waitFor([&] { return hasGops(manager, firstUuid, 4); }, 60s));
+	const tapeloop::ui::DockSource shown = [&] {
+		for (const tapeloop::ui::DockSource &source : tapeloop::obs::ManagerDockBackend(manager).sources()) {
+			if (source.uuid == firstUuid) {
+				return source;
+			}
+		}
+		return tapeloop::ui::DockSource{};
+	}();
+	CHECK(shown.budgetLimited);
+
+	// One buffer stopping leaves the other the whole budget; within it, all it needs.
+	settings.sources[secondUuid].selected = false;
+	settings.bufferMemoryMiB = 64;
+	manager.setSettings(settings);
+	CHECK(manager.buffer(firstUuid)->byteBudget() == need);
+	CHECK_FALSE(manager.status(firstUuid).budgetLimited);
+	manager.manualStop();
+	CHECK_FALSE(manager.status(firstUuid).budgetLimited);
+}
+
 TEST_CASE_METHOD(ObsFixture, "a buffer whose chosen encoder cannot start says so", "[obs][manager]")
 {
 	// The NVENC stand-ins refuse to start until a test enables them, as NVENC does
@@ -1889,6 +1945,14 @@ TEST_CASE("the advanced switch is saved with the settings", "[obs][manager]")
 	OBSDataAutoRelease data = createSettingsData(tapeloop::saveSettings(settings));
 	CHECK(obs_data_get_bool(data, "show_advanced"));
 	CHECK(readSettingsData(data).showAdvanced);
+	// So is the memory the buffers may use, which settings saved before it leave
+	// automatic.
+	settings.bufferMemoryMiB = 3072;
+	OBSDataAutoRelease budget = createSettingsData(tapeloop::saveSettings(settings));
+	CHECK(obs_data_get_int(budget, "buffer_memory_mib") == 3072);
+	CHECK(readSettingsData(budget).bufferMemoryMiB == 3072);
+	obs_data_erase(budget, "buffer_memory_mib");
+	CHECK(readSettingsData(budget).bufferMemoryMiB == 0);
 	// Settings saved before it hide the advanced settings, as the switch did.
 	obs_data_erase(data, "show_advanced");
 	CHECK_FALSE(readSettingsData(data).showAdvanced);

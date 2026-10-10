@@ -97,6 +97,11 @@ public:
 	// does not follow it until a restart.
 	bool sourceSizeMatches() const;
 
+	// The bytes the buffer would hold over its whole length at the bitrate of the encoder
+	// running; zero while none runs. The buffers share the memory budget by these.
+	size_t byteNeed() const noexcept { return byteNeed_; }
+	// Has the buffer hold no more than this, nor more than its need.
+	void limitBytes(size_t bytes);
 	CaptureStats stats() const;
 
 	// Null before the first start. The object only changes at a start that needs a new
@@ -122,6 +127,7 @@ private:
 	std::string encoderId_;
 	EncoderPath encoderPath_ = EncoderPath::Texture;
 	ReadbackReason readbackReason_ = ReadbackReason::None;
+	size_t byteNeed_ = 0;
 	bool chosenEncoder_ = false;
 	bool choiceSkipped_ = false;
 };

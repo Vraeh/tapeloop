@@ -203,6 +203,7 @@ StartResult SourceCapture::start(obs_source_t *source, const CaptureSettings &se
 					bufferConfig.maxBytes = std::max(bufferConfig.maxBytes, buffer_->byteBudget());
 				}
 				buffer_->setByteBudget(bufferConfig.maxBytes);
+				byteNeed_ = bufferConfig.maxBytes;
 				bufferConfig_ = bufferConfig;
 				source_ = obs_source_get_weak_source(source);
 				sourceSize_ = sourceSize;
@@ -313,6 +314,7 @@ void SourceCapture::tearDown()
 	encoderId_.clear();
 	encoderPath_ = EncoderPath::Texture;
 	readbackReason_ = ReadbackReason::None;
+	byteNeed_ = 0;
 	chosenEncoder_ = false;
 	choiceSkipped_ = false;
 	outputSize_ = {};
@@ -325,6 +327,13 @@ bool SourceCapture::sourceSizeMatches() const
 		return true;
 	}
 	return obs_source_get_width(source) == sourceSize_.width && obs_source_get_height(source) == sourceSize_.height;
+}
+
+void SourceCapture::limitBytes(size_t bytes)
+{
+	if (buffer_ && byteNeed_ != 0) {
+		buffer_->setByteBudget(std::min(bytes, byteNeed_));
+	}
 }
 
 void SourceCapture::expireBuffer(Nanoseconds now)

@@ -3,6 +3,7 @@
 
 #include "obs/CaptureManager.hpp"
 
+#include "core/BufferBudget.hpp"
 #include "core/FileIo.hpp"
 #include "core/MomentCutter.hpp"
 #include "core/ReplayNames.hpp"
@@ -92,7 +93,7 @@ bool reactsToActivation(obs_source_t *source)
 
 } // namespace
 
-CaptureManager::CaptureManager(CaptureHost &host) : host_(host)
+CaptureManager::CaptureManager(CaptureHost &host) : host_(host), physicalMemory_(os_get_sys_total_size())
 {
 	lifecycle_.reset(settings_.startWithOutputs, host_.streamingActive(), host_.recordingActive());
 }
@@ -228,6 +229,7 @@ void CaptureManager::poll()
 			entries_.erase(found);
 		}
 	}
+	applyBudget();
 }
 
 void CaptureManager::save(obs_data_t *collection) const
@@ -302,6 +304,7 @@ SourceStatus CaptureManager::status(const std::string &uuid) const
 	if (found != entries_.end()) {
 		status.stats = found->second->capture.stats();
 		status.activationLeftOut = found->second->activationLeftOut;
+		status.budgetLimited = found->second->budgetLimited;
 	}
 	status.hevcFailed = failedHevc_.contains(uuid);
 	return status;
@@ -574,6 +577,7 @@ void CaptureManager::reconcile()
 		for (auto &[uuid, entry] : entries_) {
 			stop(uuid, *entry);
 		}
+		applyBudget();
 		return;
 	}
 	std::optional<std::vector<EncoderInfo>> candidates;
@@ -589,6 +593,30 @@ void CaptureManager::reconcile()
 			entries_.erase(found);
 		}
 	}
+	applyBudget();
+}
+
+void CaptureManager::applyBudget()
+{
+	std::vector<Entry *> running;
+	std::vector<size_t> needs;
+	for (auto &[uuid, entry] : entries_) {
+		entry->budgetLimited = false;
+		if (const size_t need = entry->capture.byteNeed(); need != 0) {
+			running.push_back(entry.get());
+			needs.push_back(need);
+		}
+	}
+	const std::vector<size_t> shares = shareBudget(needs, memoryBudget());
+	for (size_t i = 0; i < running.size(); ++i) {
+		running[i]->capture.limitBytes(shares[i]);
+		running[i]->budgetLimited = shares[i] < needs[i];
+	}
+}
+
+uint64_t CaptureManager::memoryBudget() const
+{
+	return bufferBudget(settings_.bufferMemoryMiB, physicalMemory_);
 }
 
 CaptureManager::StartOutcome CaptureManager::start(const std::string &uuid, Entry &entry, bool keepBuffer, bool quiet,

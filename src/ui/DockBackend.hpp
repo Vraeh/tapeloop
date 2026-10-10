@@ -41,6 +41,9 @@ struct DockSource {
 	bool choiceSkipped = false;
 	// Its HEVC encoder failed while it ran, and it uses H.264 from its next start.
 	bool hevcFailed = false;
+	// It holds less than its length, as the buffers together need more memory than they
+	// may use.
+	bool budgetLimited = false;
 };
 
 // A replay as the dock lists it.
