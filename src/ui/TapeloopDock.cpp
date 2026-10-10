@@ -86,6 +86,7 @@ TapeloopDock::TapeloopDock(DockBackend &backend, TextLookup text, QWidget *paren
 	sources_->setEditTriggers(QAbstractItemView::NoEditTriggers);
 	sources_->setTabKeyNavigation(false);
 	sources_->installEventFilter(this);
+	replays_->installEventFilter(this);
 	replays_->viewport()->installEventFilter(this);
 	// Moves without a button reach the filter only with tracking on.
 	replays_->viewport()->setMouseTracking(true);
@@ -358,6 +359,11 @@ bool TapeloopDock::eventFilter(QObject *watched, QEvent *event)
 			openSourceSettings(sources_->currentRow());
 			return true;
 		}
+	}
+	// A dialog that opens during a press takes its release, and the pointer may never come
+	// back over the list to end it.
+	if (watched == replays_ && event->type() == QEvent::FocusOut) {
+		leftButtonHeld_ = false;
 	}
 	if (watched == replays_->viewport()) {
 		const QEvent::Type type = event->type();

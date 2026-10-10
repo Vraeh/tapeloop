@@ -485,6 +485,19 @@ TEST_CASE("a double click, a drag or a capture during a press does not pick anot
 		CHECK(list->count() == 4);
 		CHECK(shown() == 4u);
 	}
+	SECTION("a press whose release went to a dialog")
+	{
+		send(QEvent::MouseButtonPress, rowAt(1), Qt::LeftButton, Qt::LeftButton);
+		backend.captureReplay();
+		dock.refresh();
+		REQUIRE(list->count() == 3);
+		// The dialog takes the focus, and the pointer never comes back over the list.
+		QFocusEvent focusOut(QEvent::FocusOut, Qt::ActiveWindowFocusReason);
+		QApplication::sendEvent(list, &focusOut);
+		dock.refresh();
+		CHECK(list->count() == 4);
+		CHECK(shown() == 4u);
+	}
 }
 
 TEST_CASE("a media source left out of activation says why")
