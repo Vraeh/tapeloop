@@ -1,6 +1,7 @@
-# Builds the FFmpeg that Tapeloop links statically for decoding: the H.264 and HEVC
-# decoders and parsers and nothing else, under the LGPL (no --enable-gpl, no
-# --enable-version3), and on Windows the D3D11VA hwaccels. Run in script mode:
+# Builds the FFmpeg that Tapeloop links statically: the H.264 and HEVC decoders and
+# parsers for playback, and the MP4 muxer and the file protocol for the export of replays,
+# and nothing else, under the LGPL (no --enable-gpl, no --enable-version3), and on Windows
+# the D3D11VA hwaccels. Run in script mode:
 #
 #   cmake -DPREFIX=<install dir> -DWORK_DIR=<build dir> -P BuildFFmpeg.cmake
 #
@@ -26,13 +27,14 @@ set(
   --disable-doc
   --disable-network
   --disable-autodetect
-  --disable-avformat
   --disable-avfilter
   --disable-avdevice
   --disable-swscale
   --disable-swresample
   --enable-decoder=h264,hevc
   --enable-parser=h264,hevc
+  --enable-muxer=mp4
+  --enable-protocol=file
   --enable-static
   --disable-shared
 )
