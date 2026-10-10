@@ -32,7 +32,8 @@ struct FFmpegDecoderConfig {
 };
 
 // The FrameDecoder of FFmpeg, for H.264 and HEVC. The configuration given to open() and
-// parameter sets inside the packets are both accepted.
+// parameter sets inside the packets are both accepted; the parameter sets a packet
+// repeats from the configuration are not passed on.
 //
 // Pictures on the CPU stay in FFmpeg's buffers until released. Pictures decoded on the
 // GPU are copied out of FFmpeg's fixed pool of surfaces into textures of the decoder's
@@ -104,6 +105,8 @@ private:
 	std::unique_ptr<AVFrame, FrameDeleter> received_;
 	std::unique_ptr<AVBufferPool, PoolDeleter> packetPool_;
 	size_t packetBufferSize_ = 0;
+	VideoCodec codec_ = VideoCodec::H264;
+	std::vector<uint8_t> runConfig_;
 	std::vector<Slot> slots_;
 	std::vector<uint32_t> freeSlots_;
 };

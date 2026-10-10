@@ -319,6 +319,35 @@ TEST_CASE_METHOD(ObsFixture, "the FFmpeg decoder takes parameter sets from the c
 	}
 }
 
+TEST_CASE_METHOD(ObsFixture, "the FFmpeg decoder takes packets that repeat the configuration's parameter sets",
+		 "[decode]")
+{
+	// As OBS hands them over: the configuration from the encoder, and the same parameter
+	// sets again before every keyframe, which the decoder leaves out.
+	const Clip captured = captureClip(3);
+	const CodecConfig *h264Config = captured.gops().front()->codecConfig();
+	REQUIRE(h264Config);
+	REQUIRE(tapeloop::test::withoutParameterSets(captured.gops()[1]->packetData(0), VideoCodec::H264).size() <
+		captured.gops()[1]->packetData(0).size());
+	const RecordedRun hevc = loadRecordedRun(kHevcPattern);
+
+	SourceBuffer h264Buffer = makeBuffer();
+	h264Buffer.setCodecConfig(VideoCodec::H264, *h264Config);
+	std::vector<Expected> h264Expected;
+	pushClip(h264Buffer, captured, 1s, 0, true, h264Expected);
+	SourceBuffer hevcBuffer = makeBuffer();
+	hevcBuffer.setCodecConfig(VideoCodec::Hevc, hevc.config);
+	std::vector<Expected> hevcExpected;
+	pushRecorded(hevcBuffer, hevc, 1s, 0, true, hevcExpected);
+
+	FFmpegDecoder decoder;
+	DecodePlanner planner(decoder);
+	planner.load(h264Buffer.clip(Nanoseconds::min(), Nanoseconds::max()));
+	checkEveryWay(planner, decoder, h264Expected);
+	planner.load(hevcBuffer.clip(Nanoseconds::min(), Nanoseconds::max()));
+	checkEveryWay(planner, decoder, hevcExpected);
+}
+
 TEST_CASE_METHOD(ObsFixture, "the FFmpeg decoder follows a clip from an HEVC run into an H.264 run", "[decode]")
 {
 	const RecordedRun hevc = loadRecordedRun(kHevcPattern);
