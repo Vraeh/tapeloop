@@ -499,12 +499,20 @@ void TapeloopDock::updateSources(const std::vector<DockSource> &sources)
 				path = readbackNote(sources[i].readbackReason);
 				break;
 			case EncoderPath::Software:
-				path = "Dock.Status.Software.Tooltip";
+				path = sources[i].chosenEncoder ? "Dock.Status.SoftwareChosen.Tooltip"
+								: "Dock.Status.Software.Tooltip";
 				break;
 			}
 		}
 		if (path) {
 			note += (note.isEmpty() ? QString() : QStringLiteral("\n\n")) + text_(path);
+			if (sources[i].chosenEncoder && sources[i].encoderPath == EncoderPath::Readback) {
+				note += QStringLiteral(" ") + text_("Dock.Status.ReadbackChosen.Tooltip");
+			}
+		}
+		if (sources[i].selected && sources[i].state == SourceState::Running && sources[i].choiceSkipped) {
+			note += (note.isEmpty() ? QString() : QStringLiteral("\n\n")) +
+				text_("Dock.Status.ChoiceSkipped.Tooltip");
 		}
 		if (sources[i].selected && sources[i].hevcFailed) {
 			note += (note.isEmpty() ? QString() : QStringLiteral("\n\n")) +

@@ -61,6 +61,8 @@ std::vector<ui::DockSource> ManagerDockBackend::sources() const
 		source.activationLeftOut = status.activationLeftOut;
 		source.encoderPath = status.stats.encoderPath;
 		source.readbackReason = status.stats.readbackReason;
+		source.chosenEncoder = status.stats.chosenEncoder;
+		source.choiceSkipped = status.stats.choiceSkipped;
 		source.hevcFailed = status.hevcFailed;
 	}
 	std::sort(sources.begin(), sources.end(), [](const ui::DockSource &a, const ui::DockSource &b) {

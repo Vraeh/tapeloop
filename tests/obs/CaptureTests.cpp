@@ -412,6 +412,39 @@ TEST_CASE_METHOD(ObsFixture, "a capture reports the path its encoder takes the f
 	capture.stop();
 }
 
+TEST_CASE_METHOD(ObsFixture, "a capture says when the encoder chosen for it could not start", "[obs][capture]")
+{
+	OBSSourceAutoRelease pattern = createTestPattern(640, 360);
+	SourceCapture capture;
+	CaptureSettings settings;
+	settings.encoderPreferences.chosen = tapeloop::test::kFailingEncoderId;
+	settings.candidates = {testEncoder(tapeloop::test::kFailingEncoderId), testEncoder("obs_x264")};
+	LogCounter said("the encoder chosen for replays, could not start");
+	REQUIRE(capture.start(pattern, settings) == StartResult::Started);
+	CHECK(capture.stats().encoderId == "obs_x264");
+	CHECK(capture.stats().choiceSkipped);
+	CHECK_FALSE(capture.stats().chosenEncoder);
+	CHECK(said.lines == 1);
+	capture.stop();
+	CHECK_FALSE(capture.stats().choiceSkipped);
+
+	settings.encoderPreferences.chosen = "obs_x264";
+	settings.candidates = {testEncoder("obs_x264")};
+	REQUIRE(capture.start(pattern, settings) == StartResult::Started);
+	CHECK(capture.stats().chosenEncoder);
+	CHECK_FALSE(capture.stats().choiceSkipped);
+	capture.stop();
+	CHECK_FALSE(capture.stats().chosenEncoder);
+
+	// A choice the candidates leave out, as one an HEVC failure replaced, was not tried.
+	settings.encoderPreferences.chosen = tapeloop::test::kNvencHevcId;
+	REQUIRE(capture.start(pattern, settings) == StartResult::Started);
+	CHECK_FALSE(capture.stats().choiceSkipped);
+	CHECK_FALSE(capture.stats().chosenEncoder);
+	CHECK(said.lines == 1);
+	capture.stop();
+}
+
 TEST_CASE_METHOD(ObsFixture, "a capture reports an encoder that fails while running", "[obs][capture]")
 {
 	OBSSourceAutoRelease pattern = createTestPattern(640, 360);

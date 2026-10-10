@@ -201,6 +201,18 @@ StartResult SourceCapture::start(obs_source_t *source, const CaptureSettings &se
 				blog(LOG_INFO, "[tapeloop] Capturing '%s' at %ux%u with %s", name, outputSize->width,
 				     outputSize->height, candidate.id.c_str());
 				warnAboutPath(name, candidate.id.c_str(), encoderPath_, readbackReason_);
+				const std::string &chosen = settings.encoderPreferences.chosen;
+				chosenEncoder_ = !chosen.empty() && candidate.id == chosen;
+				choiceSkipped_ =
+					!chosen.empty() && !chosenEncoder_ &&
+					std::any_of(candidates.begin(), candidates.end(),
+						    [&](const EncoderInfo &tried) { return tried.id == chosen; });
+				if (choiceSkipped_) {
+					blog(LOG_WARNING,
+					     "[tapeloop] %s, the encoder chosen for replays, could not start for '%s', "
+					     "which %s encodes instead, the next encoder in the automatic order",
+					     chosen.c_str(), name, candidate.id.c_str());
+				}
 				return StartResult::Started;
 			}
 
@@ -279,6 +291,8 @@ void SourceCapture::tearDown()
 	encoderId_.clear();
 	encoderPath_ = EncoderPath::Texture;
 	readbackReason_ = ReadbackReason::None;
+	chosenEncoder_ = false;
+	choiceSkipped_ = false;
 	outputSize_ = {};
 }
 
@@ -311,6 +325,8 @@ CaptureStats SourceCapture::stats() const
 	stats.encoderId = encoderId_;
 	stats.encoderPath = encoderPath_;
 	stats.readbackReason = readbackReason_;
+	stats.chosenEncoder = chosenEncoder_;
+	stats.choiceSkipped = choiceSkipped_;
 	stats.outputSize = outputSize_;
 	if (buffer_) {
 		stats.buffer = buffer_->stats();

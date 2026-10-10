@@ -49,6 +49,10 @@ struct CaptureStats {
 	// Of the encoder running; Texture while none is.
 	EncoderPath encoderPath = EncoderPath::Texture;
 	ReadbackReason readbackReason = ReadbackReason::None;
+	// The encoder running is the one the user chose.
+	bool chosenEncoder = false;
+	// The encoder the user chose was tried and could not start, so another one runs.
+	bool choiceSkipped = false;
 	FrameSize outputSize;
 	SourceBufferStats buffer;
 	// From the oldest frame held to the newest.
@@ -117,6 +121,8 @@ private:
 	std::string encoderId_;
 	EncoderPath encoderPath_ = EncoderPath::Texture;
 	ReadbackReason readbackReason_ = ReadbackReason::None;
+	bool chosenEncoder_ = false;
+	bool choiceSkipped_ = false;
 };
 
 } // namespace tapeloop::obs

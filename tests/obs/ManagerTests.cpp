@@ -404,6 +404,43 @@ TEST_CASE_METHOD(ObsFixture, "a source too small to start is retried", "[obs][ma
 }
 
 // A manager capturing one test pattern with the given encoder, running with two GOPs.
+TEST_CASE_METHOD(ObsFixture, "a buffer whose chosen encoder cannot start says so", "[obs][manager]")
+{
+	// The NVENC stand-ins refuse to start until a test enables them, as NVENC does
+	// without its driver.
+	OBSSourceAutoRelease pattern = createTestPattern(320, 180, "Pattern");
+	const std::string uuid = uuidOf(pattern);
+	FakeHost host;
+	CaptureManager manager(host);
+	tapeloop::obs::ManagerDockBackend backend(manager);
+	BufferSettings settings = selecting(uuid);
+	settings.startWithOutputs = false;
+	settings.replayEncoder = tapeloop::test::kNvencH264Id;
+	manager.setSettings(settings);
+	LogCounter said("the encoder chosen for replays, could not start");
+	REQUIRE(manager.manualStart());
+	const tapeloop::obs::CaptureStats stats = manager.status(uuid).stats;
+	CHECK(stats.state == CaptureState::Running);
+	CHECK(stats.encoderId != tapeloop::test::kNvencH264Id);
+	CHECK(stats.choiceSkipped);
+	CHECK(said.lines == 1);
+	const std::vector<tapeloop::ui::DockSource> sources = backend.sources();
+	const auto source = std::find_if(sources.begin(), sources.end(),
+					 [&](const tapeloop::ui::DockSource &listed) { return listed.uuid == uuid; });
+	REQUIRE(source != sources.end());
+	CHECK(source->choiceSkipped);
+	CHECK_FALSE(source->chosenEncoder);
+	REQUIRE(manager.manualStop());
+
+	// The automatic order has no choice to skip.
+	settings.replayEncoder.clear();
+	manager.setSettings(settings);
+	REQUIRE(manager.manualStart());
+	CHECK_FALSE(manager.status(uuid).stats.choiceSkipped);
+	CHECK(said.lines == 1);
+	manager.manualStop();
+}
+
 struct NvencCapture {
 	OBSSourceAutoRelease pattern = createTestPattern(320, 180, "Pattern");
 	std::string uuid = uuidOf(pattern);

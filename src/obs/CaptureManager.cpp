@@ -619,6 +619,7 @@ CaptureManager::StartOutcome CaptureManager::start(const std::string &uuid, Entr
 						     settings_.encoderPreferences());
 	}
 	CaptureSettings settings;
+	settings.encoderPreferences = settings_.encoderPreferences();
 	settings.resolution = settings_.resolutionFor(uuid);
 	settings.bufferLength = settings_.lengthFor(uuid);
 	settings.candidates = *candidates;
