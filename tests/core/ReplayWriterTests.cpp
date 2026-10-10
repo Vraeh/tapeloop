@@ -379,7 +379,8 @@ TEST_CASE("tags go to the older slot of a manifest")
 	CHECK(tapeloop::nextTagWrite(bytes).generation == 4);
 	CHECK(tapeloop::decodeManifest(bytes));
 
-	// A torn write of the newer slot leaves the tags before it.
+	// The slot of the last write is damaged as a torn write of it would leave it, and the
+	// tags before that write come back.
 	const tapeloop::TagWrite next = tapeloop::nextTagWrite(bytes);
 	const uint64_t newer = next.offset == tapeloop::kTagSlotA ? tapeloop::kTagSlotB : tapeloop::kTagSlotA;
 	File(manifest, File::Mode::ReadWrite).writeAt(newer, std::vector<uint8_t>(64, 0xEE));
