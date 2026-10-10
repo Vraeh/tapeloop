@@ -224,6 +224,48 @@ TEST_CASE("the encoders to choose from are those whose replays the buffer can ho
 	      "obs_nvenc_hevc_tex");
 }
 
+TEST_CASE("after its HEVC encoder fails a source tries the same vendor's H.264 first")
+{
+	const std::vector<EncoderInfo> encoders = combined({x264(), intel(), nvidia(), amd()});
+	const auto after = [&](const std::vector<EncoderInfo> &before, const char *failed) {
+		Ids ids;
+		for (const EncoderInfo &info : tapeloop::candidatesAfterHevcFailure(before, encoders, failed)) {
+			ids.push_back(info.id);
+		}
+		return ids;
+	};
+	const auto order = [&](Vendor render, const EncoderPreferences &preferences) {
+		return tapeloop::replayEncoderCandidates(encoders, render, preferences);
+	};
+	EncoderPreferences preferences;
+
+	// In the automatic order the vendor's H.264 comes right after its HEVC.
+	CHECK(after(order(Vendor::Nvidia, preferences), "obs_nvenc_hevc_tex") ==
+	      Ids{"obs_nvenc_h264_tex", "obs_qsv11_hevc", "obs_qsv11_v2", "h265_texture_amf", "h264_texture_amf",
+		  "obs_x264"});
+	CHECK(after(order(Vendor::Amd, preferences), "h265_texture_amf") ==
+	      Ids{"h264_texture_amf", "obs_nvenc_hevc_tex", "obs_nvenc_h264_tex", "obs_qsv11_hevc", "obs_qsv11_v2",
+		  "obs_x264"});
+
+	// A chosen encoder of another adapter: its vendor's H.264 is one a user may choose,
+	// although the automatic order leaves it out.
+	preferences.chosen = "obs_nvenc_hevc_tex";
+	preferences.otherAdapters = false;
+	const std::vector<EncoderInfo> chosen = order(Vendor::Intel, preferences);
+	REQUIRE(chosen.front().id == "obs_nvenc_hevc_tex");
+	CHECK(after(chosen, "obs_nvenc_hevc_tex") ==
+	      Ids{"obs_nvenc_h264_tex", "obs_qsv11_hevc", "obs_qsv11_v2", "obs_x264"});
+
+	// A vendor with no H.264 to choose only loses the encoder that failed.
+	const std::vector<EncoderInfo> hevcOnly = {encoder("obs_nvenc_hevc_tex", "hevc", Vendor::Nvidia, true),
+						   x264()[0]};
+	const std::vector<EncoderInfo> left =
+		tapeloop::candidatesAfterHevcFailure(hevcOnly, hevcOnly, "obs_nvenc_hevc_tex");
+	REQUIRE(left.size() == 1);
+	CHECK(left[0].id == "obs_x264");
+	CHECK(tapeloop::candidatesAfterHevcFailure({}, {}, "obs_qsv11_hevc").empty());
+}
+
 TEST_CASE("replay candidates fall back to H.264 on a vendor without HEVC")
 {
 	std::vector<EncoderInfo> h264Only = nvidia();

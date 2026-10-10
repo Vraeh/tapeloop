@@ -6,6 +6,7 @@
 #include <algorithm>
 #include <array>
 #include <cctype>
+#include <iterator>
 #include <limits>
 #include <optional>
 #include <string>
@@ -232,6 +233,27 @@ std::vector<EncoderInfo> replayEncoderChoices(std::span<const EncoderInfo> encod
 		}
 	}
 	return choices;
+}
+
+std::vector<EncoderInfo> candidatesAfterHevcFailure(std::span<const EncoderInfo> candidates,
+						    std::span<const EncoderInfo> encoders, std::string_view failedId)
+{
+	const Vendor vendor = encoderVendor(failedId);
+	const auto sameVendorH264 = [vendor](const EncoderInfo &encoder) {
+		return encoder.vendor == vendor && encoder.codec == "h264";
+	};
+	std::vector<EncoderInfo> ordered;
+	std::copy_if(candidates.begin(), candidates.end(), std::back_inserter(ordered), sameVendorH264);
+	if (ordered.empty()) {
+		const std::vector<EncoderInfo> choices = replayEncoderChoices(encoders);
+		std::copy_if(choices.begin(), choices.end(), std::back_inserter(ordered), sameVendorH264);
+	}
+	for (const EncoderInfo &candidate : candidates) {
+		if (candidate.id != failedId && !sameVendorH264(candidate)) {
+			ordered.push_back(candidate);
+		}
+	}
+	return ordered;
 }
 
 EncoderSettings buildReplaySettings(const EncoderInfo &encoder, const ReplayEncoderParams &params)

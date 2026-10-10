@@ -94,6 +94,12 @@ std::vector<EncoderInfo> replayEncoderCandidates(std::span<const EncoderInfo> en
 // only those get settings without B-frames, in the order given.
 std::vector<EncoderInfo> replayEncoderChoices(std::span<const EncoderInfo> encoders);
 
+// The candidates for a source whose HEVC encoder failed while it ran: the H.264 encoders
+// of that encoder's vendor first, those among the candidates in their order, else those
+// a user may choose, then the other candidates, without the one that failed.
+std::vector<EncoderInfo> candidatesAfterHevcFailure(std::span<const EncoderInfo> candidates,
+						    std::span<const EncoderInfo> encoders, std::string_view failedId);
+
 struct ReplayEncoderParams {
 	int64_t width = 1920;
 	int64_t height = 1080;
