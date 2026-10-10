@@ -425,12 +425,12 @@ bool tagsFit(std::span<const std::string> tags) noexcept
 
 std::vector<uint8_t> encodeTagSlot(std::span<const std::string> tags, uint64_t generation)
 {
+	if (!tagsFit(tags)) {
+		throw std::length_error("tags do not fit their slot");
+	}
 	std::vector<uint8_t> slot(kTagSlotSize, 0);
 	size_t at = kTagSlotHeadSize;
 	for (const std::string &tag : tags) {
-		if (tag.size() > kTagSlotSize || at + kTagRecordHeadSize + tag.size() > kTagSlotSize) {
-			throw std::length_error("tags do not fit their slot");
-		}
 		put16(slot, at, kTagRecord);
 		put32(slot, at + 4, static_cast<uint32_t>(tag.size()));
 		putBytes(slot, at + kTagRecordHeadSize, bytesOf(tag));
