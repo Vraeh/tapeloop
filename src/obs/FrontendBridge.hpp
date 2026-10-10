@@ -37,6 +37,7 @@ private:
 	// The frontend API is gone by the time the module unloads, so the callbacks go at
 	// the exit event.
 	void removeFrontendCallbacks() noexcept;
+	void loadCaptureHotkey() noexcept;
 
 	static void handleEvent(obs_frontend_event event, void *data) noexcept;
 	static void handleSave(obs_data_t *collection, bool saving, void *data) noexcept;
