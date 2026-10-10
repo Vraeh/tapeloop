@@ -183,11 +183,12 @@ struct ReplayScan {
 // instead of throwing. Nothing for a base that does not exist.
 ReplayScan scanReplays(const std::filesystem::path &base);
 
-// The index of the replay whose manifest this is. Nothing when it cannot be read or is
-// not an intact manifest.
+// The index of the replay whose manifest or self-contained file this is, read without the
+// GOPs. Nothing when it cannot be read or is not intact.
 std::optional<ReplayIndex> readReplayIndex(const std::filesystem::path &manifest);
 
-// Where the segment of a source that a manifest refers to lives.
+// Where the segment of a source that a manifest refers to lives: for kOwnFile, the
+// self-contained replay itself.
 std::filesystem::path segmentPath(const std::filesystem::path &manifest, const StoredSource &source, uint32_t segment);
 
 } // namespace tapeloop

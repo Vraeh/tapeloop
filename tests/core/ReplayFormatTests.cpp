@@ -7,8 +7,11 @@
 
 #include <catch2/catch_test_macros.hpp>
 
+#include <algorithm>
 #include <cstdint>
 #include <memory>
+#include <optional>
+#include <span>
 #include <stdexcept>
 #include <string>
 #include <vector>
@@ -346,6 +349,104 @@ TEST_CASE("a manifest cut short or damaged where it is checked is refused")
 	std::vector<uint8_t> longer = file;
 	longer.push_back(0);
 	CHECK_FALSE(tapeloop::decodeManifest(longer));
+}
+
+TEST_CASE("a self-contained replay holds its GOP chunks between its tag slots and its index")
+{
+	const auto config = std::make_shared<const CodecConfig>(CodecConfig{0, 0, 0, 1, 0x67, 0x42});
+	Gops gops = makeGops(2, VideoCodec::H264, config);
+	const Gops hevc = makeGops(1, VideoCodec::Hevc, nullptr, 10);
+	gops.insert(gops.end(), hevc.begin(), hevc.end());
+	std::vector<uint8_t> file(tapeloop::kManifestIndexOffset, 0);
+	std::vector<ChunkPlace> places;
+	for (const auto &gop : gops) {
+		places.push_back(tapeloop::appendGopChunk(file, 0, *gop));
+	}
+	ReplayIndex index;
+	index.id = {9, 8, 7, 6, 5, 4, 3, 2, 1, 0, 1, 2, 3, 4, 5, 6};
+	index.sources.push_back(sourceOf("a", gops, places));
+	for (StoredGop &gop : index.sources[0].gops) {
+		gop.segment = tapeloop::kOwnFile;
+	}
+	index.start = index.sources[0].in;
+	index.end = index.sources[0].out;
+	REQUIRE(tapeloop::selfContained(index));
+	CHECK_THROWS_AS(tapeloop::encodeManifest(index, {}), std::invalid_argument);
+
+	const std::vector<std::string> tags = {"save"};
+	const std::vector<uint8_t> head = tapeloop::encodeManifestHead(index, tags);
+	REQUIRE(head.size() == tapeloop::kManifestIndexOffset);
+	std::copy(head.begin(), head.end(), file.begin());
+	const uint64_t indexOffset = file.size();
+	const std::vector<uint8_t> tail = tapeloop::encodeManifestTail(index, indexOffset);
+	file.insert(file.end(), tail.begin(), tail.end());
+
+	const std::optional<ReplayIndex> read = tapeloop::decodeManifest(file);
+	REQUIRE(read);
+	requireSame(*read, index);
+	CHECK(tapeloop::selfContained(*read));
+	CHECK(tapeloop::decodeTags(file) == tags);
+	for (size_t g = 0; g < gops.size(); ++g) {
+		const StoredGop &stored = read->sources[0].gops[g];
+		const auto chunk = std::span<const uint8_t>(file).subspan(stored.offset, stored.size);
+		const auto gop = tapeloop::decodeGopChunk(chunk, stored.headerCrc, read->sources[0].runs[stored.run]);
+		REQUIRE(gop);
+		requireSame(*gop, *gops[g]);
+	}
+
+	// Its index is found from its footer, without reading the GOPs.
+	const std::span<const uint8_t> footer = std::span<const uint8_t>(file).last(tapeloop::kManifestFooterSize);
+	const std::optional<tapeloop::IndexPlace> place = tapeloop::decodeManifestFooter(footer, file.size());
+	REQUIRE(place);
+	CHECK(place->offset == indexOffset);
+	CHECK(tapeloop::decodeManifest(std::span<const uint8_t>(file).first(tapeloop::kManifestIndexOffset),
+				       std::span<const uint8_t>(file).subspan(place->offset, place->size), footer,
+				       file.size()));
+	CHECK_FALSE(tapeloop::decodeManifestFooter(footer, file.size() + 1));
+	CHECK_FALSE(tapeloop::decodeManifest(std::span<const uint8_t>(file).first(tapeloop::kManifestIndexOffset),
+					     std::span<const uint8_t>(file).subspan(place->offset, place->size - 1),
+					     footer, file.size()));
+}
+
+TEST_CASE("a replay is self-contained or uses segments, never both")
+{
+	const auto config = std::make_shared<const CodecConfig>(CodecConfig{0, 0, 0, 1, 0x67, 0x42});
+	const Gops gops = makeGops(2, VideoCodec::H264, config);
+	std::vector<uint8_t> file(tapeloop::kManifestIndexOffset, 0);
+	std::vector<ChunkPlace> places;
+	for (const auto &gop : gops) {
+		places.push_back(tapeloop::appendGopChunk(file, 0, *gop));
+	}
+	ReplayIndex index;
+	index.sources.push_back(sourceOf("a", gops, places));
+	index.start = index.sources[0].in;
+	index.end = index.sources[0].out;
+	const auto build = [&](const ReplayIndex &written, uint64_t indexOffset) {
+		std::vector<uint8_t> bytes = file;
+		const std::vector<uint8_t> head = tapeloop::encodeManifestHead(written, {});
+		std::copy(head.begin(), head.end(), bytes.begin());
+		bytes.resize(indexOffset);
+		const std::vector<uint8_t> tail = tapeloop::encodeManifestTail(written, indexOffset);
+		bytes.insert(bytes.end(), tail.begin(), tail.end());
+		return bytes;
+	};
+
+	// A manifest, which refers to segments, has its index right after its tag slots.
+	CHECK(tapeloop::decodeManifest(build(index, tapeloop::kManifestIndexOffset)));
+	CHECK_FALSE(tapeloop::decodeManifest(build(index, file.size())));
+
+	index.sources[0].gops[1].segment = tapeloop::kOwnFile;
+	CHECK_THROWS_AS(tapeloop::encodeManifestHead(index, {}), std::invalid_argument);
+	index.sources[0].gops[0].segment = tapeloop::kOwnFile;
+	CHECK(tapeloop::decodeManifest(build(index, file.size())));
+	// Its own GOPs must lie between the tag slots and the index.
+	CHECK_FALSE(tapeloop::decodeManifest(build(index, tapeloop::kManifestIndexOffset)));
+	index.sources[0].gops[1].offset = file.size();
+	CHECK_FALSE(tapeloop::decodeManifest(build(index, file.size())));
+	index.sources[0].gops[1].offset = 0;
+	CHECK_FALSE(tapeloop::decodeManifest(build(index, file.size())));
+	CHECK_THROWS_AS(tapeloop::encodeManifestTail(index, file.size() + 1), std::invalid_argument);
+	CHECK_THROWS_AS(tapeloop::encodeManifestTail(index, 4096), std::invalid_argument);
 }
 
 TEST_CASE("a tag edit goes to the older slot, and a torn edit leaves the previous tags")

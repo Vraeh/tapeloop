@@ -11,6 +11,8 @@
 
 #include <catch2/catch_test_macros.hpp>
 
+#include <algorithm>
+#include <cstdint>
 #include <filesystem>
 #include <memory>
 #include <optional>
@@ -196,5 +198,38 @@ TEST_CASE("a GOP whose segment is damaged or gone is not read")
 		changed.gops[0].run = 5;
 		CHECK_FALSE(reader.read(stored.manifest(), changed, 0));
 		CHECK(reader.stats().failed == 2);
+	}
+}
+
+TEST_CASE("a self-contained replay is read from its own file, its index without its GOPs")
+{
+	TempDirectory dir;
+	const Gops gops = makeGops(3);
+	const Stored stored = store(dir.path(), gops);
+	ReplayIndex index = stored.written.index;
+	std::vector<uint8_t> bytes(tapeloop::kManifestIndexOffset, 0);
+	for (size_t i = 0; i < gops.size(); ++i) {
+		const tapeloop::ChunkPlace place = tapeloop::appendGopChunk(bytes, 0, *gops[i]);
+		tapeloop::StoredGop &gop = index.sources.front().gops[i];
+		gop = {tapeloop::kOwnFile, gop.packetCount, place.offset, place.size, place.headerCrc, gop.run};
+	}
+	const std::vector<uint8_t> head = tapeloop::encodeManifestHead(index, {});
+	std::copy(head.begin(), head.end(), bytes.begin());
+	const std::vector<uint8_t> tail = tapeloop::encodeManifestTail(index, bytes.size());
+	bytes.insert(bytes.end(), tail.begin(), tail.end());
+	const fs::path path = dir.path() / "exported.tplp";
+	File(path, File::Mode::CreateNew).writeAt(0, bytes);
+
+	const std::optional<ReplayIndex> read = tapeloop::readReplayIndex(path);
+	REQUIRE(read);
+	REQUIRE(tapeloop::selfContained(*read));
+	CHECK(tapeloop::segmentPath(path, read->sources.front(), tapeloop::kOwnFile) == path);
+	// The segments it was copied from are not needed.
+	fs::remove_all(dir.path() / "data");
+	GopReader reader;
+	for (size_t i = 0; i < gops.size(); ++i) {
+		const std::shared_ptr<const Gop> gop = reader.read(path, read->sources.front(), i);
+		REQUIRE(gop);
+		CHECK(sameGop(*gop, *gops[i]));
 	}
 }

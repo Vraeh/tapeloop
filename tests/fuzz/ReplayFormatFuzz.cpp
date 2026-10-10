@@ -71,16 +71,15 @@ uint32_t resealChunk(std::span<uint8_t> chunk)
 	return headerCrc;
 }
 
-// The manifest's header, index chunk and footer CRCs computed again.
-void resealManifest(std::vector<uint8_t> &manifest)
+// The header, index chunk and footer CRCs computed again, for an index at indexOffset.
+void resealManifest(std::vector<uint8_t> &manifest, uint64_t indexOffset)
 {
 	const std::span<uint8_t> bytes(manifest);
-	if (bytes.size() < tapeloop::kManifestIndexOffset + tapeloop::kManifestFooterSize) {
+	if (bytes.size() < indexOffset + tapeloop::kManifestFooterSize) {
 		return;
 	}
 	store32(bytes, 60, tapeloop::crc32c(bytes.first(60)));
-	resealChunk(bytes.subspan(tapeloop::kManifestIndexOffset,
-				  bytes.size() - tapeloop::kManifestIndexOffset - tapeloop::kManifestFooterSize));
+	resealChunk(bytes.subspan(indexOffset, bytes.size() - indexOffset - tapeloop::kManifestFooterSize));
 	const std::span<uint8_t> footer = bytes.last(tapeloop::kManifestFooterSize);
 	store32(footer, 60, tapeloop::crc32c(footer.first(60)));
 }
@@ -150,17 +149,38 @@ bool sameIndex(const ReplayIndex &a, const ReplayIndex &b)
 	return true;
 }
 
-// A manifest of real GOP chunks, damaged a little: it either decodes to what was written
-// or is refused, and every GOP it lists reads back or is refused. Resealed, the damage
-// passes the CRCs: the manifest is then refused or decodes to an index of its own, and
-// the GOPs at the places it gives are read the way the reader reads them.
+// The file again from its decoded index: a manifest, or a self-contained replay with the
+// GOP chunks of the original between its head and its index.
+std::vector<uint8_t> encodeAgain(const ReplayIndex &index, std::span<const uint8_t> original)
+{
+	if (!tapeloop::selfContained(index)) {
+		return tapeloop::encodeManifest(index, {});
+	}
+	const std::optional<tapeloop::IndexPlace> place =
+		tapeloop::decodeManifestFooter(original.last(tapeloop::kManifestFooterSize), original.size());
+	require(place.has_value());
+	std::vector<uint8_t> file = tapeloop::encodeManifestHead(index, {});
+	file.insert(file.end(), original.begin() + tapeloop::kManifestIndexOffset,
+		    original.begin() + static_cast<std::ptrdiff_t>(place->offset));
+	const std::vector<uint8_t> tail = tapeloop::encodeManifestTail(index, place->offset);
+	file.insert(file.end(), tail.begin(), tail.end());
+	return file;
+}
+
+// A manifest of real GOP chunks, or a self-contained replay holding them, damaged a
+// little: it either decodes to what was written or is refused, and every GOP it lists
+// reads back or is refused. Resealed, the damage passes the CRCs: the file is then
+// refused or decodes to an index of its own, and the GOPs at the places it gives are read
+// the way the reader reads them.
 void writtenThenDamaged(FuzzInput &input)
 {
 	const bool reseal = input.flag();
+	const bool own = input.flag();
 	ReplayIndex index;
 	index.capturedAtUtc = static_cast<int64_t>(input.u64());
 	index.capturedAtClock = Nanoseconds{static_cast<int64_t>(input.u64() >> 1)};
-	std::vector<uint8_t> segment(tapeloop::kReplayAlignment, 0);
+	// A self-contained replay's chunks start after its tag slots.
+	std::vector<uint8_t> segment(own ? tapeloop::kManifestIndexOffset : tapeloop::kReplayAlignment, 0);
 	int64_t frame = 0;
 	for (int sources = 1 + input.byte() % 3; sources > 0; --sources) {
 		StoredSource source;
@@ -172,7 +192,8 @@ void writtenThenDamaged(FuzzInput &input)
 					source.runs.push_back(run);
 				}
 				const ChunkPlace place = tapeloop::appendGopChunk(segment, 0, *gop);
-				source.gops.push_back({0, static_cast<uint32_t>(gop->packets().size()), place.offset,
+				source.gops.push_back({own ? tapeloop::kOwnFile : 0,
+						       static_cast<uint32_t>(gop->packets().size()), place.offset,
 						       place.size, place.headerCrc,
 						       static_cast<uint32_t>(source.runs.size() - 1)});
 				for (const tapeloop::PacketRecord &packet : gop->packets()) {
@@ -187,14 +208,23 @@ void writtenThenDamaged(FuzzInput &input)
 	index.start = index.sources.front().in;
 	index.end = index.sources.front().out;
 
-	std::vector<uint8_t> manifest = tapeloop::encodeManifest(index, {});
+	std::vector<uint8_t> manifest;
+	const uint64_t indexOffset = own ? segment.size() : tapeloop::kManifestIndexOffset;
+	if (own) {
+		manifest = tapeloop::encodeManifestHead(index, {});
+		manifest.insert(manifest.end(), segment.begin() + tapeloop::kManifestIndexOffset, segment.end());
+		const std::vector<uint8_t> tail = tapeloop::encodeManifestTail(index, indexOffset);
+		manifest.insert(manifest.end(), tail.begin(), tail.end());
+	} else {
+		manifest = tapeloop::encodeManifest(index, {});
+	}
 	damage(input, manifest);
 	if (reseal) {
-		resealManifest(manifest);
+		resealManifest(manifest, indexOffset);
 	}
 	const std::optional<ReplayIndex> read = tapeloop::decodeManifest(manifest);
 	if (read && reseal) {
-		const std::optional<ReplayIndex> again = tapeloop::decodeManifest(tapeloop::encodeManifest(*read, {}));
+		const std::optional<ReplayIndex> again = tapeloop::decodeManifest(encodeAgain(*read, manifest));
 		require(again && sameIndex(*again, *read));
 	} else if (read) {
 		require(sameIndex(*read, index));
@@ -202,15 +232,15 @@ void writtenThenDamaged(FuzzInput &input)
 	(void)tapeloop::decodeTags(manifest);
 	(void)tapeloop::nextTagWrite(manifest);
 
-	damage(input, segment);
+	std::vector<uint8_t> &chunks = own ? manifest : segment;
+	damage(input, chunks);
 	const ReplayIndex &placed = read && reseal ? *read : index;
 	for (const StoredSource &source : placed.sources) {
 		for (const tapeloop::StoredGop &stored : source.gops) {
-			if (stored.offset > segment.size() || stored.size > segment.size() - stored.offset) {
+			if (stored.offset > chunks.size() || stored.size > chunks.size() - stored.offset) {
 				continue;
 			}
-			const std::span<uint8_t> chunk =
-				std::span<uint8_t>(segment).subspan(stored.offset, stored.size);
+			const std::span<uint8_t> chunk = std::span<uint8_t>(chunks).subspan(stored.offset, stored.size);
 			const uint32_t headerCrc = reseal ? resealChunk(chunk) : stored.headerCrc;
 			const std::shared_ptr<const Gop> gop =
 				tapeloop::decodeGopChunk(chunk, headerCrc, source.runs[stored.run]);
@@ -232,9 +262,9 @@ extern "C" int LLVMFuzzerTestOneInput(const uint8_t *data, size_t size)
 	case 0: {
 		const std::span<const uint8_t> bytes = input.bytes(size);
 		if (const std::optional<ReplayIndex> index = tapeloop::decodeManifest(bytes)) {
-			// What decodes encodes again to a manifest that decodes the same.
-			const std::optional<ReplayIndex> again =
-				tapeloop::decodeManifest(tapeloop::encodeManifest(*index, {}));
+			// What decodes encodes again to a file that decodes the same; a self-contained
+			// replay keeps its GOP chunks where they were.
+			const std::optional<ReplayIndex> again = tapeloop::decodeManifest(encodeAgain(*index, bytes));
 			require(again && sameIndex(*again, *index));
 		}
 		(void)tapeloop::decodeTags(bytes);

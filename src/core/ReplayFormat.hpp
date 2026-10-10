@@ -21,9 +21,11 @@ namespace tapeloop {
 // The bytes of stored replays. A broadcast folder holds, per captured source, append-only
 // segments `data/<source key>-<sequence>.tpls` of GOP chunks, and per replay a small
 // manifest `<name>.tplp` that lists the GOPs it uses with their frame times, and its
-// tags. Everything is little-endian, chunks start at multiples of kReplayAlignment, and
-// every chunk header and payload carries a CRC-32C. These functions only encode and
-// decode bytes; ReplayWriter and GopReader read and write the files.
+// tags. An exported replay is self-contained: one `.tplp` with the manifest's layout and
+// its GOP chunks between the tag slots and the index. Everything is little-endian,
+// chunks start at multiples of kReplayAlignment, and every chunk header and payload
+// carries a CRC-32C. These functions only encode and decode bytes; ReplayWriter and
+// GopReader read and write the files.
 
 inline constexpr size_t kReplayAlignment = 4096;
 inline constexpr uint16_t kReplayFormatMajor = 1;
@@ -107,7 +109,11 @@ std::optional<uint64_t> gopChunkSizeFromHeader(std::span<const uint8_t> header, 
 // header fails its CRC or is not a GOP chunk.
 std::optional<GopKey> peekGopKey(std::span<const uint8_t> chunkStart);
 
+// The segment of a GOP that a self-contained replay holds in its own file.
+inline constexpr uint32_t kOwnFile = 0xFFFFFFFF;
+
 struct StoredGop {
+	// The sequence of the segment that holds it, or kOwnFile.
 	uint32_t segment = 0;
 	uint32_t packetCount = 0;
 	uint64_t offset = 0;
@@ -149,9 +155,33 @@ size_t firstFrameOf(const StoredSource &source, size_t gop) noexcept;
 // As Clip::locate: the frame on screen at t, clamped to [in, out].
 FrameLocation locate(const StoredSource &source, Nanoseconds t) noexcept;
 
-// The whole manifest, both tag slots holding these tags at generation 1.
+// Whether the replay holds its GOPs in its own file rather than in segments.
+bool selfContained(const ReplayIndex &index) noexcept;
+
+// The header and both tag slots, kManifestIndexOffset bytes, the slots holding these tags
+// at generation 1. Throws std::invalid_argument for a replay whose GOPs are only partly
+// in its own file.
+std::vector<uint8_t> encodeManifestHead(const ReplayIndex &index, std::span<const std::string> tags);
+// The index chunk and the footer, for a file whose index starts at indexOffset: right
+// after the head in a manifest, after the GOP chunks in a self-contained replay.
+std::vector<uint8_t> encodeManifestTail(const ReplayIndex &index, uint64_t indexOffset);
+// A whole manifest. Throws std::invalid_argument for a self-contained replay, which needs
+// its GOP chunks between the head and the tail.
 std::vector<uint8_t> encodeManifest(const ReplayIndex &index, std::span<const std::string> tags);
-// Null for a file that is not a complete and intact manifest of this major version.
+
+// Where the index chunk of a file of this size lies, from the file's last
+// kManifestFooterSize bytes. Null when the footer is not intact.
+struct IndexPlace {
+	uint64_t offset = 0;
+	uint64_t size = 0;
+};
+std::optional<IndexPlace> decodeManifestFooter(std::span<const uint8_t> footer, uint64_t fileSize);
+// From the head, the index chunk at the place the footer gives, and the footer, which is
+// all a self-contained replay needs read for its index. Null for a file that is not a
+// complete and intact manifest or self-contained replay of this major version.
+std::optional<ReplayIndex> decodeManifest(std::span<const uint8_t> head, std::span<const uint8_t> indexChunk,
+					  std::span<const uint8_t> footer, uint64_t fileSize);
+// The same, from the whole file.
 std::optional<ReplayIndex> decodeManifest(std::span<const uint8_t> file);
 
 struct TagSlot {

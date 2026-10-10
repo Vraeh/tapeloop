@@ -508,8 +508,48 @@ TagWrite nextTagWrite(std::span<const uint8_t> manifestHead)
 	return {a < b ? kTagSlotA : kTagSlotB, std::max(a, b) + 1};
 }
 
-std::vector<uint8_t> encodeManifest(const ReplayIndex &index, std::span<const std::string> tags)
+bool selfContained(const ReplayIndex &index) noexcept
 {
+	return !index.sources.empty() && !index.sources.front().gops.empty() &&
+	       index.sources.front().gops.front().segment == kOwnFile;
+}
+
+std::vector<uint8_t> encodeManifestHead(const ReplayIndex &index, std::span<const std::string> tags)
+{
+	const bool own = selfContained(index);
+	for (const StoredSource &source : index.sources) {
+		for (const StoredGop &gop : source.gops) {
+			if ((gop.segment == kOwnFile) != own) {
+				throw std::invalid_argument(
+					"a replay holds its GOPs either in segments or in its own file");
+			}
+		}
+	}
+	std::vector<uint8_t> head(kManifestIndexOffset, 0);
+	const std::span<uint8_t> bytes(head);
+	putBytes(bytes, 0, kManifestMagic);
+	put16(bytes, 8, kReplayFormatMajor);
+	put16(bytes, 10, kReplayFormatMinor);
+	put32(bytes, 12, kManifestHeaderSize);
+	put32(bytes, 16, own ? 0 : kFlagSegments);
+	put32(bytes, 20, static_cast<uint32_t>(kReplayAlignment));
+	putBytes(bytes, 24, index.id);
+	put64(bytes, 40, static_cast<uint64_t>(index.capturedAtUtc));
+	putTime(bytes, 48, index.capturedAtClock);
+	put32(bytes, 56, static_cast<uint32_t>(kTagSlotSize));
+	put32(bytes, 60, crc32c(bytes.first(60)));
+
+	const std::vector<uint8_t> slot = encodeTagSlot(tags, 1);
+	putBytes(bytes, kTagSlotA, slot);
+	putBytes(bytes, kTagSlotB, slot);
+	return head;
+}
+
+std::vector<uint8_t> encodeManifestTail(const ReplayIndex &index, uint64_t indexOffset)
+{
+	if (indexOffset < kManifestIndexOffset || indexOffset % kReplayAlignment != 0) {
+		throw std::invalid_argument("the index starts at an aligned offset past the tag slots");
+	}
 	uint64_t runCount = 0;
 	uint64_t gopCount = 0;
 	uint64_t frameCount = 0;
@@ -537,27 +577,11 @@ std::vector<uint8_t> encodeManifest(const ReplayIndex &index, std::span<const st
 	const uint64_t framesAt = gopsAt + kGopEntrySize * gopCount;
 	const uint64_t blobAt = framesAt + 8 * frameCount;
 	const uint64_t payloadSize = blobAt + blobSize;
-	const uint64_t fileSize = kManifestIndexOffset + kChunkHeaderSize + payloadSize + kManifestFooterSize;
+	const uint64_t tailSize = kChunkHeaderSize + payloadSize + kManifestFooterSize;
 
-	std::vector<uint8_t> file(fileSize, 0);
-	const std::span<uint8_t> bytes(file);
-	putBytes(bytes, 0, kManifestMagic);
-	put16(bytes, 8, kReplayFormatMajor);
-	put16(bytes, 10, kReplayFormatMinor);
-	put32(bytes, 12, kManifestHeaderSize);
-	put32(bytes, 16, kFlagSegments);
-	put32(bytes, 20, static_cast<uint32_t>(kReplayAlignment));
-	putBytes(bytes, 24, index.id);
-	put64(bytes, 40, static_cast<uint64_t>(index.capturedAtUtc));
-	putTime(bytes, 48, index.capturedAtClock);
-	put32(bytes, 56, static_cast<uint32_t>(kTagSlotSize));
-	put32(bytes, 60, crc32c(bytes.first(60)));
-
-	const std::vector<uint8_t> slot = encodeTagSlot(tags, 1);
-	putBytes(bytes, kTagSlotA, slot);
-	putBytes(bytes, kTagSlotB, slot);
-
-	const std::span<uint8_t> payload = bytes.subspan(kManifestIndexOffset + kChunkHeaderSize, payloadSize);
+	std::vector<uint8_t> tail(tailSize, 0);
+	const std::span<uint8_t> bytes(tail);
+	const std::span<uint8_t> payload = bytes.subspan(kChunkHeaderSize, payloadSize);
 	put32(payload, 0, static_cast<uint32_t>(index.sources.size()));
 	put32(payload, 4, static_cast<uint32_t>(runCount));
 	put32(payload, 8, static_cast<uint32_t>(gopCount));
@@ -614,40 +638,81 @@ std::vector<uint8_t> encodeManifest(const ReplayIndex &index, std::span<const st
 			putTime(payload, framesAt + 8 * frame++, time);
 		}
 	}
-	sealChunk(bytes, kManifestIndexOffset, kIndexChunk, 0, payloadSize);
+	sealChunk(bytes, 0, kIndexChunk, 0, payloadSize);
 
 	const std::span<uint8_t> footer = bytes.last(kManifestFooterSize);
 	putBytes(footer, 0, kFooterMagic);
 	put16(footer, 8, kReplayFormatMajor);
 	put16(footer, 10, kReplayFormatMinor);
-	put64(footer, 16, kManifestIndexOffset);
+	put64(footer, 16, indexOffset);
 	put64(footer, 24, kChunkHeaderSize + payloadSize);
 	putBytes(footer, 32, index.id);
-	put64(footer, 48, fileSize);
+	put64(footer, 48, indexOffset + tailSize);
 	put32(footer, 60, crc32c(footer.first(60)));
+	return tail;
+}
+
+std::vector<uint8_t> encodeManifest(const ReplayIndex &index, std::span<const std::string> tags)
+{
+	if (selfContained(index)) {
+		throw std::invalid_argument("a self-contained replay holds its GOP chunks before its index");
+	}
+	std::vector<uint8_t> file = encodeManifestHead(index, tags);
+	const std::vector<uint8_t> tail = encodeManifestTail(index, kManifestIndexOffset);
+	file.insert(file.end(), tail.begin(), tail.end());
 	return file;
+}
+
+std::optional<IndexPlace> decodeManifestFooter(std::span<const uint8_t> footer, uint64_t fileSize)
+{
+	if (footer.size() != kManifestFooterSize || !hasMagic(footer, kFooterMagic) ||
+	    get16(footer, 8) != kReplayFormatMajor || crc32c(footer.first(60)) != get32(footer, 60) ||
+	    get64(footer, 48) != fileSize || fileSize < kManifestIndexOffset + kManifestFooterSize) {
+		return std::nullopt;
+	}
+	const IndexPlace place{get64(footer, 16), get64(footer, 24)};
+	// The index chunk ends where the footer starts.
+	if (place.offset < kManifestIndexOffset || place.offset % kReplayAlignment != 0 ||
+	    place.offset > fileSize - kManifestFooterSize ||
+	    place.size != fileSize - kManifestFooterSize - place.offset) {
+		return std::nullopt;
+	}
+	return place;
 }
 
 std::optional<ReplayIndex> decodeManifest(std::span<const uint8_t> file)
 {
-	if (file.size() < kManifestIndexOffset + kChunkHeaderSize + kIndexHeadSize + kManifestFooterSize ||
-	    !hasMagic(file, kManifestMagic) || get16(file, 8) != kReplayFormatMajor ||
-	    get32(file, 12) != kManifestHeaderSize || (get32(file, 16) & kFlagSegments) == 0 ||
-	    get32(file, 20) != kReplayAlignment || get32(file, 56) != kTagSlotSize ||
-	    crc32c(file.first(60)) != get32(file, 60)) {
+	if (file.size() < kManifestIndexOffset + kManifestFooterSize) {
 		return std::nullopt;
 	}
 	const std::span<const uint8_t> footer = file.last(kManifestFooterSize);
-	if (!hasMagic(footer, kFooterMagic) || get16(footer, 8) != kReplayFormatMajor ||
-	    crc32c(footer.first(60)) != get32(footer, 60) || get64(footer, 48) != file.size() ||
-	    get64(footer, 16) != kManifestIndexOffset ||
-	    get64(footer, 24) != file.size() - kManifestIndexOffset - kManifestFooterSize ||
-	    !std::equal(footer.begin() + 32, footer.begin() + 48, file.begin() + 24)) {
+	const std::optional<IndexPlace> place = decodeManifestFooter(footer, file.size());
+	if (!place) {
 		return std::nullopt;
 	}
-	const std::optional<std::span<const uint8_t>> found =
-		chunkPayload(file.subspan(kManifestIndexOffset, get64(footer, 24)), kIndexChunk);
-	if (!found || found->size() != get64(footer, 24) - kChunkHeaderSize) {
+	return decodeManifest(file.first(kManifestIndexOffset), file.subspan(place->offset, place->size), footer,
+			      file.size());
+}
+
+std::optional<ReplayIndex> decodeManifest(std::span<const uint8_t> head, std::span<const uint8_t> indexChunk,
+					  std::span<const uint8_t> footer, uint64_t fileSize)
+{
+	if (head.size() != kManifestIndexOffset || !hasMagic(head, kManifestMagic) ||
+	    get16(head, 8) != kReplayFormatMajor || get32(head, 12) != kManifestHeaderSize ||
+	    get32(head, 20) != kReplayAlignment || get32(head, 56) != kTagSlotSize ||
+	    crc32c(head.first(60)) != get32(head, 60)) {
+		return std::nullopt;
+	}
+	const std::optional<IndexPlace> place = decodeManifestFooter(footer, fileSize);
+	// A manifest has its index right after the tag slots; a self-contained replay has its
+	// GOP chunks there.
+	const bool own = (get32(head, 16) & kFlagSegments) == 0;
+	if (!place || indexChunk.size() != place->size || (!own && place->offset != kManifestIndexOffset) ||
+	    !std::equal(footer.begin() + 32, footer.begin() + 48, head.begin() + 24)) {
+		return std::nullopt;
+	}
+	const std::optional<std::span<const uint8_t>> found = chunkPayload(indexChunk, kIndexChunk);
+	if (!found || found->size() < kIndexHeadSize || found->size() != place->size - kChunkHeaderSize) {
 		return std::nullopt;
 	}
 	const std::span<const uint8_t> payload = *found;
@@ -669,9 +734,9 @@ std::optional<ReplayIndex> decodeManifest(std::span<const uint8_t> file)
 	};
 
 	ReplayIndex index;
-	std::copy_n(file.subspan(24, index.id.size()).begin(), index.id.size(), index.id.begin());
-	index.capturedAtUtc = static_cast<int64_t>(get64(file, 40));
-	index.capturedAtClock = getTime(file, 48);
+	std::copy_n(head.subspan(24, index.id.size()).begin(), index.id.size(), index.id.begin());
+	index.capturedAtUtc = static_cast<int64_t>(get64(head, 40));
+	index.capturedAtClock = getTime(head, 48);
 	index.start = getTime(payload, 24);
 	index.end = getTime(payload, 32);
 	uint64_t run = 0;
@@ -729,7 +794,13 @@ std::optional<ReplayIndex> decodeManifest(std::span<const uint8_t> file)
 			stored.headerCrc = get32(payload, at + 24);
 			stored.run = get32(payload, at + 28);
 			if (stored.packetCount == 0 || stored.run >= source.runs.size() ||
-			    stored.size < kChunkHeaderSize || stored.offset % kReplayAlignment != 0) {
+			    stored.size < kChunkHeaderSize || stored.offset % kReplayAlignment != 0 ||
+			    (stored.segment == kOwnFile) != own) {
+				return std::nullopt;
+			}
+			// Its own GOPs lie between the tag slots and the index.
+			if (own && (stored.offset < kManifestIndexOffset || stored.offset > place->offset ||
+				    stored.size > place->offset - stored.offset)) {
 				return std::nullopt;
 			}
 			packets += stored.packetCount;
