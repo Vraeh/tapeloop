@@ -19,13 +19,19 @@ inline constexpr const char *kHevcEncoderId = "tapeloop_test_hevc";
 inline constexpr const char *kHevcTextureEncoderId = "tapeloop_test_hevc_texture";
 
 // Encoders under the ids of NVENC, which the harness has no driver for, without its
-// texture path: a keyframe of a few made-up bytes every 30 frames, and failing on every
-// frame while failTestNvenc(true).
+// texture path: a keyframe of a few made-up bytes every 30 frames. They refuse to start
+// until enableTestNvenc, so that on a hardware render adapter, where the automatic order
+// would try them, the tests that do not use them get x264 as before.
 inline constexpr const char *kNvencHevcId = "obs_nvenc_hevc_tex";
 inline constexpr const char *kNvencH264Id = "obs_nvenc_h264_tex";
 
 void registerTestEncoders();
+void enableTestNvenc();
+// Every frame fails to encode while set.
 void failTestNvenc(bool fail);
+// The next keyframe makes the first allocation after it on the encoder's thread fail,
+// which is the one that stores it in the buffer.
+void failTestNvencStore();
 
 // How many times libobs initialized an encoder of kAv1EncoderId since
 // registerTestEncoders.

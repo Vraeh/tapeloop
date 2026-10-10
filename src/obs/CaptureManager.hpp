@@ -167,13 +167,13 @@ private:
 	// shows it on the capture's view, without logging.
 	StartOutcome start(const std::string &uuid, Entry &entry, bool keepBuffer, bool quiet,
 			   std::optional<std::vector<EncoderInfo>> &candidates);
-	void stop(Entry &entry);
+	void stop(const std::string &uuid, Entry &entry);
 	// Holds the source active or lets go of it, as the settings and the source's own
 	// restart setting now say.
 	void updateActivation(const std::string &uuid, Entry &entry, obs_source_t *source);
 	void releaseAll();
 	void followOutputs();
-	void noteHevcFailure(const std::string &uuid, const Entry &entry);
+	void noteHevcFailure(const std::string &uuid, const Entry &entry, const CaptureStats &stats);
 	void nameBroadcast();
 	// The folder of the broadcast named when the buffers started, once OBS has a
 	// recording folder.
@@ -202,8 +202,9 @@ private:
 	std::filesystem::path scannedFolder_;
 	// The replay each capture the store is writing belongs to, by ticket.
 	std::map<uint64_t, uint64_t> writing_;
-	// The HEVC encoder that failed while capturing a source, by source.
-	std::map<std::string, std::string> failedHevc_;
+	// The HEVC encoders that failed while capturing a source, by source, in the order
+	// they failed.
+	std::map<std::string, std::vector<std::string>> failedHevc_;
 	bool priorityLogged_ = false;
 	// Whether the log says the store falls behind, until a capture finds it caught up.
 	bool backlogLogged_ = false;

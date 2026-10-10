@@ -3,11 +3,14 @@
 
 #include "TestEncoders.hpp"
 
+#include "AllocationCounter.hpp"
+
 #include <obs-module.h>
 
 #include <atomic>
 #include <cstdint>
 #include <new>
+#include <optional>
 #include <utility>
 
 namespace tapeloop::test {
@@ -15,7 +18,9 @@ namespace {
 
 int brokenState = 0;
 int av1Initializations = 0;
+std::atomic<bool> nvencEnabled{false};
 std::atomic<bool> nvencFails{false};
+std::atomic<bool> nvencStoreFails{false};
 // Not a real HEVC frame; nothing decodes what the HEVC test encoder makes.
 const uint8_t kHevcFrame[] = {0, 0, 0, 1, 0x26, 0x01, 0xaf};
 
@@ -68,7 +73,7 @@ struct NvencState {
 
 void *createNvenc(obs_data_t *, obs_encoder_t *) noexcept
 {
-	return new (std::nothrow) NvencState;
+	return nvencEnabled ? new (std::nothrow) NvencState : nullptr;
 }
 
 void destroyNvenc(void *data) noexcept
@@ -89,6 +94,11 @@ bool encodeNvenc(void *data, encoder_frame *frame, encoder_packet *packet, bool 
 	packet->keyframe = state.frames++ % 30 == 0;
 	packet->type = OBS_ENCODER_VIDEO;
 	*received = true;
+	// Storing a keyframe after the first seals a GOP, which allocates.
+	if (packet->keyframe && state.frames > 1 && nvencStoreFails.exchange(false)) {
+		thread_local std::optional<AllocationFailure> failure;
+		failure.emplace(0);
+	}
 	return true;
 }
 
@@ -161,7 +171,9 @@ void registerTestEncoders()
 	texture.encode_texture2 = encodeTextureKeyframe;
 	obs_register_encoder(&texture);
 
+	nvencEnabled = false;
 	nvencFails = false;
+	nvencStoreFails = false;
 	for (const auto &[id, codec] : {std::pair{kNvencHevcId, "hevc"}, std::pair{kNvencH264Id, "h264"}}) {
 		obs_encoder_info nvenc = videoEncoder(id, codec);
 		nvenc.get_name = nvencName;
@@ -172,9 +184,19 @@ void registerTestEncoders()
 	}
 }
 
+void enableTestNvenc()
+{
+	nvencEnabled = true;
+}
+
 void failTestNvenc(bool fail)
 {
 	nvencFails = fail;
+}
+
+void failTestNvencStore()
+{
+	nvencStoreFails = true;
 }
 
 int av1EncoderInitializations()
