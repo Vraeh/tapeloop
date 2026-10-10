@@ -97,8 +97,8 @@ public:
 	// Sorted; empty for an unknown replay.
 	std::span<const std::string> tagsOf(uint64_t id) const;
 
-	// The replay that "Play replay" puts on air: the one picked, or else the newest that
-	// is not damaged. Zero when there is none.
+	// The replay that "Play replay" puts on air: the one picked, or else the one captured
+	// last, or else the newest that is not damaged. Zero when there is none.
 	uint64_t current() const noexcept;
 	// False for an unknown or damaged replay.
 	bool pick(uint64_t id);

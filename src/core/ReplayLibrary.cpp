@@ -260,6 +260,11 @@ uint64_t ReplayLibrary::current() const noexcept
 	if (picked_ != 0) {
 		return picked_;
 	}
+	// The last capture wins over a replay found on disk with a later time, from a clock
+	// that was ahead.
+	if (replays_.contains(lastCaptured_)) {
+		return lastCaptured_;
+	}
 	const Replay *newest = nullptr;
 	for (const auto &[id, replay] : replays_) {
 		if (replay.state != ReplayState::Damaged && (!newest || newer(replay, *newest))) {

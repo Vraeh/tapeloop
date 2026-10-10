@@ -387,8 +387,12 @@ TEST_CASE("ReplayLibrary orders replays by when they were captured")
 	const uint64_t older = library.addFound(foundAt(50));
 	CHECK(library.list() == std::vector<uint64_t>{captured, older});
 	CHECK(library.current() == captured);
-	// A replay with a later capture time, from a clock set ahead.
+	// A replay with a later capture time, from a clock set ahead: listed first, but the
+	// one captured last is still the one to play.
 	const uint64_t later = library.addFound(foundAt(200));
 	CHECK(library.list() == std::vector<uint64_t>{later, captured, older});
+	CHECK(library.current() == captured);
+	// With the capture gone, the newest is.
+	REQUIRE(library.remove(captured));
 	CHECK(library.current() == later);
 }
