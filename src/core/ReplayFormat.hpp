@@ -18,13 +18,12 @@
 
 namespace tapeloop {
 
-// The bytes of stored replays (D-077, D-078). A broadcast folder holds, per captured
-// source, append-only segments `data/<source key>-<sequence>.tpls` of GOP chunks, and per
-// replay a small manifest `<name>.tplp` that lists the GOPs it uses with their frame
-// times, and its tags. Everything is little-endian, chunks start at multiples of
-// kReplayAlignment, and every chunk header and payload carries a CRC-32C. The layout is
-// written up in the replay storage research notes. These functions only encode and
-// decode bytes; reading and writing files is the store's.
+// The bytes of stored replays. A broadcast folder holds, per captured source, append-only
+// segments `data/<source key>-<sequence>.tpls` of GOP chunks, and per replay a small
+// manifest `<name>.tplp` that lists the GOPs it uses with their frame times, and its
+// tags. Everything is little-endian, chunks start at multiples of kReplayAlignment, and
+// every chunk header and payload carries a CRC-32C. These functions only encode and
+// decode bytes; ReplayWriter and GopReader read and write the files.
 
 inline constexpr size_t kReplayAlignment = 4096;
 inline constexpr uint16_t kReplayFormatMajor = 1;
@@ -122,8 +121,8 @@ struct StoredSource {
 	Nanoseconds out{0};
 	std::vector<StoredRun> runs;
 	std::vector<StoredGop> gops;
-	// The time of every packet of every GOP, in order: decode order is presentation
-	// order (D-029).
+	// The time of every packet of every GOP, in order: replays have no B-frames, so decode
+	// order is presentation order.
 	std::vector<Nanoseconds> frameTimes;
 };
 

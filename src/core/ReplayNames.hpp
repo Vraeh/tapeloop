@@ -33,7 +33,7 @@ LocalTime localTimeOf(std::chrono::system_clock::time_point time) noexcept;
 // boundary. Never empty.
 std::string safeFileName(std::string_view name);
 
-// "<scene collection> YYYY-MM-DD HH-MM", the folder of one broadcast (D-064, D-073).
+// "<scene collection> YYYY-MM-DD HH-MM", the folder of one broadcast.
 std::string broadcastFolderName(std::string_view sceneCollection, LocalTime time);
 // "YYYY-MM-DD HH-MM-SS", the name of a replay's manifest without its extension.
 std::string replayFileStem(LocalTime time);

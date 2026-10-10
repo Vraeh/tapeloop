@@ -72,14 +72,13 @@ struct ReplayWriterConfig {
 	size_t writeBytes = size_t{8} << 20;
 };
 
-// Writes captured replays into their broadcast folder (D-077): per source, the GOPs no
-// segment of the folder holds yet are appended to the source's open segment, every
-// segment written to is flushed, and only then is the manifest written as
-// `<stem>.tplp.part`, flushed and renamed. A crash loses at most the capture being
-// written. GOPs are known by their key, so one shared by several replays is stored once.
-// A writer appends only to segments it created: one from before OBS restarted cannot
-// hold a GOP of the buffers, which start empty (D-002). Not thread-safe; one thread does
-// all the writing.
+// Writes captured replays into their broadcast folder: per source, the GOPs no segment of
+// the folder holds yet are appended to the source's open segment, every segment written
+// to is flushed, and only then is the manifest written as `<stem>.tplp.part`, flushed and
+// renamed. A crash loses at most the capture being written. GOPs are known by their key,
+// so one shared by several replays is stored once. A writer appends only to segments it
+// created: one from before OBS restarted cannot hold a GOP of the buffers, which start
+// empty. Not thread-safe; one thread does all the writing.
 class ReplayWriter {
 public:
 	explicit ReplayWriter(ReplayWriterConfig config = {});
@@ -178,8 +177,8 @@ struct ReplayScan {
 	std::vector<std::string> errors;
 };
 
-// Reads every broadcast folder under base (D-080), in name order; reports what it cannot
-// read instead of throwing. Nothing for a base that does not exist.
+// Reads every broadcast folder under base, in name order; reports what it cannot read
+// instead of throwing. Nothing for a base that does not exist.
 ReplayScan scanReplays(const std::filesystem::path &base);
 
 // The index of the replay whose manifest this is. Nothing when it cannot be read or is
