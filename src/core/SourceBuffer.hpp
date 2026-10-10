@@ -18,8 +18,9 @@
 namespace tapeloop {
 
 struct SourceBufferConfig {
-	// How much history to keep. Eviction by age never leaves less than this; the byte
-	// budget and discontinuities can.
+	// How much history to keep, back from the newest keyframe. A GOP goes once it ends
+	// before that, so eviction by age never leaves less than this and never keeps a GOP
+	// that only older history needs; the byte budget and discontinuities can leave less.
 	Nanoseconds window{0};
 	// Upper bound for the packet data of the sealed GOPs; the newest one is kept even if
 	// it alone is larger. Codec configurations do not count.
@@ -73,15 +74,23 @@ public:
 	// Drops every packet and the counters, keeps the codec configuration, and waits for a
 	// keyframe again.
 	void clear();
+	// Lets go of what ends before the window back from now, for a buffer that gets no
+	// packets: eviction runs only at keyframes, and a capture can take none of it. When
+	// that is everything, the next packet kept is a keyframe.
+	void expire(Nanoseconds now);
 
 	// Replaces the configured byte budget; eviction applies it at the next keyframe.
 	void setByteBudget(size_t maxBytes);
 	size_t byteBudget() const;
+	Nanoseconds window() const noexcept { return config_.window; }
 
 private:
 	std::vector<std::shared_ptr<const Gop>> collectLocked(Nanoseconds from, Nanoseconds to) const;
 	void sealLocked();
-	void evictLocked();
+	// Measures the window back from newest, the time of the keyframe that starts the next
+	// GOP.
+	void evictLocked(Nanoseconds newest);
+	void dropEndingByLocked(Nanoseconds start);
 	void dropFromLocked(Nanoseconds time);
 	Nanoseconds newestTimeLocked() const noexcept;
 

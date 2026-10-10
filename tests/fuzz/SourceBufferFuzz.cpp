@@ -8,8 +8,10 @@
 #include <algorithm>
 #include <cstddef>
 #include <cstdint>
+#include <deque>
 #include <map>
 #include <memory>
+#include <optional>
 #include <set>
 #include <span>
 #include <utility>
@@ -92,15 +94,6 @@ GopList heldGops(const SourceBuffer &buffer)
 std::vector<Nanoseconds> heldTimes(const SourceBuffer &buffer)
 {
 	return buffer.clip(Nanoseconds::min(), Nanoseconds::max()).frameTimes();
-}
-
-size_t bytesOf(const GopList &gops)
-{
-	size_t bytes = 0;
-	for (const auto &gop : gops) {
-		bytes += gop->byteSize();
-	}
-	return bytes;
 }
 
 void checkClip(const Clip &clip)
@@ -234,37 +227,62 @@ void checkKept(const SourceBuffer &buffer, const EncodedPacket &packet, VideoCod
 	}
 }
 
-// After a kept keyframe eviction has run on the sealed GOPs: neither rule would drop the
-// oldest of them any more, the newest is kept, and whatever was dropped from the front
-// had to go. `before` holds the sealed GOPs from before the push.
-void checkEviction(const SourceBuffer &buffer, const tapeloop::SourceBufferConfig &config, const GopList &before,
-		   bool sealedOne, bool restarted)
+// What the buffer keeps of a sealed GOP, to compare the GOPs held with those expected.
+struct Span {
+	Nanoseconds start;
+	Nanoseconds last;
+	Nanoseconds end;
+	size_t bytes;
+
+	explicit Span(const Gop &gop)
+		: start(gop.startTime()),
+		  last(gop.lastTime()),
+		  end(gop.endTime()),
+		  bytes(gop.byteSize())
+	{
+	}
+	bool operator==(const Span &) const = default;
+};
+
+// After a kept keyframe at `time`, the sealed GOPs are exactly those held before, `open`
+// included when the keyframe sealed it, less what a restart drops from the back (every
+// GOP from the first that does not end before the keyframe), less the GOPs that end
+// before the window, less the oldest while the rest is over the byte budget, the newest
+// always kept.
+void checkEviction(const SourceBuffer &buffer, const tapeloop::SourceBufferConfig &config, Nanoseconds time,
+		   const GopList &before, const std::optional<Span> &open, bool restarted)
 {
+	std::deque<Span> expected;
+	for (const auto &gop : before) {
+		expected.emplace_back(*gop);
+	}
+	if (open) {
+		expected.push_back(*open);
+	}
+	if (restarted) {
+		while (!expected.empty() && expected.back().last >= time) {
+			expected.pop_back();
+		}
+	}
+	const Nanoseconds start = tapeloop::saturatingSub(time, config.window);
+	while (!expected.empty() && expected.front().end <= start) {
+		expected.pop_front();
+	}
+	size_t bytes = 0;
+	for (const Span &span : expected) {
+		bytes += span.bytes;
+	}
+	while (expected.size() > 1 && bytes > buffer.byteBudget()) {
+		bytes -= expected.front().bytes;
+		expected.pop_front();
+	}
+
 	GopList sealed = heldGops(buffer);
 	sealed.pop_back();
-	const size_t bytes = bytesOf(sealed);
-
-	if (sealedOne) {
-		require(!sealed.empty());
+	require(sealed.size() == expected.size());
+	for (size_t i = 0; i < sealed.size(); ++i) {
+		require(Span(*sealed[i]) == expected[i]);
 	}
-	if (sealed.size() > 1) {
-		require(bytes <= config.maxBytes);
-		require(tapeloop::saturatingSub(sealed.back()->endTime(), sealed[1]->startTime()) < config.window);
-	}
-
-	// After a restart GOPs also leave from the back, which this check does not model.
-	if (restarted || sealed.empty()) {
-		return;
-	}
-	const auto survivor = std::find(before.begin(), before.end(), sealed.front());
-	const size_t droppedCount = static_cast<size_t>(survivor - before.begin());
-	if (droppedCount == 0) {
-		return;
-	}
-	const Gop &lastDropped = *before[droppedCount - 1];
-	const bool windowAllowed = tapeloop::saturatingSub(sealed.back()->endTime(), sealed.front()->startTime()) >=
-				   config.window;
-	require(windowAllowed || bytes + lastDropped.byteSize() > config.maxBytes);
 }
 
 } // namespace
@@ -301,11 +319,13 @@ extern "C" int LLVMFuzzerTestOneInput(const uint8_t *data, size_t size)
 			const std::span<const uint8_t> payload = input.bytes(input.below(256));
 			const EncodedPacket packet{payload, pts, dts, time, keyframe};
 
-			// A synced run has a GOP open, which a continuing keyframe seals.
 			const bool restarted = keyframe && (!model.synced || model.breaksRun(packet));
-			const bool sealsOpenGop = keyframe && model.synced && !restarted;
 			GopList before = heldGops(buffer);
+			// A synced run has a GOP open, which a keyframe seals, as does a packet that
+			// breaks the run.
+			std::optional<Span> open;
 			if (model.synced && !before.empty()) {
+				open.emplace(*before.back());
 				before.pop_back();
 			}
 
@@ -313,7 +333,7 @@ extern "C" int LLVMFuzzerTestOneInput(const uint8_t *data, size_t size)
 			if (model.push(packet)) {
 				checkKept(buffer, packet, model.codec, model.codecConfig);
 				if (keyframe) {
-					checkEviction(buffer, config, before, sealsOpenGop, restarted);
+					checkEviction(buffer, config, packet.time, before, open, restarted);
 				}
 			}
 			break;

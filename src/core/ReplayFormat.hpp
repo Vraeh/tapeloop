@@ -137,6 +137,8 @@ struct ReplayIndex {
 	// Unix time in nanoseconds, and the OBS clock the packets are stamped with.
 	int64_t capturedAtUtc = 0;
 	Nanoseconds capturedAtClock{0};
+	// The range the capture asked for, back from the capture as far as the longest window
+	// of the buffers that held anything; what each source gives is its in and out.
 	Nanoseconds start{0};
 	Nanoseconds end{0};
 	std::vector<StoredSource> sources;
