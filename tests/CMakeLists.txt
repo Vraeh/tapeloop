@@ -51,6 +51,7 @@ target_sources(
     core/DecodePlannerTests.cpp
     core/EncoderPolicyTests.cpp
     core/FakeDecoder.hpp
+    core/FileIoTests.cpp
     core/GopTests.cpp
     core/MediaTimeTests.cpp
     core/MomentCutterTests.cpp
@@ -62,6 +63,7 @@ target_sources(
     core/ReplaySizeTests.cpp
     core/SourceBufferTests.cpp
     core/SyntheticEncoder.hpp
+    core/TempDirectory.hpp
 )
 # Every core object goes into the test binary, tested or not, so that coverage also
 # reports a core file nothing calls yet.
