@@ -180,6 +180,14 @@ TEST_CASE("a GOP whose segment is damaged or gone is not read")
 		CHECK_FALSE(reader.read(stored.manifest(), changed, 2));
 		CHECK(reader.read(stored.manifest(), changed, 3));
 	}
+	SECTION("a size its chunk's header does not give")
+	{
+		StoredSource changed = stored.source();
+		changed.gops[1].size += tapeloop::kReplayAlignment;
+		GopReader reader;
+		CHECK_FALSE(reader.read(stored.manifest(), changed, 1));
+		CHECK(reader.read(stored.manifest(), changed, 2));
+	}
 	SECTION("past the end of the replay")
 	{
 		GopReader reader;

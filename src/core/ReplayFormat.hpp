@@ -97,6 +97,11 @@ struct StoredRun {
 // not describe a valid GOP of that run.
 std::shared_ptr<const Gop> decodeGopChunk(std::span<const uint8_t> chunk, uint32_t headerCrc, const StoredRun &run);
 
+// The size of the GOP chunk this header starts, header included, when the header is
+// intact, belongs to a GOP chunk and has this CRC. The caller reads kChunkHeaderSize
+// bytes.
+std::optional<uint64_t> gopChunkSizeFromHeader(std::span<const uint8_t> header, uint32_t headerCrc);
+
 // Reads the GOP key of a GOP chunk header and the start of its payload, without checking
 // the payload CRC; the caller reads at least kChunkHeaderSize + 32 bytes. Null when the
 // header fails its CRC or is not a GOP chunk.
