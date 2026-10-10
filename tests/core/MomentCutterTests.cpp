@@ -186,7 +186,8 @@ TEST_CASE("cutMoment takes a negative pre-roll or window as zero")
 		CHECK(clip->in() == last);
 		CHECK(clip->out() == last);
 	}
-	const Clip *clip = clipOf(cutMoment(sources, last, -1s).moment, "camera");
+	const MomentCut cut = cutMoment(sources, last, -1s);
+	const Clip *clip = clipOf(cut.moment, "camera");
 	REQUIRE(clip);
 	CHECK(clip->in() == last);
 }
