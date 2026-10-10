@@ -1106,7 +1106,7 @@ TEST_CASE_METHOD(ObsFixture, "a waiting source keeps one activation and gives it
 	}
 }
 
-TEST_CASE_METHOD(ObsFixture, "a replay keeps what every captured buffer holds", "[obs][manager][replay]")
+TEST_CASE_METHOD(ObsFixture, "a replay takes the window of every captured buffer", "[obs][manager][replay]")
 {
 	OBSSourceAutoRelease first = createTestPattern(320, 180, "First");
 	OBSSourceAutoRelease second = createTestPattern(320, 180, "Second");
@@ -1116,6 +1116,7 @@ TEST_CASE_METHOD(ObsFixture, "a replay keeps what every captured buffer holds", 
 	CaptureManager manager(host);
 	BufferSettings settings = selecting(firstUuid);
 	settings.sources[secondUuid].selected = true;
+	settings.sources[secondUuid].length = 2s;
 	settings.startWithOutputs = false;
 	manager.setSettings(settings);
 
@@ -1128,7 +1129,12 @@ TEST_CASE_METHOD(ObsFixture, "a replay keeps what every captured buffer holds", 
 		const tapeloop::SourceBuffer *buffer = manager.buffer(uuid);
 		return buffer ? buffer->stats().gopCount : 0;
 	};
-	REQUIRE(waitFor([&] { return gops(firstUuid) >= 2 && gops(secondUuid) >= 2; }, 60s));
+	const auto heldFor = [&](const std::string &uuid) {
+		const tapeloop::SourceBuffer *buffer = manager.buffer(uuid);
+		const tapeloop::SourceBufferStats stats = buffer ? buffer->stats() : tapeloop::SourceBufferStats{};
+		return stats.gopCount != 0 ? stats.newestTime - stats.oldestTime : tapeloop::Nanoseconds{0};
+	};
+	REQUIRE(waitFor([&] { return heldFor(firstUuid) >= 3s && heldFor(secondUuid) >= 2s; }, 60s));
 
 	const uint64_t id = manager.captureReplay();
 	REQUIRE(id != 0);
@@ -1141,13 +1147,12 @@ TEST_CASE_METHOD(ObsFixture, "a replay keeps what every captured buffer holds", 
 	// Both sources render on the same video clock, so their clips end together.
 	const tapeloop::Nanoseconds gap = sourceOf(*replay, firstUuid).out - sourceOf(*replay, secondUuid).out;
 	CHECK(std::chrono::abs(gap) <= 100ms);
-	// The range starts at the oldest frame held, so each clip holds all its buffer did.
-	tapeloop::Nanoseconds earliest = index.end;
-	for (const tapeloop::StoredSource &source : index.sources) {
-		CHECK(source.in >= index.start);
-		earliest = std::min(earliest, source.in);
-	}
-	CHECK(index.start == earliest);
+	// Each clip reaches back its own buffer's length from the capture, and the moment as
+	// far as the longest of them.
+	CHECK(index.end - index.start == settings.length);
+	CHECK(sourceOf(*replay, firstUuid).in < index.end - 2s);
+	CHECK(sourceOf(*replay, secondUuid).in >= index.end - 2s);
+	CHECK(sourceOf(*replay, secondUuid).in - (index.end - 2s) <= 100ms);
 
 	// The buffers keep recording, and a later capture is a replay of its own.
 	const size_t before = gops(firstUuid);
@@ -1175,13 +1180,14 @@ TEST_CASE_METHOD(ObsFixture, "a replay keeps what every captured buffer holds", 
 	manager.finishWrites();
 }
 
-TEST_CASE_METHOD(ObsFixture, "a replay keeps all a buffer holds, whatever the length set now", "[obs][manager][replay]")
+TEST_CASE_METHOD(ObsFixture, "a replay reaches back the length its buffer started with", "[obs][manager][replay]")
 {
 	OBSSourceAutoRelease pattern = createTestPattern(320, 180, "Pattern");
 	const std::string uuid = uuidOf(pattern);
 	FakeHost host;
 	CaptureManager manager(host);
 	BufferSettings settings = selecting(uuid);
+	settings.length = 2s;
 	settings.startWithOutputs = false;
 	manager.setSettings(settings);
 	REQUIRE(manager.manualStart());
@@ -1195,31 +1201,33 @@ TEST_CASE_METHOD(ObsFixture, "a replay keeps all a buffer holds, whatever the le
 			return stats.gopCount >= 2 && stats.newestTime - stats.oldestTime >= 2s;
 		},
 		60s));
-	const auto inOf = [&](uint64_t id) {
+	// How far back the clip of a replay starts from the capture.
+	const auto reachOf = [&](uint64_t id) {
 		const Replay *replay = manager.library().find(id);
 		REQUIRE(replay);
 		REQUIRE(replay->index);
 		REQUIRE(replay->index->sources.size() == 1);
-		return replay->index->sources[0].in;
+		return replay->index->end - replay->index->sources[0].in;
 	};
 
 	// A running buffer keeps the length it started with until it starts again.
 	settings.length = 1s;
 	manager.setSettings(settings);
 	REQUIRE(manager.status(uuid).stats.state == CaptureState::Running);
-	const tapeloop::Nanoseconds oldest = held().oldestTime;
 	const uint64_t running = manager.captureReplay();
 	REQUIRE(running != 0);
-	CHECK(inOf(running) == oldest);
+	CHECK(reachOf(running) <= 2s);
+	CHECK(reachOf(running) >= 2s - 100ms);
 
-	// A stopped one gives all it has, however long ago it stopped.
+	// A stopped buffer gives what still lies in the window, and nothing once it all lies
+	// before it.
 	REQUIRE(manager.manualStop());
-	const tapeloop::SourceBufferStats stopped = held();
-	REQUIRE(stopped.gopCount != 0);
-	std::this_thread::sleep_for(1500ms);
-	const uint64_t late = manager.captureReplay();
-	REQUIRE(late != 0);
-	CHECK(inOf(late) == stopped.oldestTime);
+	REQUIRE(held().gopCount != 0);
+	const uint64_t stopped = manager.captureReplay();
+	REQUIRE(stopped != 0);
+	CHECK(reachOf(stopped) <= 2s);
+	std::this_thread::sleep_for(2500ms);
+	CHECK(manager.captureReplay() == 0);
 	manager.finishWrites();
 }
 
