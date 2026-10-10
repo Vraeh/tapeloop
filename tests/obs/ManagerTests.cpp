@@ -941,14 +941,14 @@ TEST_CASE_METHOD(ObsFixture, "a media source that restarts when activated is not
 	CHECK_FALSE(obs_source_active(media));
 }
 
-TEST_CASE_METHOD(ObsFixture, "a VLC source or slideshow is kept active only when it does not restart", "[obs][manager]")
+TEST_CASE_METHOD(ObsFixture, "a VLC source or slideshow is kept active only when it always plays", "[obs][manager]")
 {
 	struct Case {
 		const char *behavior;
 		bool held;
 	};
 	for (const char *id : {tapeloop::test::kVlcStandInId, tapeloop::test::kSlideshowStandInId}) {
-		for (const Case &each : {Case{"stop_restart", false}, Case{"pause_unpause", true},
+		for (const Case &each : {Case{"stop_restart", false}, Case{"pause_unpause", false},
 					 Case{"always_play", true}, Case{"", false}}) {
 			CAPTURE(id, each.behavior);
 			OBSSourceAutoRelease media = patternWith(id, "Clip", 640, 360, false);
@@ -965,6 +965,30 @@ TEST_CASE_METHOD(ObsFixture, "a VLC source or slideshow is kept active only when
 			CHECK(manager.status(uuid).activationLeftOut == !each.held);
 			REQUIRE(manager.manualStop());
 		}
+	}
+}
+
+TEST_CASE_METHOD(ObsFixture, "a browser source is kept active only when it does not refresh on activation",
+		 "[obs][manager]")
+{
+	for (const bool refreshes : {false, true}) {
+		CAPTURE(refreshes);
+		OBSSourceAutoRelease browser =
+			patternWith(tapeloop::test::kBrowserStandInId, "Scoreboard", 640, 360, false);
+		if (refreshes) {
+			OBSDataAutoRelease setting = obs_data_create();
+			obs_data_set_bool(setting, "restart_when_active", true);
+			obs_source_update(browser, setting);
+		}
+		const std::string uuid = uuidOf(browser);
+		FakeHost host;
+		CaptureManager manager(host);
+		manager.setSettings(activating(uuid));
+		REQUIRE(manager.manualStart());
+		CHECK(manager.status(uuid).stats.state == CaptureState::Running);
+		CHECK(obs_source_active(browser) == !refreshes);
+		CHECK(manager.status(uuid).activationLeftOut == refreshes);
+		REQUIRE(manager.manualStop());
 	}
 }
 

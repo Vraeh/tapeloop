@@ -226,7 +226,7 @@ TEST_CASE("a source on an encoder path that is not the optimal one says so")
 	// With another note, both show, a paragraph each.
 	backend.shown[0].activationLeftOut = true;
 	dock.refresh();
-	CHECK(table->item(0, 1)->toolTip().contains("restarts when it becomes active"));
+	CHECK(table->item(0, 1)->toolTip().contains("unpauses or refreshes when it becomes active"));
 	CHECK(table->item(0, 1)->toolTip().contains("x264"));
 	CHECK(table->item(0, 1)->toolTip().contains("\n\n"));
 
@@ -584,7 +584,7 @@ TEST_CASE("a media source left out of activation says why")
 	TapeloopDock dock(backend, localeText());
 	const QTableWidgetItem *status = child<QTableWidget>(dock, "sources")->item(0, 1);
 	CHECK_FALSE(status->icon().isNull());
-	CHECK(status->toolTip().contains("restarts when it becomes active"));
+	CHECK(status->toolTip().contains("unpauses or refreshes when it becomes active"));
 
 	// Unselected, it has nothing to explain.
 	backend.current.sources["uuid-camera-1"].selected = false;

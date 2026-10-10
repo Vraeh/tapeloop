@@ -27,6 +27,9 @@ inline constexpr const char *kMediaStandInId = "ffmpeg_source";
 inline constexpr const char *kVlcStandInId = "vlc_source";
 inline constexpr const char *kSlideshowStandInId = "slideshow";
 inline constexpr const char *kImageStandInId = "image_source";
+// The same under the id of the browser source of obs-browser, with its
+// "restart_when_active" setting, off by default as there.
+inline constexpr const char *kBrowserStandInId = "browser_source";
 inline constexpr int kFrameNumberBits = 16;
 
 void registerTestPattern();

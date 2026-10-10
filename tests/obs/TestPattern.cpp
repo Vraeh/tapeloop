@@ -78,6 +78,11 @@ void mediaDefaults(obs_data_t *settings) noexcept
 	obs_data_set_default_bool(settings, "restart_on_activate", true);
 }
 
+void browserDefaults(obs_data_t *settings) noexcept
+{
+	obs_data_set_default_bool(settings, "restart_when_active", false);
+}
+
 void *create(obs_data_t *settings, obs_source_t *source) noexcept
 {
 	auto *pattern = new (std::nothrow) TestPattern;
@@ -256,6 +261,12 @@ void registerTestPattern()
 		other.get_name = mediaName;
 		obs_register_source(&other);
 	}
+
+	obs_source_info browser = info;
+	browser.id = kBrowserStandInId;
+	browser.get_name = mediaName;
+	browser.get_defaults = browserDefaults;
+	obs_register_source(&browser);
 }
 
 void registerTone()
