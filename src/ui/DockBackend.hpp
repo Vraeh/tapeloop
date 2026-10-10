@@ -90,6 +90,11 @@ public:
 	virtual std::vector<std::string> replayTags() const = 0;
 	// Creates the tag if it is new. False when the replay is gone or the name not valid.
 	virtual bool tagReplay(uint64_t id, const std::string &tag) = 0;
+	// False when the replay is gone or does not carry the tag.
+	virtual bool untagReplay(uint64_t id, const std::string &tag) = 0;
+	// Takes the tag off every replay that carries it and forgets it. False when there is
+	// no such tag.
+	virtual bool deleteTag(const std::string &tag) = 0;
 	// The replay that goes on air next; zero when there is none.
 	virtual uint64_t currentReplay() const = 0;
 	// The replay captured last, from the dock or by the hotkey; zero before the first.

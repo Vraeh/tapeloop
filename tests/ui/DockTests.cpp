@@ -292,6 +292,57 @@ TEST_CASE("a source on an encoder path that is not the optimal one says so")
 	CHECK(table->item(1, 1)->toolTip().isEmpty());
 }
 
+TEST_CASE("a tag comes off the selected replay, and a deleted one off every replay")
+{
+	FakeBackend backend = backendWithSources();
+	backend.captureReplay();
+	backend.captureReplay();
+	REQUIRE(backend.tagReplay(1, "goal"));
+	REQUIRE(backend.tagReplay(2, "goal"));
+	REQUIRE(backend.tagReplay(2, "save"));
+	TapeloopDock dock(backend, localeText());
+	auto *list = child<QListWidget>(dock, "replays");
+	auto *name = child<QLineEdit>(dock, "tagName");
+	auto *filter = child<QComboBox>(dock, "tagFilter");
+	auto *remove = child<QPushButton>(dock, "removeTag");
+	auto *erase = child<QPushButton>(dock, "deleteTag");
+	REQUIRE(backend.picked == 2u);
+	REQUIRE(list->count() == 2);
+	CHECK(remove->isEnabled());
+
+	// Off the selected replay only.
+	name->setText("goal");
+	remove->click();
+	CHECK(name->text().isEmpty());
+	CHECK(backend.captured[0].tags == std::vector<std::string>{"save"});
+	CHECK(backend.captured[1].tags == std::vector<std::string>{"goal"});
+	CHECK_FALSE(list->item(0)->text().contains("#goal"));
+	// A tag it does not carry stays typed, to be fixed.
+	name->setText("foul");
+	remove->click();
+	CHECK(name->text() == "foul");
+
+	// Deleting needs a tag to filter by, and takes it off every replay.
+	CHECK_FALSE(erase->isEnabled());
+	filter->setCurrentIndex(filter->findData("goal"));
+	REQUIRE(list->count() == 1);
+	CHECK(erase->isEnabled());
+	erase->click();
+	CHECK(backend.tags == std::vector<std::string>{"save"});
+	CHECK(backend.captured[1].tags.empty());
+	CHECK(filter->currentIndex() == 0);
+	CHECK(filter->findData("goal") == -1);
+	CHECK(list->count() == 2);
+	CHECK_FALSE(erase->isEnabled());
+
+	// A replay the filter hides takes no tag off.
+	filter->setCurrentIndex(filter->findData("save"));
+	list->setCurrentRow(-1);
+	backend.picked = 1;
+	dock.refresh();
+	CHECK_FALSE(remove->isEnabled());
+}
+
 TEST_CASE("the dock captures replays and picks the one that goes on air")
 {
 	FakeBackend backend = backendWithSources();
@@ -864,7 +915,7 @@ TEST_CASE("every control of the dock can be reached with the keyboard")
 		CAPTURE(widget->objectName().toStdString());
 		CHECK((widget->focusPolicy() & Qt::TabFocus) != 0);
 	}
-	CHECK(controls == 16);
+	CHECK(controls == 18);
 }
 
 TEST_CASE("every string the dock asks for is in the locale file")

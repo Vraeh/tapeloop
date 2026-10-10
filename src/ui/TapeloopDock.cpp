@@ -113,9 +113,11 @@ TapeloopDock::TapeloopDock(DockBackend &backend, TextLookup text, QWidget *paren
 	  followsOutputs_(new QLabel(text_("Dock.FollowsOutputs"), this)),
 	  captureReplay_(new QPushButton(text_("Dock.CaptureReplay"), this)),
 	  tagFilter_(new QComboBox(this)),
+	  deleteTag_(new QPushButton(text_("Dock.DeleteTag"), this)),
 	  replays_(new ReplayList(this)),
 	  tagName_(new QLineEdit(this)),
-	  addTag_(new QPushButton(text_("Dock.AddTag"), this))
+	  addTag_(new QPushButton(text_("Dock.AddTag"), this)),
+	  removeTag_(new QPushButton(text_("Dock.RemoveTag"), this))
 {
 	sources_->setObjectName("sources");
 	sources_->setHorizontalHeaderLabels({text_("Dock.Source"), text_("Dock.Status")});
@@ -168,6 +170,10 @@ TapeloopDock::TapeloopDock(DockBackend &backend, TextLookup text, QWidget *paren
 	tagName_->setPlaceholderText(text_("Dock.TagName"));
 	addTag_->setObjectName("addTag");
 	addTag_->setToolTip(text_("Dock.AddTag.Tooltip"));
+	removeTag_->setObjectName("removeTag");
+	removeTag_->setToolTip(text_("Dock.RemoveTag.Tooltip"));
+	deleteTag_->setObjectName("deleteTag");
+	deleteTag_->setToolTip(text_("Dock.DeleteTag.Tooltip"));
 	followsOutputs_->setObjectName("followsOutputs");
 	followsOutputs_->setWordWrap(true);
 	followsOutputs_->hide();
@@ -195,11 +201,15 @@ TapeloopDock::TapeloopDock(DockBackend &backend, TextLookup text, QWidget *paren
 	layout->addWidget(startStop_);
 	layout->addWidget(followsOutputs_);
 	layout->addWidget(captureReplay_);
-	layout->addWidget(tagFilter_);
+	auto *filtering = new QHBoxLayout;
+	filtering->addWidget(tagFilter_, 1);
+	filtering->addWidget(deleteTag_);
+	layout->addLayout(filtering);
 	layout->addWidget(replays_, 1);
 	auto *tagging = new QHBoxLayout;
 	tagging->addWidget(tagName_, 1);
 	tagging->addWidget(addTag_);
+	tagging->addWidget(removeTag_);
 	layout->addLayout(tagging);
 
 	connect(sources_, &QTableWidget::itemChanged, this, [this](QTableWidgetItem *item) {
@@ -284,6 +294,24 @@ TapeloopDock::TapeloopDock(DockBackend &backend, TextLookup text, QWidget *paren
 	};
 	connect(addTag_, &QPushButton::clicked, this, addTag);
 	connect(tagName_, &QLineEdit::returnPressed, this, addTag);
+	connect(removeTag_, &QPushButton::clicked, this, [this] {
+		const std::string tag = tagName_->text().toStdString();
+		bool removed = false;
+		guarded([&] { removed = backend_.untagReplay(backend_.currentReplay(), tag); });
+		if (removed) {
+			tagName_->clear();
+		}
+		refresh();
+	});
+	// The tag the list is filtered by goes from every replay, and the list shows them all
+	// again.
+	connect(deleteTag_, &QPushButton::clicked, this, [this] {
+		const std::string tag = tagFilter_->currentData().toString().toStdString();
+		if (!tag.empty()) {
+			guarded([&] { backend_.deleteTag(tag); });
+		}
+		refresh();
+	});
 	// Moving through the list with the keyboard picks as a click does, and a click on the
 	// row already current picks it again after a capture the list has not shown yet. The
 	// list is refreshed once the view is done with the event, since a rebuild inside it
@@ -660,7 +688,9 @@ void TapeloopDock::updateReplays()
 	replays_->setCurrentIndex(listed ? replays_->model()->index(static_cast<int>(shown - shownReplays_.begin()), 0)
 					 : QModelIndex());
 	addTag_->setEnabled(listed);
+	removeTag_->setEnabled(listed);
 	tagName_->setEnabled(listed);
+	deleteTag_->setEnabled(!tagFilter_->currentData().toString().isEmpty());
 }
 
 void TapeloopDock::updateEncoders(const std::string &chosen)

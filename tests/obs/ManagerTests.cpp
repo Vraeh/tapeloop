@@ -1534,7 +1534,7 @@ TEST_CASE_METHOD(ObsFixture, "replays and their tags are read back after OBS sta
 		manager.finishWrites();
 		CHECK(manager.tagReplay(foul, "Foul"));
 		CHECK(manager.tagReplay(foul, "Penalty"));
-		CHECK(manager.untagReplay(foul, "Penalty"));
+		CHECK(tapeloop::obs::ManagerDockBackend(manager).untagReplay(foul, "Penalty"));
 		captured = {manager.library().find(goal)->uuid, manager.library().find(foul)->uuid};
 		manager.onExit();
 	}
@@ -1557,8 +1557,8 @@ TEST_CASE_METHOD(ObsFixture, "replays and their tags are read back after OBS sta
 	}
 	CHECK(manager.library().tags().size() == 2);
 
-	// Deleting a tag reaches the replays on disk.
-	CHECK(manager.deleteReplayTag("goal"));
+	// Deleting a tag, from the dock, reaches the replays on disk.
+	CHECK(tapeloop::obs::ManagerDockBackend(manager).deleteTag("goal"));
 	manager.finishWrites();
 	CaptureManager again(host);
 	again.loadLibrary();
