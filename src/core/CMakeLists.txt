@@ -26,6 +26,8 @@ target_sources(
     DecodePlanner.hpp
     EncoderPolicy.cpp
     EncoderPolicy.hpp
+    FailurePacer.cpp
+    FailurePacer.hpp
     FileIo.cpp
     FileIo.hpp
     FrameDecoder.hpp
@@ -37,6 +39,8 @@ target_sources(
     MediaTime.hpp
     MomentCutter.cpp
     MomentCutter.hpp
+    ParameterSets.cpp
+    ParameterSets.hpp
     Playhead.cpp
     Playhead.hpp
     ReplayFormat.cpp

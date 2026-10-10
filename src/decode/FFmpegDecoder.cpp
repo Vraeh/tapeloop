@@ -4,6 +4,8 @@
 #include "decode/FFmpegDecoder.hpp"
 #include "decode/FFmpegHeaders.hpp"
 
+#include "core/ParameterSets.hpp"
+
 extern "C" {
 #include <libavcodec/avcodec.h>
 #include <libavutil/buffer.h>
@@ -207,6 +209,13 @@ DecodeStatus FFmpegDecoder::open(VideoCodec codec, std::span<const uint8_t> conf
 		return DecodeStatus::OutOfMemory;
 	}
 
+	try {
+		runConfig_.assign(config.begin(), config.end());
+	} catch (...) {
+		return DecodeStatus::OutOfMemory;
+	}
+	codec_ = codec;
+
 	context->thread_type = FF_THREAD_SLICE;
 	context->thread_count = config_.threads;
 	context->flags |= AV_CODEC_FLAG_LOW_DELAY;
@@ -266,14 +275,14 @@ DecodeStatus FFmpegDecoder::send(std::span<const uint8_t> data, int64_t pts, int
 	if (!buffer) {
 		return DecodeStatus::OutOfMemory;
 	}
-	if (!data.empty()) {
-		std::memcpy(buffer->data, data.data(), data.size());
-	}
-	std::memset(buffer->data + data.size(), 0, AV_INPUT_BUFFER_PADDING_SIZE);
+	const size_t size =
+		copyWithoutKnownParameterSets(codec_, runConfig_, data, std::span<uint8_t>(buffer->data, data.size()));
+	std::memset(buffer->data + size, 0, AV_INPUT_BUFFER_PADDING_SIZE);
+	skippedBytes_ += data.size() - size;
 
 	packet_->buf = buffer;
 	packet_->data = buffer->data;
-	packet_->size = static_cast<int>(data.size());
+	packet_->size = static_cast<int>(size);
 	packet_->pts = pts;
 	packet_->dts = dts;
 	const int result = avcodec_send_packet(context_.get(), packet_.get());

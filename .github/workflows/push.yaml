@@ -139,7 +139,7 @@ jobs:
             echo
             echo "### Third-party code"
             echo
-            echo "The Windows and Linux packages include FFmpeg ${version}, linked statically, under the LGPL 2.1 or later. Its source, the tarball they were built from (${url}), is attached as ffmpeg-${version}.tar.xz; with it and Tapeloop's own source, Tapeloop can be built again against a modified FFmpeg."
+            echo "The Windows and Linux packages include FFmpeg ${version}, linked statically, under the LGPL 2.1 or later. Its source, the tarball they were built from (${url}), is attached as ffmpeg-${version}.tar.xz; with it and Tapeloop's own source, Tapeloop can be built again against a modified FFmpeg. FFmpeg's license and notices, among them the READMEs the Independent JPEG Group's license asks to go with three of FFmpeg's files, come with the packages and with Tapeloop's source."
           } >> "${GITHUB_WORKSPACE}/CHECKSUMS.txt"
 
       - name: Create Release 🛫

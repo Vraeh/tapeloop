@@ -85,6 +85,12 @@ jobs:
           ../build_tests/linux-clang-fuzz/fuzz/replay-format-fuzz -max_total_time=60 -timeout=10 \
             -artifact_prefix="$RUNNER_TEMP/crashes/" "$RUNNER_TEMP/corpus/replay-format" fuzz/corpus/replay-format
 
+      - name: Fuzz the parameter set filter
+        run: |
+          mkdir -p "$RUNNER_TEMP/corpus/parameter-sets" "$RUNNER_TEMP/crashes"
+          ../build_tests/linux-clang-fuzz/fuzz/parameter-sets-fuzz -max_total_time=60 -timeout=10 \
+            -artifact_prefix="$RUNNER_TEMP/crashes/" "$RUNNER_TEMP/corpus/parameter-sets" fuzz/corpus/parameter-sets
+
       - name: Keep the crashing inputs
         if: failure()
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
