@@ -203,8 +203,8 @@ TEST_CASE_METHOD(ObsFixture, "scene collection cleanup lets go of every source",
 	CHECK_FALSE(obs_weak_source_expired(secondWeak));
 
 	manager.onSceneCollectionCleanup();
-	CHECK(obs_weak_source_expired(firstWeak));
-	CHECK(obs_weak_source_expired(secondWeak));
+	// The graphics thread holds every source while it ticks them, for up to a frame.
+	CHECK(waitFor([&] { return obs_weak_source_expired(firstWeak) && obs_weak_source_expired(secondWeak); }, 5s));
 	CHECK(manager.buffer(firstUuid) == nullptr);
 	CHECK(manager.settings().sources.empty());
 }
@@ -1283,8 +1283,8 @@ TEST_CASE_METHOD(ObsFixture, "a removed source that was waiting for its size is 
 	display = nullptr;
 	manager.poll();
 	CHECK(manager.status(uuid).stats.state == CaptureState::Stopped);
-	OBSSourceAutoRelease left = obs_weak_source_get_source(weak);
-	CHECK(left == nullptr);
+	// The graphics thread may still hold it from a tick that started before the removal.
+	CHECK(waitFor([&] { return obs_weak_source_expired(weak); }, 5s));
 	manager.manualStop();
 }
 
@@ -1535,8 +1535,7 @@ TEST_CASE_METHOD(ObsFixture, "a waiting source keeps one activation and gives it
 		obs_source_remove(never);
 		never = nullptr;
 		manager.poll();
-		OBSSourceAutoRelease left = obs_weak_source_get_source(weak);
-		CHECK(left == nullptr);
+		CHECK(waitFor([&] { return obs_weak_source_expired(weak); }, 5s));
 		manager.manualStop();
 	}
 }
