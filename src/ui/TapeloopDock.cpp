@@ -240,8 +240,8 @@ TapeloopDock::TapeloopDock(DockBackend &backend, TextLookup text, QWidget *paren
 			       checked ? 1 : 0);
 	});
 	connect(advanced_, &QCheckBox::toggled, this, [this](bool checked) {
-		advancedSettings_->setVisible(checked);
-		refresh();
+		changeSettings([](BufferSettings &settings, int on) { settings.showAdvanced = on != 0; },
+			       checked ? 1 : 0);
 	});
 	connect(replayEncoder_, &QComboBox::currentIndexChanged, this, [this](int index) {
 		guarded([&] {
@@ -360,6 +360,7 @@ void TapeloopDock::refresh()
 		const QSignalBlocker blockForceH264(forceH264_);
 		const QSignalBlocker blockEncoder(replayEncoder_);
 		const QSignalBlocker blockOtherAdapters(otherAdapters_);
+		const QSignalBlocker blockAdvanced(advanced_);
 		// A value being typed is not overwritten.
 		if (!length_->hasFocus()) {
 			length_->setValue(seconds(settings.length));
@@ -371,8 +372,10 @@ void TapeloopDock::refresh()
 		// A chosen encoder decides the codec itself.
 		forceH264_->setEnabled(settings.replayEncoder.empty());
 		otherAdapters_->setChecked(settings.allowOtherAdapters);
+		advanced_->setChecked(settings.showAdvanced);
+		advancedSettings_->setVisible(settings.showAdvanced);
 		// The encoders are looked up only while the advanced settings show them.
-		if (advanced_->isChecked()) {
+		if (settings.showAdvanced) {
 			updateEncoders(settings.replayEncoder);
 		}
 

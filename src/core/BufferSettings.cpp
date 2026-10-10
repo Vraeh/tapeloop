@@ -111,6 +111,7 @@ SavedSettings saveSettings(const BufferSettings &settings)
 	saved.forceH264 = settings.forceH264;
 	saved.replayEncoder = settings.replayEncoder;
 	saved.allowOtherAdapters = settings.allowOtherAdapters;
+	saved.showAdvanced = settings.showAdvanced;
 	for (const auto &[uuid, source] : settings.sources) {
 		SavedSource entry;
 		entry.uuid = uuid;
@@ -142,6 +143,7 @@ std::optional<BufferSettings> loadSettings(const SavedSettings &saved)
 	settings.forceH264 = saved.forceH264;
 	settings.replayEncoder = saved.replayEncoder;
 	settings.allowOtherAdapters = saved.allowOtherAdapters;
+	settings.showAdvanced = saved.showAdvanced;
 	for (const SavedSource &entry : saved.sources) {
 		if (entry.uuid.empty()) {
 			continue;

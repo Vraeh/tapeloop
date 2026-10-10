@@ -1864,6 +1864,18 @@ TEST_CASE_METHOD(ObsFixture, "captures that pile up on a slow disk say so once",
 	manager.manualStop();
 }
 
+TEST_CASE("the advanced switch is saved with the settings", "[obs][manager]")
+{
+	BufferSettings settings;
+	settings.showAdvanced = true;
+	OBSDataAutoRelease data = createSettingsData(tapeloop::saveSettings(settings));
+	CHECK(obs_data_get_bool(data, "show_advanced"));
+	CHECK(readSettingsData(data).showAdvanced);
+	// Settings saved before it hide the advanced settings, as the switch did.
+	obs_data_erase(data, "show_advanced");
+	CHECK_FALSE(readSettingsData(data).showAdvanced);
+}
+
 TEST_CASE("settings saved before the other-adapter setting allow other adapters", "[obs][manager]")
 {
 	OBSDataAutoRelease data = createSettingsData(tapeloop::saveSettings(BufferSettings{}));

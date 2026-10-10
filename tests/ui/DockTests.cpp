@@ -131,8 +131,9 @@ TEST_CASE("the advanced settings choose the replay encoder and whether other car
 	CHECK_FALSE(settings->isVisible());
 	advanced->setChecked(true);
 	CHECK(settings->isVisible());
-	// Showing them is not a change of the settings.
-	CHECK(backend.settingsChanges == 0);
+	// The switch is saved with the settings.
+	CHECK(backend.current.showAdvanced);
+	CHECK(backend.settingsChanges == 1);
 
 	auto *encoder = child<QComboBox>(dock, "replayEncoder");
 	REQUIRE(encoder->count() == 3);
@@ -170,6 +171,16 @@ TEST_CASE("the advanced settings choose the replay encoder and whether other car
 	dock.refresh();
 	CHECK(encoder->count() == 4);
 	CHECK(encoder->currentText() == "QuickSync H.264");
+
+	// The switch follows the settings, as after a scene collection switch.
+	backend.current.showAdvanced = false;
+	dock.refresh();
+	CHECK_FALSE(advanced->isChecked());
+	CHECK_FALSE(settings->isVisible());
+	backend.current.showAdvanced = true;
+	dock.refresh();
+	CHECK(advanced->isChecked());
+	CHECK(settings->isVisible());
 
 	// Tab goes through the advanced settings in the order they show.
 	const auto nextFocus = [](QWidget *from) {

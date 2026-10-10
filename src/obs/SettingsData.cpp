@@ -21,6 +21,7 @@ obs_data_t *createSettingsData(const SavedSettings &saved)
 	obs_data_set_bool(data, "force_h264", saved.forceH264);
 	obs_data_set_string(data, "replay_encoder", saved.replayEncoder.c_str());
 	obs_data_set_bool(data, "allow_other_adapters", saved.allowOtherAdapters);
+	obs_data_set_bool(data, "show_advanced", saved.showAdvanced);
 
 	OBSDataArrayAutoRelease sources = obs_data_array_create();
 	for (const SavedSource &source : saved.sources) {
@@ -63,6 +64,7 @@ SavedSettings readSettingsData(obs_data_t *data)
 	// Settings saved before this key existed allowed other adapters.
 	saved.allowOtherAdapters = !obs_data_has_user_value(data, "allow_other_adapters") ||
 				   obs_data_get_bool(data, "allow_other_adapters");
+	saved.showAdvanced = obs_data_get_bool(data, "show_advanced");
 
 	OBSDataArrayAutoRelease sources = obs_data_get_array(data, "sources");
 	for (size_t i = 0; i < obs_data_array_count(sources); ++i) {
