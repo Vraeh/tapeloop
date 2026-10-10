@@ -4,6 +4,7 @@
 #include "core/ParameterSets.hpp"
 
 #include <algorithm>
+#include <optional>
 
 namespace tapeloop {
 namespace {
@@ -70,6 +71,22 @@ bool isParameterSet(VideoCodec codec, uint8_t header) noexcept
 	return type >= 32 && type <= 34;
 }
 
+// The NAL unit after the start code at start, or nothing when it is a slice. A slice is
+// most of a packet, so it is told from its first byte without looking for its end; a
+// zero there may be the start of the next start code, and then the end is found first.
+std::optional<Nal> nalBeforeSlice(VideoCodec codec, std::span<const uint8_t> data, size_t start, size_t length) noexcept
+{
+	const size_t begin = start + length;
+	if (begin < data.size() && data[begin] != 0 && isSlice(codec, data[begin])) {
+		return std::nullopt;
+	}
+	const Nal nal = nalAfter(data, start, length);
+	if (!nal.bytes.empty() && isSlice(codec, nal.bytes.front())) {
+		return std::nullopt;
+	}
+	return nal;
+}
+
 bool configHolds(std::span<const uint8_t> config, std::span<const uint8_t> wanted) noexcept
 {
 	size_t length = 0;
@@ -87,6 +104,31 @@ bool configHolds(std::span<const uint8_t> config, std::span<const uint8_t> wante
 	return false;
 }
 
+// Whether the parameter sets before the packet's first slice can all go: there is one,
+// the configuration holds each, and something else is left.
+bool canDropSets(VideoCodec codec, std::span<const uint8_t> config, std::span<const uint8_t> packet,
+		 size_t length) noexcept
+{
+	bool sets = false;
+	bool kept = false;
+	for (size_t start = 0; start < packet.size();) {
+		const std::optional<Nal> nal = nalBeforeSlice(codec, packet, start, length);
+		if (!nal) {
+			return sets;
+		}
+		if (nal->bytes.empty() || !isParameterSet(codec, nal->bytes.front())) {
+			kept = true;
+		} else if (configHolds(config, nal->bytes)) {
+			sets = true;
+		} else {
+			return false;
+		}
+		start = nal->next;
+		length = nal->nextLength;
+	}
+	return sets && kept;
+}
+
 } // namespace
 
 size_t copyWithoutKnownParameterSets(VideoCodec codec, std::span<const uint8_t> config, std::span<const uint8_t> packet,
@@ -99,29 +141,22 @@ size_t copyWithoutKnownParameterSets(VideoCodec codec, std::span<const uint8_t> 
 		written += piece.size();
 	};
 	size_t length = 0;
-	if (config.empty() || !startsWithStartCode(packet, length)) {
+	if (config.empty() || !startsWithStartCode(packet, length) || !canDropSets(codec, config, packet, length)) {
 		copy(0, packet.size());
 		return written;
 	}
 
-	bool dropped = false;
 	for (size_t start = 0; start < packet.size();) {
-		const Nal nal = nalAfter(packet, start, length);
-		if (!nal.bytes.empty() && isSlice(codec, nal.bytes.front())) {
+		const std::optional<Nal> nal = nalBeforeSlice(codec, packet, start, length);
+		if (!nal) {
 			copy(start, packet.size());
 			return written;
 		}
-		if (!nal.bytes.empty() && isParameterSet(codec, nal.bytes.front()) && configHolds(config, nal.bytes)) {
-			dropped = true;
-		} else {
-			copy(start, nal.next);
+		if (nal->bytes.empty() || !isParameterSet(codec, nal->bytes.front())) {
+			copy(start, nal->next);
 		}
-		start = nal.next;
-		length = nal.nextLength;
-	}
-	// Nothing but known parameter sets: an empty packet would end the stream.
-	if (dropped && written == 0) {
-		copy(0, packet.size());
+		start = nal->next;
+		length = nal->nextLength;
 	}
 	return written;
 }

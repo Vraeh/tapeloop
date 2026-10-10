@@ -57,14 +57,19 @@ TEST_CASE("parameter sets the configuration holds go, everything else stays")
 	      join({kLong, kAud, kShort, kSei, kShort, kIdr}));
 
 	// From the first slice on, the packet is copied as it is, start codes in its data
-	// included.
+	// included. An IDR slice is one.
 	const Bytes inside = join({kLong, kSps, kLong, kSlice, kLong, kSps});
 	CHECK(filtered(VideoCodec::H264, config, inside) == join({kLong, kSlice, kLong, kSps}));
+	CHECK(filtered(VideoCodec::H264, config, join({kLong, kSps, kLong, kIdr, kLong, kPps})) ==
+	      join({kLong, kIdr, kLong, kPps}));
 
-	// A parameter set the configuration does not hold, as a new one in the stream, stays.
+	// A parameter set the configuration does not hold, as a new one in the stream, keeps
+	// the known ones that come with it: they refer to it.
 	const Bytes otherSps = {0x67, 0x64, 0x00, 0x1F, 0xAC, 0xD9};
 	const Bytes changed = join({kLong, otherSps, kLong, kPps, kLong, kIdr});
-	CHECK(filtered(VideoCodec::H264, config, changed) == join({kLong, otherSps, kLong, kIdr}));
+	CHECK(filtered(VideoCodec::H264, config, changed) == changed);
+	CHECK(filtered(VideoCodec::H264, config, join({kLong, kSps, kLong, otherSps, kLong, kIdr})) ==
+	      join({kLong, kSps, kLong, otherSps, kLong, kIdr}));
 	// Zero bytes between a parameter set and the next start code are not part of it; the
 	// last of them belongs to that start code.
 	CHECK(filtered(VideoCodec::H264, config,
@@ -84,6 +89,16 @@ TEST_CASE("HEVC parameter sets go as H.264 ones do")
 	const Bytes config = join({kLong, vps, kLong, sps, kLong, pps});
 	CHECK(filtered(VideoCodec::Hevc, config, join({kLong, vps, kLong, sps, kLong, pps, kLong, idr})) ==
 	      join({kLong, idr}));
+	// A new SPS keeps the known VPS and PPS with it.
+	const Bytes otherSps = {0x42, 0x01, 0x01, 0x02, 0x60};
+	const Bytes changed = join({kLong, vps, kLong, otherSps, kLong, pps, kLong, idr});
+	CHECK(filtered(VideoCodec::Hevc, config, changed) == changed);
+	// Every IRAP and trailing picture type is a slice, after which nothing goes.
+	for (const int type : {0, 1, 16, 19, 20, 21, 31}) {
+		const Bytes slice = {static_cast<uint8_t>(type << 1), 0x01, 0xAF};
+		CHECK(filtered(VideoCodec::Hevc, config, join({kLong, vps, kLong, slice, kLong, pps})) ==
+		      join({kLong, slice, kLong, pps}));
+	}
 	// HEVC's slice types are not H.264's: as HEVC, 0x26 is a slice; as H.264 a slice
 	// would be 0x65.
 	CHECK(filtered(VideoCodec::H264, config, join({kLong, vps, kLong, idr})) == join({kLong, vps, kLong, idr}));
@@ -95,6 +110,11 @@ TEST_CASE("a packet the filter cannot read is copied whole")
 	// Length-prefixed, as in MP4.
 	const Bytes lengthPrefixed = {0x00, 0x00, 0x00, 0x06, 0x67, 0x64, 0x00, 0x28, 0xAC, 0xD9};
 	CHECK(filtered(VideoCodec::H264, config, lengthPrefixed) == lengthPrefixed);
+	// A start code that does not open the packet.
+	const Bytes late = join({Bytes{0xAA}, kShort, kSps, kLong, kIdr});
+	CHECK(filtered(VideoCodec::H264, config, late) == late);
+	const Bytes padded = join({Bytes{0, 0}, kLong, kSps, kLong, kIdr});
+	CHECK(filtered(VideoCodec::H264, config, padded) == padded);
 	// No configuration to compare with.
 	const Bytes keyframe = join({kLong, kSps, kLong, kPps, kLong, kIdr});
 	CHECK(filtered(VideoCodec::H264, {}, keyframe) == keyframe);

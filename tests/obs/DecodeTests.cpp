@@ -111,9 +111,9 @@ SourceBuffer makeBuffer()
 }
 
 // Captures the test pattern with x264 until the buffer holds that many GOPs.
-Clip captureClip(size_t gops)
+Clip captureClip(size_t gops, uint32_t width = 640, uint32_t height = 360)
 {
-	OBSSourceAutoRelease pattern = createTestPattern(640, 360);
+	OBSSourceAutoRelease pattern = createTestPattern(width, height);
 	SourceCapture capture;
 	REQUIRE(capture.start(pattern, {}) == StartResult::Started);
 	REQUIRE(waitFor([&] { return capture.buffer() && capture.buffer()->stats().gopCount >= gops; }, 60s));
@@ -346,6 +346,26 @@ TEST_CASE_METHOD(ObsFixture, "the FFmpeg decoder takes packets that repeat the c
 	checkEveryWay(planner, decoder, h264Expected);
 	planner.load(hevcBuffer.clip(Nanoseconds::min(), Nanoseconds::max()));
 	checkEveryWay(planner, decoder, hevcExpected);
+}
+
+TEST_CASE_METHOD(ObsFixture, "the FFmpeg decoder takes parameter sets that differ from the configuration", "[decode]")
+{
+	// A run whose stream carries parameter sets other than those of its configuration,
+	// here those of a capture of another size: the packets go whole, with the sets they
+	// share with the configuration, which refer to the new ones.
+	const Clip other = captureClip(1, 320, 180);
+	const CodecConfig *otherConfig = other.gops().front()->codecConfig();
+	REQUIRE(otherConfig);
+	const Clip captured = captureClip(3);
+
+	SourceBuffer buffer = makeBuffer();
+	buffer.setCodecConfig(VideoCodec::H264, *otherConfig);
+	std::vector<Expected> expected;
+	pushClip(buffer, captured, 1s, 0, true, expected);
+	FFmpegDecoder decoder;
+	DecodePlanner planner(decoder);
+	planner.load(buffer.clip(Nanoseconds::min(), Nanoseconds::max()));
+	checkEveryWay(planner, decoder, expected);
 }
 
 TEST_CASE_METHOD(ObsFixture, "the FFmpeg decoder follows a clip from an HEVC run into an H.264 run", "[decode]")
