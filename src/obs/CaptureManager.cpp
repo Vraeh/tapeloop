@@ -3,7 +3,10 @@
 
 #include "obs/CaptureManager.hpp"
 
+#include "core/FileIo.hpp"
 #include "core/MomentCutter.hpp"
+#include "core/ReplayNames.hpp"
+#include "core/ReplayWriter.hpp"
 
 #include "obs/ObsEncoders.hpp"
 #include "obs/SettingsData.hpp"
@@ -15,15 +18,26 @@
 #include <algorithm>
 #include <chrono>
 #include <cstring>
+#include <filesystem>
+#include <optional>
+#include <string>
+#include <string_view>
 #include <utility>
+#include <vector>
 
 namespace tapeloop::obs {
 namespace {
 
-// Replays live in memory until they are stored on disk. They share their GOPs with the
-// buffers, but the cap counts every GOP a replay holds, once, whether or not a buffer
-// still holds it too.
-constexpr MomentListConfig kReplayLimits{200, size_t{2} << 30};
+// The folder of every broadcast, inside OBS's recording folder.
+constexpr std::string_view kReplayFolder = "Tapeloop";
+// How many jobs the store may have, the one it is on included, before the log says the
+// disk falls behind: a capture keeps its GOPs in memory until it is written, whatever
+// the buffers drop.
+constexpr size_t kStoreBacklogWarning = 3;
+// Why a replay the store could not take is not saved. That happens when memory runs out,
+// so the reason fits a string's own buffer in every standard library.
+constexpr std::string_view kNotHandedOver = "not handed over";
+static_assert(kNotHandedOver.size() <= 15);
 
 bool addInput(void *param, obs_source_t *source) noexcept
 {
@@ -70,7 +84,7 @@ bool restartsWhenActivated(obs_source_t *source)
 
 } // namespace
 
-CaptureManager::CaptureManager(CaptureHost &host) : host_(host), library_(kReplayLimits)
+CaptureManager::CaptureManager(CaptureHost &host) : host_(host)
 {
 	lifecycle_.reset(settings_.startWithOutputs, host_.streamingActive(), host_.recordingActive());
 }
@@ -127,6 +141,8 @@ void CaptureManager::onRecording(bool active)
 void CaptureManager::onSceneCollectionCleanup()
 {
 	releaseAll();
+	// The next start names a broadcast of the next collection.
+	wasRunning_ = false;
 	settings_ = BufferSettings{};
 	savedNames_.clear();
 	foreignSettings_ = nullptr;
@@ -137,6 +153,9 @@ void CaptureManager::onExit()
 {
 	exiting_ = true;
 	releaseAll();
+	// The store would finish them anyway when it goes; waiting here logs what became of
+	// them.
+	finishWrites();
 }
 
 void CaptureManager::poll()
@@ -144,6 +163,8 @@ void CaptureManager::poll()
 	if (exiting_) {
 		return;
 	}
+	takeStoreResults();
+	library_.releaseExpired();
 
 	for (auto it = entries_.begin(); it != entries_.end();) {
 		if (it->second->removed) {
@@ -293,17 +314,222 @@ uint64_t CaptureManager::captureReplay()
 		}
 	}
 	MomentCut cut = cutMoment(sources, now, reach);
-	const size_t kept = library_.size();
-	const uint64_t id = library_.add(std::move(cut.moment), std::chrono::system_clock::now());
-	if (id != 0) {
-		blog(LOG_INFO, "[tapeloop] Captured replay %llu from %zu sources, %zu of them with nothing in range",
-		     static_cast<unsigned long long>(id), sources.size(), cut.skipped.size());
-		if (const size_t dropped = kept + 1 - library_.size(); dropped != 0) {
-			blog(LOG_WARNING, "[tapeloop] Old replays dropped to stay within %zu replays and %zu MiB: %zu",
-			     kReplayLimits.maxMoments, kReplayLimits.maxBytes >> 20, dropped);
-		}
+	if (cut.moment.clips.empty()) {
+		return 0;
+	}
+	// OBS may have had no recording folder when the buffers started.
+	if (broadcastFolder_.empty()) {
+		placeBroadcast();
+	}
+	const auto capturedAt = std::chrono::system_clock::now();
+	ReplayCapture capture;
+	capture.id = newReplayId();
+	capture.folder = broadcastFolder_;
+	capture.stem = replayFileStem(localTimeOf(capturedAt));
+	capture.capturedAtUtc =
+		std::chrono::duration_cast<std::chrono::nanoseconds>(capturedAt.time_since_epoch()).count();
+	capture.capturedAtClock = now;
+	capture.start = cut.moment.start;
+	capture.end = cut.moment.end;
+	for (MomentClip &clip : cut.moment.clips) {
+		OBSSourceAutoRelease source = obs_get_source_by_uuid(clip.sourceKey.c_str());
+		const char *name = source ? obs_source_get_name(source) : nullptr;
+		capture.sources.push_back({std::move(clip.sourceKey), name ? name : "", std::move(clip.clip)});
+	}
+	const uint64_t id = library_.addCaptured(capture, broadcastName_);
+	if (id == 0) {
+		return 0;
+	}
+	blog(LOG_INFO, "[tapeloop] Captured replay %llu from %zu sources, %zu of them with nothing in range",
+	     static_cast<unsigned long long>(id), sources.size(), cut.skipped.size());
+	if (capture.folder.empty()) {
+		blog(LOG_WARNING, "[tapeloop] Replay %llu is not saved: OBS has no recording folder",
+		     static_cast<unsigned long long>(id));
+		library_.notSaved(id, "OBS has no recording folder");
+		return id;
+	}
+	try {
+		// The entry for the ticket is made first, since nothing may fail once the store has
+		// the capture: the replay would be marked not saved while it is written. Tickets
+		// start at 1.
+		auto entry = writing_.extract(writing_.try_emplace(0, id).first);
+		entry.key() = store_.write(std::move(capture));
+		writing_.insert(std::move(entry));
+	} catch (...) {
+		blog(LOG_WARNING, "[tapeloop] Replay %llu could not be saved: it could not be handed to the writer",
+		     static_cast<unsigned long long>(id));
+		library_.notSaved(id, std::string(kNotHandedOver));
+		throw;
+	}
+	const size_t backlog = store_.pending();
+	if (backlog < kStoreBacklogWarning) {
+		backlogLogged_ = false;
+	} else if (!backlogLogged_) {
+		blog(LOG_WARNING,
+		     "[tapeloop] The disk falls behind: the writer has %zu replays, tag edits or scans to do, "
+		     "and every replay among them keeps its footage in memory",
+		     backlog);
+		backlogLogged_ = true;
 	}
 	return id;
+}
+
+void CaptureManager::loadLibrary()
+{
+	const std::filesystem::path base = replayFolder();
+	if (!base.empty()) {
+		store_.scan(base);
+	}
+	scannedFolder_ = base;
+}
+
+void CaptureManager::finishWrites()
+{
+	// Taking in a capture can ask for its tags to be written.
+	do {
+		store_.waitUntilIdle();
+		takeStoreResults();
+	} while (store_.pending() != 0);
+}
+
+bool CaptureManager::tagReplay(uint64_t id, std::string_view tag)
+{
+	if (!library_.addTag(id, tag)) {
+		return false;
+	}
+	saveTags(id);
+	return true;
+}
+
+bool CaptureManager::untagReplay(uint64_t id, std::string_view tag)
+{
+	if (!library_.removeTag(id, tag)) {
+		return false;
+	}
+	saveTags(id);
+	return true;
+}
+
+bool CaptureManager::deleteReplayTag(std::string_view tag)
+{
+	const std::vector<uint64_t> carrying = library_.list(tag);
+	if (!library_.deleteTag(tag)) {
+		return false;
+	}
+	for (const uint64_t id : carrying) {
+		saveTags(id);
+	}
+	return true;
+}
+
+std::filesystem::path CaptureManager::replayFolder() const
+{
+	const std::string recording = host_.recordingFolder();
+	if (recording.empty()) {
+		return {};
+	}
+	return pathFromUtf8(recording) / pathFromUtf8(kReplayFolder);
+}
+
+void CaptureManager::nameBroadcast()
+{
+	broadcastName_ =
+		broadcastFolderName(host_.sceneCollectionName(), localTimeOf(std::chrono::system_clock::now()));
+	placeBroadcast();
+}
+
+void CaptureManager::placeBroadcast()
+{
+	const std::filesystem::path base = replayFolder();
+	broadcastFolder_ = base.empty() ? std::filesystem::path() : base / pathFromUtf8(broadcastName_);
+	if (base.empty()) {
+		return;
+	}
+	blog(LOG_INFO, "[tapeloop] Replays of these buffers go to '%s'", utf8FromPath(broadcastFolder_).c_str());
+	// A recording folder set or changed since OBS loaded has replays of its own.
+	if (base != scannedFolder_) {
+		loadLibrary();
+	}
+}
+
+void CaptureManager::takeStoreResults()
+{
+	for (StoreResult &result : store_.poll()) {
+		switch (result.kind) {
+		case StoreResult::Kind::Capture: {
+			const auto found = writing_.find(result.ticket);
+			if (found == writing_.end()) {
+				break;
+			}
+			const uint64_t id = found->second;
+			writing_.erase(found);
+			if (!result.written) {
+				blog(LOG_WARNING, "[tapeloop] Replay %llu could not be saved: %s",
+				     static_cast<unsigned long long>(id), result.error.c_str());
+				library_.notSaved(id, result.error);
+				break;
+			}
+			blog(LOG_INFO,
+			     "[tapeloop] Replay %llu saved as '%s': %llu bytes written, %zu GOPs new, %zu on disk already",
+			     static_cast<unsigned long long>(id), utf8FromPath(result.written->manifest).c_str(),
+			     static_cast<unsigned long long>(result.written->bytesAppended),
+			     result.written->gopsAppended, result.written->gopsShared);
+			// Tags given while it was being written were not in the capture.
+			const bool tagged = !library_.tagsOf(id).empty();
+			library_.stored(id, result.written->manifest, std::move(result.written->index));
+			if (tagged) {
+				saveTags(id);
+			}
+			break;
+		}
+		case StoreResult::Kind::Tags:
+			if (!result.error.empty()) {
+				blog(LOG_WARNING, "[tapeloop] The tags of '%s' could not be saved: %s",
+				     utf8FromPath(result.manifest).c_str(), result.error.c_str());
+			}
+			break;
+		case StoreResult::Kind::Scan:
+			if (!result.scan) {
+				blog(LOG_WARNING, "[tapeloop] The replays on disk could not be read: %s",
+				     result.error.c_str());
+				break;
+			}
+			for (const std::filesystem::path &removed : result.scan->removed) {
+				blog(LOG_INFO, "[tapeloop] Deleted '%s', a replay a crash left half written",
+				     utf8FromPath(removed).c_str());
+			}
+			for (const std::string &error : result.scan->errors) {
+				blog(LOG_WARNING, "[tapeloop] Reading the replays on disk: %s", error.c_str());
+			}
+			for (const FoundReplay &found : result.scan->replays) {
+				if (!found.intact) {
+					blog(LOG_WARNING, "[tapeloop] The replay '%s' is damaged",
+					     utf8FromPath(found.manifest).c_str());
+				}
+				library_.addFound(found);
+			}
+			blog(LOG_INFO, "[tapeloop] Found %zu replays on disk", result.scan->replays.size());
+			break;
+		}
+	}
+	if (!priorityLogged_) {
+		if (const std::optional<bool> low = store_.lowPriority()) {
+			priorityLogged_ = true;
+			if (!*low) {
+				blog(LOG_WARNING,
+				     "[tapeloop] Replays are written at normal I/O priority: the system refused a "
+				     "lower one");
+			}
+		}
+	}
+}
+
+void CaptureManager::saveTags(uint64_t id)
+{
+	const Replay *replay = library_.find(id);
+	if (replay && replay->state == ReplayState::Stored && !replay->manifest.empty()) {
+		store_.writeTags(replay->manifest, replay->tags);
+	}
 }
 
 void CaptureManager::reconcile()
@@ -311,6 +537,10 @@ void CaptureManager::reconcile()
 	if (exiting_) {
 		return;
 	}
+	if (lifecycle_.running() && !wasRunning_) {
+		nameBroadcast();
+	}
+	wasRunning_ = lifecycle_.running();
 
 	for (auto it = entries_.begin(); it != entries_.end();) {
 		const auto source = settings_.sources.find(it->first);

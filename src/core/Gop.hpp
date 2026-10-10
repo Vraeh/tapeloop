@@ -74,6 +74,7 @@ public:
 	Nanoseconds lastTime() const noexcept { return packets_.back().time; }
 	// The end of the last frame, one frame duration after it starts.
 	Nanoseconds endTime() const noexcept { return saturatingAdd(lastTime(), frameDuration_); }
+	Nanoseconds frameDuration() const noexcept { return frameDuration_; }
 
 	size_t byteSize() const noexcept { return bytes_.size(); }
 

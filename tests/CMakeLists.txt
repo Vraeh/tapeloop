@@ -47,19 +47,28 @@ target_sources(
     core/BufferLifecycleTests.cpp
     core/BufferSettingsTests.cpp
     core/ClipTests.cpp
+    core/Crc32cTests.cpp
     core/DecodePlannerTests.cpp
     core/EncoderPolicyTests.cpp
     core/FakeDecoder.hpp
+    core/FileIoTests.cpp
+    core/GopReaderTests.cpp
     core/GopTests.cpp
     core/MediaTimeTests.cpp
     core/MomentCutterTests.cpp
-    core/MomentListTests.cpp
     core/PlayheadTests.cpp
+    core/ReplayFormatTests.cpp
     core/ReplayLibraryTests.cpp
+    core/ReplayNamesTests.cpp
     core/ReplayPlayerStateTests.cpp
     core/ReplaySizeTests.cpp
+    core/ReplayStorageTests.cpp
+    core/ReplayStoreTests.cpp
+    core/ReplayWriterTests.cpp
     core/SourceBufferTests.cpp
+    core/StoredReplays.hpp
     core/SyntheticEncoder.hpp
+    core/TempDirectory.hpp
 )
 # Every core object goes into the test binary, tested or not, so that coverage also
 # reports a core file nothing calls yet.

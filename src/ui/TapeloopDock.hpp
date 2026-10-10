@@ -75,12 +75,14 @@ private:
 	QListWidget *replays_;
 	QLineEdit *tagName_;
 	QPushButton *addTag_;
-	// The ids the replay list shows, newest first, and the text of each.
+	// The ids the replay list shows, newest first, zero for the rows naming a broadcast,
+	// and the text and tooltip of each.
 	std::vector<uint64_t> shownReplays_;
 	std::vector<QString> shownReplayTexts_;
+	std::vector<QString> shownReplayTips_;
 	std::vector<std::string> shownTags_;
-	// The newest replay seen current, to tell a new capture from a pick.
-	uint64_t newestReplay_ = 0;
+	// The last capture the list has seen, to tell a new capture from a pick.
+	uint64_t lastCaptureSeen_ = 0;
 	bool refreshQueued_ = false;
 	bool leftButtonHeld_ = false;
 	// The replay to show next when the left button was pressed on the list, until the

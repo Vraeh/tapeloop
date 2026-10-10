@@ -25,9 +25,10 @@ public:
 	uint64_t captureReplay() override { return manager_.captureReplay(); }
 	std::vector<ui::DockReplay> replays(const std::string &tag = {}) const override;
 	std::vector<std::string> replayTags() const override;
-	bool tagReplay(uint64_t id, const std::string &tag) override { return manager_.library().addTag(id, tag); }
+	bool tagReplay(uint64_t id, const std::string &tag) override { return manager_.tagReplay(id, tag); }
 	uint64_t currentReplay() const override { return manager_.library().current(); }
-	void pickReplay(uint64_t id) override { manager_.library().pick(id); }
+	uint64_t lastCapture() const override { return manager_.library().lastCaptured(); }
+	void pickReplay(uint64_t id) override { manager_.pickReplay(id); }
 
 private:
 	CaptureManager &manager_;

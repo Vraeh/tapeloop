@@ -7,6 +7,7 @@
 #include <util/base.h>
 
 #include <new>
+#include <string>
 #include <utility>
 
 namespace tapeloop::obs {
@@ -66,6 +67,22 @@ bool FrontendBridge::recordingActive() const
 	return obs_frontend_recording_active();
 }
 
+std::string FrontendBridge::recordingFolder() const
+{
+	char *path = obs_frontend_get_current_record_output_path();
+	std::string folder = path ? path : "";
+	bfree(path);
+	return folder;
+}
+
+std::string FrontendBridge::sceneCollectionName() const
+{
+	char *name = obs_frontend_get_current_scene_collection();
+	std::string collection = name ? name : "";
+	bfree(name);
+	return collection;
+}
+
 void FrontendBridge::requestSave()
 {
 	// The frontend saves on a later pass of the UI thread's event loop, so the edits of
@@ -94,6 +111,9 @@ void FrontendBridge::handleEvent(obs_frontend_event event, void *data) noexcept
 			break;
 		case OBS_FRONTEND_EVENT_SCENE_COLLECTION_CLEANUP:
 			manager.onSceneCollectionCleanup();
+			break;
+		case OBS_FRONTEND_EVENT_FINISHED_LOADING:
+			manager.loadLibrary();
 			break;
 		case OBS_FRONTEND_EVENT_EXIT:
 			manager.onExit();

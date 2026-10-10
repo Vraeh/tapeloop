@@ -20,29 +20,42 @@ target_sources(
     BufferSettings.hpp
     Clip.cpp
     Clip.hpp
+    Crc32c.cpp
+    Crc32c.hpp
     DecodePlanner.cpp
     DecodePlanner.hpp
     EncoderPolicy.cpp
     EncoderPolicy.hpp
+    FileIo.cpp
+    FileIo.hpp
     FrameDecoder.hpp
     Gop.cpp
     Gop.hpp
+    GopReader.cpp
+    GopReader.hpp
     MediaTime.cpp
     MediaTime.hpp
     MomentCutter.cpp
     MomentCutter.hpp
-    MomentList.cpp
-    MomentList.hpp
     Playhead.cpp
     Playhead.hpp
+    ReplayFormat.cpp
+    ReplayFormat.hpp
     ReplayLibrary.cpp
     ReplayLibrary.hpp
+    ReplayNames.cpp
+    ReplayNames.hpp
     ReplayPlayerState.cpp
     ReplayPlayerState.hpp
     ReplaySequence.cpp
     ReplaySequence.hpp
     ReplaySize.cpp
     ReplaySize.hpp
+    ReplayState.hpp
+    ReplayStore.cpp
+    ReplayStore.hpp
+    ReplayWriter.cpp
+    ReplayWriter.hpp
     SourceBuffer.cpp
     SourceBuffer.hpp
 )

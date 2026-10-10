@@ -6,15 +6,18 @@
 #include "core/BufferLifecycle.hpp"
 #include "core/BufferSettings.hpp"
 #include "core/ReplayLibrary.hpp"
+#include "core/ReplayStore.hpp"
 #include "obs/SourceCapture.hpp"
 
 #include <obs.hpp>
 
 #include <atomic>
+#include <filesystem>
 #include <map>
 #include <memory>
 #include <optional>
 #include <string>
+#include <string_view>
 #include <vector>
 
 namespace tapeloop::obs {
@@ -29,6 +32,9 @@ public:
 	// The settings were edited: have them saved at once, so that a crash right after an
 	// edit loses nothing.
 	virtual void requestSave() = 0;
+	// The folder OBS records into, in UTF-8; empty when it has none.
+	virtual std::string recordingFolder() const = 0;
+	virtual std::string sceneCollectionName() const = 0;
 };
 
 struct SourceStatus {
@@ -72,8 +78,9 @@ public:
 
 	// Stops the captures of removed sources, restarts captures whose source changed size
 	// keeping their buffers, retries selected sources that had no size or were not found,
-	// and catches up with output changes the frontend did not report. Meant to run every
-	// second or so.
+	// catches up with output changes the frontend did not report, takes in what the store
+	// did, and lets the library forget the frames of replays the buffers no longer hold.
+	// Meant to run every second or so.
 	void poll();
 
 	// The settings under kSettingsKey of the scene collection's data. Saving leaves out
@@ -88,14 +95,30 @@ public:
 	// Null when the source has no buffer.
 	const SourceBuffer *buffer(const std::string &uuid) const;
 
-	// Keeps what every captured buffer holds as one replay of the library: the range
-	// reaches back from now to the oldest frame any buffer holds, and each source's clip
-	// is all its buffer holds, a stopped buffer's included. Buffers keep recording. The
-	// oldest replays go, with a warning in the log, past 200 replays or 2 GiB of GOPs
-	// they hold. Zero when no buffer holds anything.
+	// Keeps what every captured buffer holds as one replay: the range reaches back from
+	// now to the oldest frame any buffer holds, and each source's clip is all its buffer
+	// holds, a stopped buffer's included. Buffers keep recording. The replay is written in
+	// the background into the broadcast folder named when the buffers last started, and
+	// the library keeps only its index. Zero when no buffer holds anything.
 	uint64_t captureReplay();
+	// Reads back, in the background, the replays of every broadcast folder. Called once
+	// OBS has loaded, and again when buffers start with OBS recording somewhere else.
+	void loadLibrary();
+	// Waits for the replays being written and takes in what became of them.
+	void finishWrites();
 	const ReplayLibrary &library() const noexcept { return library_; }
-	ReplayLibrary &library() noexcept { return library_; }
+	// Each changes the library, and writes the tags of a replay stored on disk into its
+	// manifest.
+	bool tagReplay(uint64_t id, std::string_view tag);
+	bool untagReplay(uint64_t id, std::string_view tag);
+	bool deleteReplayTag(std::string_view tag);
+	bool pickReplay(uint64_t id) { return library_.pick(id); }
+	// Where the replays of the buffers that run now go: a folder named after the scene
+	// collection and the minute they started, under OBS's recording folder. Empty while
+	// OBS has no recording folder; then the first capture after it has one names it.
+	const std::filesystem::path &broadcastFolder() const noexcept { return broadcastFolder_; }
+	// Where every broadcast folder is.
+	std::filesystem::path replayFolder() const;
 
 private:
 	// Keeps a source active, as if it were on air, until reset or destroyed. Activation
@@ -147,6 +170,13 @@ private:
 	void updateActivation(const std::string &uuid, Entry &entry, obs_source_t *source);
 	void releaseAll();
 	void followOutputs();
+	void nameBroadcast();
+	// The folder of the broadcast named when the buffers started, once OBS has a
+	// recording folder.
+	void placeBroadcast();
+	void takeStoreResults();
+	// Has the store write the replay's tags when it is stored on disk.
+	void saveTags(uint64_t id);
 	static void handleRemove(void *data, calldata_t *) noexcept;
 
 	CaptureHost &host_;
@@ -160,6 +190,18 @@ private:
 	// Settings of a version this build does not know, written back as they came.
 	OBSDataAutoRelease foreignSettings_;
 	bool exiting_ = false;
+	// Whether the buffers ran at the last reconcile, to name a broadcast when they start.
+	bool wasRunning_ = false;
+	std::string broadcastName_;
+	std::filesystem::path broadcastFolder_;
+	// The folder of every broadcast the library was last read from.
+	std::filesystem::path scannedFolder_;
+	// The replay each capture the store is writing belongs to, by ticket.
+	std::map<uint64_t, uint64_t> writing_;
+	bool priorityLogged_ = false;
+	// Whether the log says the store falls behind, until a capture finds it caught up.
+	bool backlogLogged_ = false;
+	ReplayStore store_;
 };
 
 } // namespace tapeloop::obs

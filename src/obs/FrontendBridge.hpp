@@ -9,14 +9,15 @@
 
 #include <functional>
 #include <memory>
+#include <string>
 
 namespace tapeloop::obs {
 
 // The capture manager wired to the OBS frontend: streaming and recording events, scene
 // collection cleanup and exit, the scene collection save callback and save requests,
-// a poll every second on the UI thread, and the hotkey that captures a replay, saved
-// with the scene collection. Created and destroyed on the UI thread, at
-// module load and unload.
+// the replays on disk read once OBS has loaded, a poll every second on the UI thread,
+// and the hotkey that captures a replay, saved with the scene collection. Created and
+// destroyed on the UI thread, at module load and unload.
 class FrontendBridge : private CaptureHost {
 public:
 	FrontendBridge();
@@ -31,6 +32,8 @@ private:
 	bool streamingActive() const override;
 	bool recordingActive() const override;
 	void requestSave() override;
+	std::string recordingFolder() const override;
+	std::string sceneCollectionName() const override;
 	// The frontend API is gone by the time the module unloads, so the callbacks go at
 	// the exit event.
 	void removeFrontendCallbacks() noexcept;

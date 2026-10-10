@@ -1,10 +1,15 @@
 // SPDX-License-Identifier: GPL-2.0-or-later
 // Copyright (C) 2026 Vicente Aedo <ryde1337@gmail.com>
 
+#include "../core/StoredReplays.hpp"
+#include "../core/TempDirectory.hpp"
 #include "LogCounter.hpp"
 #include "ObsFixture.hpp"
 #include "TestPattern.hpp"
 
+#include "core/FileIo.hpp"
+#include "core/GopReader.hpp"
+#include "core/ReplayWriter.hpp"
 #include "obs/CaptureManager.hpp"
 #include "obs/SettingsData.hpp"
 
@@ -15,7 +20,10 @@
 #include <atomic>
 #include <chrono>
 #include <cmath>
+#include <filesystem>
 #include <initializer_list>
+#include <memory>
+#include <optional>
 #include <string>
 #include <thread>
 #include <vector>
@@ -23,6 +31,8 @@
 using namespace std::chrono_literals;
 using tapeloop::BufferSettings;
 using tapeloop::FrameSize;
+using tapeloop::Replay;
+using tapeloop::ReplayState;
 using tapeloop::ReplayResolution;
 using tapeloop::ResolutionMode;
 using tapeloop::SavedSettings;
@@ -39,15 +49,23 @@ using tapeloop::test::waitFor;
 
 namespace {
 
-// Stands in for the frontend: the test sets the outputs.
+namespace fs = std::filesystem;
+
+// Stands in for the frontend: the test sets the outputs, and OBS records into a folder of
+// its own.
 class FakeHost : public tapeloop::obs::CaptureHost {
 public:
 	bool streaming = false;
 	bool recording = false;
+	tapeloop::test::TempDirectory dir;
+	std::string folder = tapeloop::utf8FromPath(dir.path());
+	std::string collection = "F\xC3\xBAtbol: Liga/2026";
 
 	bool streamingActive() const override { return streaming; }
 	bool recordingActive() const override { return recording; }
 	void requestSave() override { ++saves; }
+	std::string recordingFolder() const override { return folder; }
+	std::string sceneCollectionName() const override { return collection; }
 
 	int saves = 0;
 };
@@ -68,6 +86,17 @@ bool hasGops(const CaptureManager &manager, const std::string &uuid, size_t coun
 {
 	const tapeloop::SourceBuffer *buffer = manager.buffer(uuid);
 	return buffer && buffer->stats().gopCount >= count;
+}
+
+const tapeloop::StoredSource &sourceOf(const Replay &replay, const std::string &uuid)
+{
+	for (const tapeloop::StoredSource &source : replay.index->sources) {
+		if (source.key == uuid) {
+			return source;
+		}
+	}
+	FAIL("no source " << uuid);
+	return replay.index->sources.front();
 }
 
 } // namespace
@@ -1103,28 +1132,22 @@ TEST_CASE_METHOD(ObsFixture, "a replay keeps what every captured buffer holds", 
 
 	const uint64_t id = manager.captureReplay();
 	REQUIRE(id != 0);
-	const tapeloop::Moment *moment = manager.library().find(id);
-	REQUIRE(moment);
-	REQUIRE(moment->clips.size() == 2);
+	const Replay *replay = manager.library().find(id);
+	REQUIRE(replay);
+	REQUIRE(replay->index);
+	const tapeloop::ReplayIndex &index = *replay->index;
+	REQUIRE(index.sources.size() == 2);
+	CHECK(sourceOf(*replay, firstUuid).name == "First");
 	// Both sources render on the same video clock, so their clips end together.
-	const auto out = [&](const std::string &uuid) {
-		for (const tapeloop::MomentClip &clip : moment->clips) {
-			if (clip.sourceKey == uuid) {
-				return clip.clip.out();
-			}
-		}
-		FAIL("no clip of " << uuid);
-		return tapeloop::Nanoseconds{0};
-	};
-	const tapeloop::Nanoseconds gap = out(firstUuid) - out(secondUuid);
+	const tapeloop::Nanoseconds gap = sourceOf(*replay, firstUuid).out - sourceOf(*replay, secondUuid).out;
 	CHECK(std::chrono::abs(gap) <= 100ms);
 	// The range starts at the oldest frame held, so each clip holds all its buffer did.
-	tapeloop::Nanoseconds earliest = moment->end;
-	for (const tapeloop::MomentClip &clip : moment->clips) {
-		CHECK(clip.clip.in() >= moment->start);
-		earliest = std::min(earliest, clip.clip.in());
+	tapeloop::Nanoseconds earliest = index.end;
+	for (const tapeloop::StoredSource &source : index.sources) {
+		CHECK(source.in >= index.start);
+		earliest = std::min(earliest, source.in);
 	}
-	CHECK(moment->start == earliest);
+	CHECK(index.start == earliest);
 
 	// The buffers keep recording, and a later capture is a replay of its own.
 	const size_t before = gops(firstUuid);
@@ -1134,21 +1157,22 @@ TEST_CASE_METHOD(ObsFixture, "a replay keeps what every captured buffer holds", 
 	REQUIRE(later != 0);
 	CHECK(manager.library().list() == std::vector<uint64_t>{later, id});
 	CHECK(manager.library().current() == later);
-	CHECK(manager.library().capturedAt(later) >= manager.library().capturedAt(id));
+	CHECK(manager.library().find(later)->capturedAt >= manager.library().find(id)->capturedAt);
 
 	// Buffers that stopped still hold what they recorded.
 	REQUIRE(manager.manualStop());
 	const uint64_t stopped = manager.captureReplay();
 	REQUIRE(stopped != 0);
-	CHECK(manager.library().find(stopped)->clips.size() == 2);
+	CHECK(manager.library().find(stopped)->sources.size() == 2);
 
 	// A source no longer selected takes its buffer with it.
 	settings.sources[secondUuid].selected = false;
 	manager.setSettings(settings);
 	const uint64_t alone = manager.captureReplay();
 	REQUIRE(alone != 0);
-	REQUIRE(manager.library().find(alone)->clips.size() == 1);
-	CHECK(manager.library().find(alone)->clips[0].sourceKey == firstUuid);
+	REQUIRE(manager.library().find(alone)->sources.size() == 1);
+	CHECK(manager.library().find(alone)->sources[0].key == firstUuid);
+	manager.finishWrites();
 }
 
 TEST_CASE_METHOD(ObsFixture, "a replay keeps all a buffer holds, whatever the length set now", "[obs][manager][replay]")
@@ -1172,10 +1196,11 @@ TEST_CASE_METHOD(ObsFixture, "a replay keeps all a buffer holds, whatever the le
 		},
 		60s));
 	const auto inOf = [&](uint64_t id) {
-		const tapeloop::Moment *moment = manager.library().find(id);
-		REQUIRE(moment);
-		REQUIRE(moment->clips.size() == 1);
-		return moment->clips[0].clip.in();
+		const Replay *replay = manager.library().find(id);
+		REQUIRE(replay);
+		REQUIRE(replay->index);
+		REQUIRE(replay->index->sources.size() == 1);
+		return replay->index->sources[0].in;
 	};
 
 	// A running buffer keeps the length it started with until it starts again.
@@ -1195,9 +1220,11 @@ TEST_CASE_METHOD(ObsFixture, "a replay keeps all a buffer holds, whatever the le
 	const uint64_t late = manager.captureReplay();
 	REQUIRE(late != 0);
 	CHECK(inOf(late) == stopped.oldestTime);
+	manager.finishWrites();
 }
 
-TEST_CASE_METHOD(ObsFixture, "the oldest replays go with a warning past the library's limits", "[obs][manager][replay]")
+TEST_CASE_METHOD(ObsFixture, "a replay is saved in its broadcast folder and read back from it",
+		 "[obs][manager][replay]")
 {
 	OBSSourceAutoRelease pattern = createTestPattern(320, 180, "Pattern");
 	const std::string uuid = uuidOf(pattern);
@@ -1207,25 +1234,392 @@ TEST_CASE_METHOD(ObsFixture, "the oldest replays go with a warning past the libr
 	settings.startWithOutputs = false;
 	manager.setSettings(settings);
 	REQUIRE(manager.manualStart());
-	REQUIRE(waitFor(
-		[&] {
-			const tapeloop::SourceBuffer *buffer = manager.buffer(uuid);
-			return buffer && buffer->stats().gopCount != 0;
-		},
-		60s));
+	const fs::path folder = manager.broadcastFolder();
+	CHECK(folder.parent_path() == host.dir.path() / "Tapeloop");
+	CHECK(tapeloop::utf8FromPath(folder.filename()).starts_with("F\xC3\xBAtbol_ Liga_2026 20"));
+	REQUIRE(waitFor([&] { return hasGops(manager, uuid, 3); }, 60s));
 
-	LogCounter warned("Old replays dropped to stay within");
-	const uint64_t first = manager.captureReplay();
-	REQUIRE(first != 0);
-	for (int i = 1; i < 200; ++i) {
-		REQUIRE(manager.captureReplay() != 0);
+	const uint64_t id = manager.captureReplay();
+	REQUIRE(id != 0);
+	CHECK(manager.library().find(id)->state == ReplayState::Writing);
+	manager.finishWrites();
+	const Replay *replay = manager.library().find(id);
+	REQUIRE(replay->state == ReplayState::Stored);
+	CHECK(replay->manifest.parent_path() == folder);
+	CHECK(replay->broadcast == tapeloop::utf8FromPath(folder.filename()));
+	const std::optional<tapeloop::ReplayIndex> onDisk = tapeloop::readReplayIndex(replay->manifest);
+	REQUIRE(onDisk);
+	CHECK(onDisk->sources[0].frameTimes == replay->index->sources[0].frameTimes);
+
+	// Every GOP reads back from disk as the buffer holds it. The last one was still being
+	// encoded at the capture: only the capture held that copy, so only the disk has it now.
+	tapeloop::GopReader reader;
+	const tapeloop::StoredSource &source = replay->index->sources[0];
+	REQUIRE(source.gops.size() == replay->live[0].size());
+	size_t alive = 0;
+	for (size_t gop = 0; gop < source.gops.size(); ++gop) {
+		const std::shared_ptr<const tapeloop::Gop> read = reader.read(replay->manifest, source, gop);
+		REQUIRE(read);
+		if (const std::shared_ptr<const tapeloop::Gop> live = replay->live[0][gop].lock()) {
+			++alive;
+			CHECK(reader.read(replay->manifest, source, gop, live) == live);
+			CHECK(tapeloop::test::sameGop(*read, *live));
+		}
 	}
-	CHECK(manager.library().size() == 200);
-	CHECK(warned.lines == 0);
-	REQUIRE(manager.captureReplay() != 0);
-	CHECK(manager.library().size() == 200);
-	CHECK_FALSE(manager.library().find(first));
-	CHECK(warned.lines == 1);
+	CHECK(alive + 1 >= source.gops.size());
+	manager.manualStop();
+}
+
+TEST_CASE_METHOD(ObsFixture, "a replay that overlaps the one before writes only what is new", "[obs][manager][replay]")
+{
+	OBSSourceAutoRelease pattern = createTestPattern(320, 180, "Pattern");
+	const std::string uuid = uuidOf(pattern);
+	FakeHost host;
+	CaptureManager manager(host);
+	BufferSettings settings = selecting(uuid);
+	settings.startWithOutputs = false;
+	manager.setSettings(settings);
+	REQUIRE(manager.manualStart());
+	REQUIRE(waitFor([&] { return hasGops(manager, uuid, 3); }, 60s));
+	const uint64_t first = manager.captureReplay();
+	const size_t held = manager.buffer(uuid)->stats().gopCount;
+	REQUIRE(waitFor([&] { return manager.buffer(uuid)->stats().gopCount > held; }, 60s));
+	const uint64_t second = manager.captureReplay();
+	manager.finishWrites();
+
+	const tapeloop::StoredSource &before = manager.library().find(first)->index->sources[0];
+	const tapeloop::StoredSource &after = manager.library().find(second)->index->sources[0];
+	REQUIRE(manager.library().find(second)->state == ReplayState::Stored);
+	// The GOPs both hold are the same chunks on disk.
+	size_t shared = 0;
+	for (const tapeloop::StoredGop &gop : after.gops) {
+		for (const tapeloop::StoredGop &earlier : before.gops) {
+			if (gop.segment == earlier.segment && gop.offset == earlier.offset) {
+				++shared;
+			}
+		}
+	}
+	CHECK(shared + 2 >= before.gops.size());
+	CHECK(shared < after.gops.size());
+	manager.manualStop();
+}
+
+TEST_CASE_METHOD(ObsFixture, "replays and their tags are read back after OBS starts again", "[obs][manager][replay]")
+{
+	OBSSourceAutoRelease pattern = createTestPattern(320, 180, "Pattern");
+	const std::string uuid = uuidOf(pattern);
+	FakeHost host;
+	std::vector<tapeloop::ReplayId> captured;
+	{
+		CaptureManager manager(host);
+		BufferSettings settings = selecting(uuid);
+		settings.startWithOutputs = false;
+		manager.setSettings(settings);
+		REQUIRE(manager.manualStart());
+		REQUIRE(waitFor([&] { return hasGops(manager, uuid, 2); }, 60s));
+		const uint64_t goal = manager.captureReplay();
+		const uint64_t foul = manager.captureReplay();
+		// One tagged while it is being written, one once it is on disk.
+		CHECK(manager.tagReplay(goal, "Goal"));
+		manager.finishWrites();
+		CHECK(manager.tagReplay(foul, "Foul"));
+		CHECK(manager.tagReplay(foul, "Penalty"));
+		CHECK(manager.untagReplay(foul, "Penalty"));
+		captured = {manager.library().find(goal)->uuid, manager.library().find(foul)->uuid};
+		manager.onExit();
+	}
+
+	CaptureManager manager(host);
+	manager.loadLibrary();
+	manager.finishWrites();
+	REQUIRE(manager.library().size() == 2);
+	for (const uint64_t id : manager.library().list()) {
+		const Replay *replay = manager.library().find(id);
+		CHECK(replay->state == ReplayState::Stored);
+		CHECK(replay->sources == std::vector<tapeloop::ReplaySource>{{uuid, "Pattern"}});
+		CHECK(replay->broadcast.starts_with("F\xC3\xBAtbol_ Liga_2026 20"));
+		if (replay->uuid == captured[0]) {
+			CHECK(replay->tags == std::vector<std::string>{"Goal"});
+		} else {
+			CHECK(replay->uuid == captured[1]);
+			CHECK(replay->tags == std::vector<std::string>{"Foul"});
+		}
+	}
+	CHECK(manager.library().tags().size() == 2);
+
+	// Deleting a tag reaches the replays on disk.
+	CHECK(manager.deleteReplayTag("goal"));
+	manager.finishWrites();
+	CaptureManager again(host);
+	again.loadLibrary();
+	again.finishWrites();
+	CHECK(again.library().list("Goal").empty());
+	CHECK(again.library().list("Foul").size() == 1);
+}
+
+TEST_CASE_METHOD(ObsFixture, "a replay that cannot be saved still plays from the buffers", "[obs][manager][replay]")
+{
+	OBSSourceAutoRelease pattern = createTestPattern(320, 180, "Pattern");
+	const std::string uuid = uuidOf(pattern);
+	FakeHost host;
+	// A file where the folder of replays goes.
+	tapeloop::File(host.dir.path() / "Tapeloop", tapeloop::File::Mode::CreateNew).close();
+	CaptureManager manager(host);
+	BufferSettings settings = selecting(uuid);
+	settings.startWithOutputs = false;
+	manager.setSettings(settings);
+	REQUIRE(manager.manualStart());
+	REQUIRE(waitFor([&] { return hasGops(manager, uuid, 2); }, 60s));
+
+	LogCounter failed("could not be saved");
+	const uint64_t id = manager.captureReplay();
+	manager.finishWrites();
+	const Replay *replay = manager.library().find(id);
+	CHECK(replay->state == ReplayState::NotSaved);
+	CHECK_FALSE(replay->error.empty());
+	CHECK(failed.lines == 1);
+	CHECK(manager.library().current() == id);
+	CHECK_FALSE(replay->live[0].front().expired());
+
+	// Without a recording folder there is nowhere to save it.
+	host.folder.clear();
+	REQUIRE(manager.manualStop());
+	REQUIRE(manager.manualStart());
+	CHECK(manager.broadcastFolder().empty());
+	REQUIRE(waitFor([&] { return hasGops(manager, uuid, 1); }, 60s));
+	const uint64_t nowhere = manager.captureReplay();
+	REQUIRE(nowhere != 0);
+	CHECK(manager.library().find(nowhere)->state == ReplayState::NotSaved);
+	manager.manualStop();
+}
+
+TEST_CASE_METHOD(ObsFixture, "a stored replay holds none of the GOPs its buffer let go of", "[obs][manager][replay]")
+{
+	OBSSourceAutoRelease pattern = createTestPattern(320, 180, "Pattern");
+	const std::string uuid = uuidOf(pattern);
+	FakeHost host;
+	CaptureManager manager(host);
+	BufferSettings settings = selecting(uuid);
+	settings.startWithOutputs = false;
+	manager.setSettings(settings);
+	REQUIRE(manager.manualStart());
+	REQUIRE(waitFor([&] { return hasGops(manager, uuid, 2); }, 60s));
+	const uint64_t id = manager.captureReplay();
+	manager.finishWrites();
+
+	const size_t gops = manager.library().find(id)->live[0].size();
+	REQUIRE(gops != 0);
+
+	// Unselected, the source's buffer goes, and with it every GOP; the next poll lets go
+	// of the replay's frames too, which its manifest has.
+	settings.sources[uuid].selected = false;
+	manager.setSettings(settings);
+	CHECK(manager.buffer(uuid) == nullptr);
+	manager.poll();
+	const Replay *replay = manager.library().find(id);
+	REQUIRE(replay->state == ReplayState::Stored);
+	CHECK(replay->index == nullptr);
+	CHECK(replay->live.empty());
+	const std::optional<tapeloop::ReplayIndex> index = tapeloop::readReplayIndex(replay->manifest);
+	REQUIRE(index);
+	tapeloop::GopReader reader;
+	for (size_t gop = 0; gop < gops; ++gop) {
+		CHECK(reader.read(replay->manifest, index->sources[0], gop));
+	}
+	CHECK(reader.stats().read == gops);
+}
+
+TEST_CASE_METHOD(ObsFixture, "a broadcast is named when the buffers start", "[obs][manager][replay]")
+{
+	OBSSourceAutoRelease pattern = createTestPattern(320, 180, "Pattern");
+	FakeHost host;
+	CaptureManager manager(host);
+	BufferSettings settings = selecting(uuidOf(pattern));
+	settings.startWithOutputs = false;
+	manager.setSettings(settings);
+	CHECK(manager.broadcastFolder().empty());
+	REQUIRE(manager.manualStart());
+	const fs::path first = manager.broadcastFolder();
+	REQUIRE_FALSE(first.empty());
+	// Running on, the buffers keep it, whatever the collection is called now.
+	host.collection = "Copa";
+	manager.poll();
+	CHECK(manager.broadcastFolder() == first);
+
+	// A new collection starts a new broadcast.
+	manager.onSceneCollectionCleanup();
+	manager.setSettings(settings);
+	REQUIRE(manager.manualStart());
+	CHECK(tapeloop::utf8FromPath(manager.broadcastFolder().filename()).starts_with("Copa 20"));
+	manager.manualStop();
+}
+
+TEST_CASE_METHOD(ObsFixture, "a collection switched while streaming starts a new broadcast", "[obs][manager][replay]")
+{
+	OBSSourceAutoRelease pattern = createTestPattern(320, 180, "Pattern");
+	FakeHost host;
+	host.streaming = true;
+	CaptureManager manager(host);
+	const BufferSettings settings = selecting(uuidOf(pattern));
+	manager.setSettings(settings);
+	REQUIRE(manager.running());
+	REQUIRE(tapeloop::utf8FromPath(manager.broadcastFolder().filename()).starts_with("F\xC3\xBAtbol_ Liga_2026 20"));
+
+	// The buffers stop with the old collection and start with the new one, while the
+	// stream goes on throughout.
+	host.collection = "Copa";
+	manager.onSceneCollectionCleanup();
+	manager.setSettings(settings);
+	REQUIRE(manager.running());
+	CHECK(tapeloop::utf8FromPath(manager.broadcastFolder().filename()).starts_with("Copa 20"));
+	manager.onStreaming(false);
+}
+
+TEST_CASE_METHOD(ObsFixture, "a recording folder that appears later is used and read", "[obs][manager][replay]")
+{
+	OBSSourceAutoRelease pattern = createTestPattern(320, 180, "Pattern");
+	const std::string uuid = uuidOf(pattern);
+	FakeHost host;
+	// A replay already there from an earlier broadcast.
+	tapeloop::ReplayWriter().write(
+		tapeloop::test::captureOf(host.dir.path() / "Tapeloop" / "Copa 2026-10-01 10-00",
+					  {tapeloop::test::sourceOf("a", tapeloop::test::makeGops(2))}));
+	const std::string folder = host.folder;
+	host.folder.clear();
+	CaptureManager manager(host);
+	manager.loadLibrary();
+	BufferSettings settings = selecting(uuid);
+	settings.startWithOutputs = false;
+	manager.setSettings(settings);
+	REQUIRE(manager.manualStart());
+	CHECK(manager.broadcastFolder().empty());
+	REQUIRE(waitFor([&] { return hasGops(manager, uuid, 2); }, 60s));
+	// Captures with no folder keep the broadcast the buffers started, whatever the
+	// collection is called by then.
+	host.collection = "Copa";
+	const uint64_t unsaved = manager.captureReplay();
+	REQUIRE(unsaved != 0);
+	CHECK(manager.library().find(unsaved)->state == ReplayState::NotSaved);
+	const std::string broadcast = manager.library().find(unsaved)->broadcast;
+	CHECK(broadcast.starts_with("F\xC3\xBAtbol_ Liga_2026 "));
+
+	host.folder = folder;
+	const uint64_t id = manager.captureReplay();
+	REQUIRE(id != 0);
+	manager.finishWrites();
+	CHECK(manager.library().find(id)->state == ReplayState::Stored);
+	CHECK(manager.library().find(id)->broadcast == broadcast);
+	CHECK(manager.broadcastFolder() == host.dir.path() / "Tapeloop" / tapeloop::pathFromUtf8(broadcast));
+	CHECK(manager.library().size() == 3);
+	manager.manualStop();
+}
+
+TEST_CASE_METHOD(ObsFixture, "tags edited while a replay is written reach its file before exit",
+		 "[obs][manager][replay]")
+{
+	OBSSourceAutoRelease pattern = createTestPattern(320, 180, "Pattern");
+	const std::string uuid = uuidOf(pattern);
+	FakeHost host;
+	CaptureManager manager(host);
+	BufferSettings settings = selecting(uuid);
+	settings.startWithOutputs = false;
+	manager.setSettings(settings);
+	REQUIRE(manager.manualStart());
+	REQUIRE(waitFor([&] { return hasGops(manager, uuid, 2); }, 60s));
+	const uint64_t kept = manager.captureReplay();
+	const uint64_t untagged = manager.captureReplay();
+	CHECK(manager.tagReplay(kept, "Goal"));
+	CHECK(manager.tagReplay(kept, "Foul"));
+	CHECK(manager.deleteReplayTag("Foul"));
+	CHECK(manager.tagReplay(untagged, "Save"));
+	CHECK(manager.untagReplay(untagged, "Save"));
+	manager.onExit();
+
+	const auto tagsOf = [&](uint64_t id) {
+		return tapeloop::decodeTags(tapeloop::test::fileBytes(manager.library().find(id)->manifest));
+	};
+	CHECK(tagsOf(kept) == std::vector<std::string>{"Goal"});
+	CHECK(tagsOf(untagged).empty());
+
+	// Read again, the library has each replay once.
+	manager.loadLibrary();
+	manager.finishWrites();
+	CHECK(manager.library().size() == 2);
+}
+
+TEST_CASE_METHOD(ObsFixture, "a tag that cannot be written says so in the log", "[obs][manager][replay]")
+{
+	OBSSourceAutoRelease pattern = createTestPattern(320, 180, "Pattern");
+	const std::string uuid = uuidOf(pattern);
+	FakeHost host;
+	CaptureManager manager(host);
+	BufferSettings settings = selecting(uuid);
+	settings.startWithOutputs = false;
+	manager.setSettings(settings);
+	REQUIRE(manager.manualStart());
+	REQUIRE(waitFor([&] { return hasGops(manager, uuid, 2); }, 60s));
+	const uint64_t id = manager.captureReplay();
+	manager.finishWrites();
+	const fs::path manifest = manager.library().find(id)->manifest;
+	REQUIRE(fs::remove(manifest));
+	fs::create_directory(manifest);
+
+	LogCounter failed("could not be saved");
+	CHECK(manager.tagReplay(id, "Goal"));
+	manager.finishWrites();
+	CHECK(failed.lines == 1);
+	manager.manualStop();
+}
+
+TEST_CASE_METHOD(ObsFixture, "captures the store keeps up with say nothing of the disk", "[obs][manager][replay]")
+{
+	OBSSourceAutoRelease pattern = createTestPattern(320, 180, "Pattern");
+	const std::string uuid = uuidOf(pattern);
+	FakeHost host;
+	CaptureManager manager(host);
+	BufferSettings settings = selecting(uuid);
+	settings.startWithOutputs = false;
+	manager.setSettings(settings);
+	REQUIRE(manager.manualStart());
+	REQUIRE(waitFor([&] { return hasGops(manager, uuid, 2); }, 60s));
+
+	LogCounter behind("The disk falls behind");
+	for (int capture = 0; capture < 4; ++capture) {
+		CHECK(manager.captureReplay() != 0);
+		manager.finishWrites();
+	}
+	CHECK(behind.lines == 0);
+	manager.manualStop();
+}
+
+// A disk slow enough for the store to fall behind cannot be made from a test. Run with
+// every fsync slowed down, as under strace -f -e trace=none -e inject=fsync:delay_exit=200000.
+TEST_CASE_METHOD(ObsFixture, "captures that pile up on a slow disk say so once", "[.slow-disk]")
+{
+	OBSSourceAutoRelease pattern = createTestPattern(320, 180, "Pattern");
+	const std::string uuid = uuidOf(pattern);
+	FakeHost host;
+	CaptureManager manager(host);
+	BufferSettings settings = selecting(uuid);
+	settings.startWithOutputs = false;
+	manager.setSettings(settings);
+	REQUIRE(manager.manualStart());
+	REQUIRE(waitFor([&] { return hasGops(manager, uuid, 2); }, 60s));
+
+	LogCounter behind("The disk falls behind");
+	for (int capture = 0; capture < 6; ++capture) {
+		manager.captureReplay();
+	}
+	CHECK(behind.lines == 1);
+	manager.finishWrites();
+	manager.captureReplay();
+	manager.finishWrites();
+	CHECK(behind.lines == 1);
+	for (int capture = 0; capture < 6; ++capture) {
+		manager.captureReplay();
+	}
+	CHECK(behind.lines == 2);
+	manager.finishWrites();
 	manager.manualStop();
 }
 
