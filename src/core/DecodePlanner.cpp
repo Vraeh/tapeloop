@@ -33,12 +33,19 @@ size_t distance(size_t a, size_t b) noexcept
 
 } // namespace
 
-size_t clampDecodedCacheBytes(size_t bytes, size_t dedicatedVideoMemory) noexcept
+DecodedCacheBounds decodedCacheBounds(FrameMemory where, MemorySizes sizes) noexcept
 {
-	constexpr uint64_t kLeast = uint64_t{128} << 20;
-	constexpr uint64_t kMost = uint64_t{4} << 30;
-	const uint64_t most = std::max(kLeast, std::min<uint64_t>(kMost, dedicatedVideoMemory / 4));
-	return static_cast<size_t>(std::clamp<uint64_t>(bytes, kLeast, most));
+	constexpr uint64_t kLeastMiB = 128;
+	constexpr uint64_t kMostMiB = 4096;
+	const uint64_t memory = where == FrameMemory::Video ? sizes.dedicatedVideo : sizes.system;
+	return {kLeastMiB, std::clamp((memory / 4) >> 20, kLeastMiB, kMostMiB)};
+}
+
+size_t decodedCacheBytes(int64_t settingMiB, FrameMemory where, MemorySizes sizes) noexcept
+{
+	const DecodedCacheBounds bounds = decodedCacheBounds(where, sizes);
+	const uint64_t mib = settingMiB < 0 ? 0 : static_cast<uint64_t>(settingMiB);
+	return static_cast<size_t>(std::clamp(mib, bounds.leastMiB, bounds.mostMiB) << 20);
 }
 
 DecodePlanner::DecodePlanner(FrameDecoder &decoder, DecodePlannerConfig config) : decoder_(decoder), config_(config)

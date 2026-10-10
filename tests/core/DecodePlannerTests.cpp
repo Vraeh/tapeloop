@@ -11,6 +11,7 @@
 
 #include <cstddef>
 #include <cstdint>
+#include <limits>
 #include <memory>
 #include <new>
 #include <optional>
@@ -658,17 +659,40 @@ TEST_CASE("DecodePlanner decodes ahead within the byte cap without letting go of
 
 TEST_CASE("The decoded-frame cache is 512 MiB unless set within its bounds")
 {
-	constexpr size_t kMiB = size_t{1} << 20;
+	using tapeloop::decodedCacheBounds;
+	using tapeloop::decodedCacheBytes;
+	using tapeloop::FrameMemory;
+	using tapeloop::MemorySizes;
+	constexpr uint64_t kMiB = uint64_t{1} << 20;
 	CHECK(DecodePlannerConfig{}.maxBytes == 512 * kMiB);
 	CHECK(tapeloop::kDefaultDecodedCacheBytes == 512 * kMiB);
-	// 128 MiB to a quarter of the dedicated video memory, at most 4 GiB.
-	CHECK(tapeloop::clampDecodedCacheBytes(512 * kMiB, 8192 * kMiB) == 512 * kMiB);
-	CHECK(tapeloop::clampDecodedCacheBytes(64 * kMiB, 8192 * kMiB) == 128 * kMiB);
-	CHECK(tapeloop::clampDecodedCacheBytes(4096 * kMiB, 8192 * kMiB) == 2048 * kMiB);
-	CHECK(tapeloop::clampDecodedCacheBytes(8192 * kMiB, 32768 * kMiB) == 4096 * kMiB);
-	// An adapter with little or no memory of its own still allows the least.
-	CHECK(tapeloop::clampDecodedCacheBytes(512 * kMiB, 256 * kMiB) == 128 * kMiB);
-	CHECK(tapeloop::clampDecodedCacheBytes(512 * kMiB, 0) == 128 * kMiB);
+
+	// A discrete adapter: 128 MiB to a quarter of its own memory, at most 4 GiB.
+	const MemorySizes discrete{8192 * kMiB, 32768 * kMiB};
+	CHECK(decodedCacheBounds(FrameMemory::Video, discrete).leastMiB == 128);
+	CHECK(decodedCacheBounds(FrameMemory::Video, discrete).mostMiB == 2048);
+	CHECK(decodedCacheBytes(512, FrameMemory::Video, discrete) == 512 * kMiB);
+	CHECK(decodedCacheBytes(64, FrameMemory::Video, discrete) == 128 * kMiB);
+	CHECK(decodedCacheBytes(4096, FrameMemory::Video, discrete) == 2048 * kMiB);
+	CHECK(decodedCacheBounds(FrameMemory::Video, {65536 * kMiB, 0}).mostMiB == 4096);
+
+	// Frames on the CPU path live in system memory, whatever the adapter has.
+	CHECK(decodedCacheBounds(FrameMemory::System, discrete).mostMiB == 4096);
+	CHECK(decodedCacheBounds(FrameMemory::System, {0, 8192 * kMiB}).mostMiB == 2048);
+
+	// An integrated adapter has little memory of its own, which does not pull the default
+	// down: its frames live in system memory.
+	const MemorySizes integrated{128 * kMiB, 16384 * kMiB};
+	CHECK(decodedCacheBytes(512, FrameMemory::System, integrated) == 512 * kMiB);
+	CHECK(decodedCacheBytes(512, FrameMemory::Video, integrated) == 128 * kMiB);
+
+	// Whole MiB, and never below the least, however little memory is known.
+	CHECK(decodedCacheBounds(FrameMemory::Video, {6143 * kMiB, 0}).mostMiB == 1535);
+	CHECK(decodedCacheBounds(FrameMemory::Video, {6143 * kMiB + 3, 0}).mostMiB == 1535);
+	CHECK(decodedCacheBounds(FrameMemory::Video, {256 * kMiB, 0}).mostMiB == 128);
+	CHECK(decodedCacheBytes(512, FrameMemory::System, {}) == 128 * kMiB);
+	CHECK(decodedCacheBytes(-1, FrameMemory::System, integrated) == 128 * kMiB);
+	CHECK(decodedCacheBytes(std::numeric_limits<int64_t>::max(), FrameMemory::System, integrated) == 4096 * kMiB);
 }
 
 TEST_CASE("DecodePlanner carries a pass on past frames it gave back instead of starting over")
