@@ -83,8 +83,8 @@ private:
 	uint64_t newestReplay_ = 0;
 	bool refreshQueued_ = false;
 	bool leftButtonHeld_ = false;
-	// The replay that went on air next when the left button was pressed on the list, until
-	// the click of that press is handled.
+	// The replay to show next when the left button was pressed on the list, until the
+	// click of that press is handled.
 	std::optional<uint64_t> currentAtPress_;
 };
 

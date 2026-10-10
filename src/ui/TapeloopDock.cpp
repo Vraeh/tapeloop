@@ -369,7 +369,8 @@ bool TapeloopDock::eventFilter(QObject *watched, QEvent *event)
 				return true;
 			}
 			leftButtonHeld_ = type != QEvent::MouseButtonRelease;
-			if (type == QEvent::MouseButtonPress) {
+			// The second press of a double click ends in a click too.
+			if (type != QEvent::MouseButtonRelease) {
 				currentAtPress_.reset();
 				guarded([this] { currentAtPress_ = backend_.currentReplay(); });
 			}

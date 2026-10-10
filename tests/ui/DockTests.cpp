@@ -459,6 +459,20 @@ TEST_CASE("a double click, a drag or a capture during a press does not pick anot
 		CHECK(backend.picked == 4u);
 		CHECK(shown() == 4u);
 	}
+	SECTION("a capture during the second click of a double click")
+	{
+		const QPoint oldest = rowAt(2);
+		send(QEvent::MouseButtonPress, oldest, Qt::LeftButton, Qt::LeftButton);
+		send(QEvent::MouseButtonRelease, oldest, Qt::LeftButton, Qt::NoButton);
+		QCoreApplication::processEvents();
+		REQUIRE(backend.picked == 1u);
+		send(QEvent::MouseButtonDblClick, oldest, Qt::LeftButton, Qt::LeftButton);
+		backend.captureReplay();
+		send(QEvent::MouseButtonRelease, oldest, Qt::LeftButton, Qt::NoButton);
+		QCoreApplication::processEvents();
+		CHECK(backend.picked == 4u);
+		CHECK(shown() == 4u);
+	}
 	SECTION("a press whose release never came")
 	{
 		send(QEvent::MouseButtonPress, rowAt(1), Qt::LeftButton, Qt::LeftButton);
