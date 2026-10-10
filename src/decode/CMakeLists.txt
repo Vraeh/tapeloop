@@ -1,16 +1,24 @@
 cmake_minimum_required(VERSION 3.28...3.30)
 
-# Decoding with FFmpeg, without libobs. The caller provides the FFmpeg targets through
+# Decoding with FFmpeg, and writing the MP4 files of exports, without libobs. The caller provides the FFmpeg targets through
 # tapeloop_add_ffmpeg().
 add_library(tapeloop-decode STATIC)
 
 target_sources(
   tapeloop-decode
-  PRIVATE FFmpegDecoder.cpp FFmpegDecoder.hpp FFmpegHeaders.hpp FFmpegVersion.cpp FFmpegVersion.hpp Picture.hpp
+  PRIVATE
+    FFmpegDecoder.cpp
+    FFmpegDecoder.hpp
+    FFmpegHeaders.hpp
+    FFmpegVersion.cpp
+    FFmpegVersion.hpp
+    Mp4Writer.cpp
+    Mp4Writer.hpp
+    Picture.hpp
 )
 
 target_include_directories(tapeloop-decode PUBLIC "${CMAKE_CURRENT_SOURCE_DIR}/..")
-target_link_libraries(tapeloop-decode PUBLIC tapeloop-core PRIVATE FFmpeg::avcodec)
+target_link_libraries(tapeloop-decode PUBLIC tapeloop-core PRIVATE FFmpeg::avformat FFmpeg::avcodec)
 if(WIN32)
   target_link_libraries(tapeloop-decode PRIVATE d3d11 dxgi)
 endif()

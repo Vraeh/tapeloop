@@ -9,10 +9,11 @@
 // ours, the code would build without a word and fail at run time.
 extern "C" {
 #include <libavcodec/version.h>
+#include <libavformat/version.h>
 #include <libavutil/version.h>
 }
 
 // FFmpeg 8.1, which cmake/ffmpeg/BuildFFmpeg.cmake builds.
-#if LIBAVCODEC_VERSION_MAJOR != 62 || LIBAVUTIL_VERSION_MAJOR != 60
+#if LIBAVCODEC_VERSION_MAJOR != 62 || LIBAVFORMAT_VERSION_MAJOR != 62 || LIBAVUTIL_VERSION_MAJOR != 60
 #error "These are not the headers of the FFmpeg that cmake/ffmpeg/BuildFFmpeg.cmake builds"
 #endif

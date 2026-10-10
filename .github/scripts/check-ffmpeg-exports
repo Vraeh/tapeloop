@@ -9,7 +9,7 @@ ours="$(mktemp)"
 exported="$(mktemp)"
 trap 'rm -f "${ours}" "${exported}"' EXIT
 
-nm -g --defined-only "${prefix}"/lib/libavcodec.a "${prefix}"/lib/libavutil.a 2> /dev/null |
+nm -g --defined-only "${prefix}"/lib/libavformat.a "${prefix}"/lib/libavcodec.a "${prefix}"/lib/libavutil.a 2> /dev/null |
   awk 'NF == 3 { print $3 }' | sort -u > "${ours}"
 # Shared libraries version their symbols (av_free@@LIBAVUTIL_60); the name is what counts.
 nm -D --defined-only "${binary}" | awk '{ sub(/@.*/, "", $3); print $3 }' | sort -u > "${exported}"
