@@ -194,6 +194,7 @@ void CaptureManager::poll()
 		if (stats.state != CaptureState::Running) {
 			entry->capture.expireBuffer(now);
 		}
+		entry->capture.settleByteNeed(now);
 	}
 
 	followOutputs();
@@ -622,7 +623,7 @@ CaptureSettings CaptureManager::captureSettings(const std::string &uuid,
 						std::optional<std::vector<EncoderInfo>> &candidates) const
 {
 	if (!candidates) {
-		candidates = replayEncoderCandidates(registeredVideoEncoders(), renderAdapterVendor(),
+		candidates = replayEncoderCandidates(registeredVideoEncoders(), renderVendor(),
 						     settings_.encoderPreferences());
 	}
 	CaptureSettings settings;
@@ -642,6 +643,14 @@ CaptureSettings CaptureManager::captureSettings(const std::string &uuid,
 		}
 	}
 	return settings;
+}
+
+Vendor CaptureManager::renderVendor() const
+{
+	if (!renderVendor_) {
+		renderVendor_ = renderAdapterVendor();
+	}
+	return *renderVendor_;
 }
 
 uint64_t CaptureManager::memoryNeeded() const

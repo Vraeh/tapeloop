@@ -7,6 +7,7 @@
 #include "obs/ObsEncoders.hpp"
 
 #include <util/base.h>
+#include <util/platform.h>
 
 #include <algorithm>
 #include <chrono>
@@ -200,13 +201,17 @@ StartResult SourceCapture::start(obs_source_t *source, const CaptureSettings &se
 				if (!reuse) {
 					buffer_ = std::move(replacement);
 				}
-				bufferConfig.maxBytes = replayByteBudget(replayBitrateKbps(params, candidate.codec),
-									 settings.bufferLength);
+				encoderNeed_ = replayByteBudget(replayBitrateKbps(params, candidate.codec),
+								settings.bufferLength);
+				bufferConfig.maxBytes = encoderNeed_;
+				keptNeedUntil_ = Nanoseconds{0};
 				// A kept buffer still holds what the previous encoder wrote at its own
 				// bitrate, which a smaller budget would cut short; the larger one stays
-				// until a start that empties the buffer.
-				if (reuse && keepBuffer) {
-					bufferConfig.maxBytes = std::max(bufferConfig.maxBytes, buffer_->byteBudget());
+				// until that has gone, a whole length from now.
+				if (reuse && keepBuffer && buffer_->byteBudget() > encoderNeed_) {
+					bufferConfig.maxBytes = buffer_->byteBudget();
+					keptNeedUntil_ = Nanoseconds{static_cast<int64_t>(os_gettime_ns())} +
+							 settings.bufferLength;
 				}
 				buffer_->setByteBudget(bufferConfig.maxBytes);
 				byteNeed_ = bufferConfig.maxBytes;
@@ -321,6 +326,8 @@ void SourceCapture::tearDown()
 	encoderPath_ = EncoderPath::Texture;
 	readbackReason_ = ReadbackReason::None;
 	byteNeed_ = 0;
+	encoderNeed_ = 0;
+	keptNeedUntil_ = Nanoseconds{0};
 	chosenEncoder_ = false;
 	choiceSkipped_ = false;
 	outputSize_ = {};
@@ -338,9 +345,15 @@ bool SourceCapture::sourceSizeMatches() const
 size_t SourceCapture::estimateByteNeed(obs_source_t *source, const CaptureSettings &settings)
 {
 	obs_video_info video = {};
-	const FrameSize sourceSize{obs_source_get_width(source), obs_source_get_height(source)};
-	if (!obs_get_video_info(&video) || sourceSize.width == 0 || sourceSize.height == 0 ||
-	    sourceSize.width > kMaxViewSize || sourceSize.height > kMaxViewSize) {
+	if (!obs_get_video_info(&video)) {
+		return 0;
+	}
+	FrameSize sourceSize{obs_source_get_width(source), obs_source_get_height(source)};
+	if (sourceSize.width == 0 || sourceSize.height == 0) {
+		sourceSize = {video.base_width, video.base_height};
+	}
+	if (sourceSize.width == 0 || sourceSize.height == 0 || sourceSize.width > kMaxViewSize ||
+	    sourceSize.height > kMaxViewSize) {
 		return 0;
 	}
 	const uint32_t height = targetHeight(settings.resolution, {video.base_width, video.base_height},
@@ -361,6 +374,14 @@ void SourceCapture::limitBytes(size_t bytes)
 {
 	if (buffer_ && byteNeed_ != 0) {
 		buffer_->setByteBudget(std::min(bytes, byteNeed_));
+	}
+}
+
+void SourceCapture::settleByteNeed(Nanoseconds now) noexcept
+{
+	if (keptNeedUntil_ != Nanoseconds{0} && now >= keptNeedUntil_) {
+		byteNeed_ = encoderNeed_;
+		keptNeedUntil_ = Nanoseconds{0};
 	}
 }
 

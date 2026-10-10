@@ -25,6 +25,7 @@
 #include <chrono>
 #include <cmath>
 #include <filesystem>
+#include <future>
 #include <initializer_list>
 #include <memory>
 #include <optional>
@@ -434,6 +435,95 @@ TEST_CASE_METHOD(ObsFixture, "the memory the selected sources need is known befo
 	CHECK(tapeloop::obs::ManagerDockBackend(manager).memoryBudget() == manager.memoryBudget());
 }
 
+TEST_CASE_METHOD(ObsFixture, "the memory needed is known without waiting for the graphics", "[obs][manager]")
+{
+	OBSSourceAutoRelease pattern = createTestPattern(320, 180, "Pattern");
+	FakeHost host;
+	CaptureManager manager(host);
+	BufferSettings settings = selecting(uuidOf(pattern));
+	settings.startWithOutputs = false;
+	manager.setSettings(settings);
+	const uint64_t before = manager.memoryNeeded();
+	REQUIRE(before > 0);
+
+	// The dock asks every second, while the graphics thread or a plugin may be holding
+	// the graphics context.
+	std::promise<void> held;
+	std::promise<void> release;
+	std::future<void> released = release.get_future();
+	std::thread holder([&] {
+		obs_enter_graphics();
+		held.set_value();
+		released.wait();
+		obs_leave_graphics();
+	});
+	held.get_future().wait();
+	std::future<uint64_t> asked = std::async(std::launch::async, [&] { return manager.memoryNeeded(); });
+	const bool answered = asked.wait_for(5s) == std::future_status::ready;
+	release.set_value();
+	holder.join();
+	CHECK(answered);
+	CHECK(asked.get() == before);
+}
+
+TEST_CASE_METHOD(ObsFixture, "a source with no picture yet is counted at the canvas's size", "[obs][manager]")
+{
+	obs_video_info video = {};
+	REQUIRE(obs_get_video_info(&video));
+	OBSSourceAutoRelease blank = createTestPattern(0, 0, "Blank");
+	OBSSourceAutoRelease full = createTestPattern(video.base_width, video.base_height, "Full");
+	FakeHost host;
+	CaptureManager manager(host);
+	BufferSettings settings = selecting(uuidOf(blank));
+	settings.startWithOutputs = false;
+	manager.setSettings(settings);
+	const uint64_t blankNeed = manager.memoryNeeded();
+	settings = selecting(uuidOf(full));
+	settings.startWithOutputs = false;
+	manager.setSettings(settings);
+	const uint64_t fullNeed = manager.memoryNeeded();
+	CHECK(blankNeed > 0);
+	CHECK(blankNeed == fullNeed);
+	// The estimate follows the resolution the settings ask for.
+	settings.resolution = {ResolutionMode::Fixed, video.base_height / 2};
+	manager.setSettings(settings);
+	CHECK(manager.memoryNeeded() < fullNeed);
+}
+
+TEST_CASE_METHOD(ObsFixture, "a buffer kept through a smaller size needs less once its length has passed",
+		 "[obs][manager]")
+{
+	OBSSourceAutoRelease pattern = createTestPattern(640, 360);
+	const std::string uuid = uuidOf(pattern);
+	FakeHost host;
+	CaptureManager manager(host);
+	BufferSettings settings = selecting(uuid);
+	settings.length = tapeloop::kMinBufferLength;
+	manager.setSettings(settings);
+	REQUIRE(manager.manualStart());
+	const size_t larger = manager.buffer(uuid)->byteBudget();
+
+	OBSDataAutoRelease smaller = obs_data_create();
+	obs_data_set_int(smaller, "width", 320);
+	obs_data_set_int(smaller, "height", 180);
+	obs_source_update(pattern, smaller);
+	REQUIRE(waitFor([&] { return obs_source_get_width(pattern) == 320; }, 5s));
+	manager.poll();
+	REQUIRE(manager.status(uuid).stats.outputSize == FrameSize{320, 180});
+	// What the larger pictures wrote is still in the buffer, and its need is the need of
+	// the buffer running, not what a start would give.
+	CHECK(manager.buffer(uuid)->byteBudget() == larger);
+	CHECK(manager.memoryNeeded() == tapeloop::nominalReplayBytes(larger));
+
+	REQUIRE(waitFor(
+		[&] {
+			manager.poll();
+			return manager.buffer(uuid)->byteBudget() < larger;
+		},
+		std::chrono::duration_cast<std::chrono::milliseconds>(tapeloop::kMinBufferLength + 20s)));
+	CHECK(manager.memoryNeeded() == tapeloop::nominalReplayBytes(manager.buffer(uuid)->byteBudget()));
+}
+
 TEST_CASE_METHOD(ObsFixture, "buffers that need more memory than the budget share it", "[obs][manager]")
 {
 	OBSSourceAutoRelease first = createTestPattern(320, 180, "First");
@@ -481,7 +571,7 @@ TEST_CASE_METHOD(ObsFixture, "buffers that need more memory than the budget shar
 	CHECK(firstShare >= (1u << 20) - 1);
 	CHECK(manager.status(firstUuid).budgetLimited);
 	CHECK(manager.status(secondUuid).budgetLimited);
-	// The buffer then holds no more than its share once a few keyframes have come.
+	// The dock marks each running buffer that holds less than its length.
 	REQUIRE(waitFor([&] { return hasGops(manager, firstUuid, 4); }, 60s));
 	const tapeloop::ui::DockSource shown = [&] {
 		for (const tapeloop::ui::DockSource &source : tapeloop::obs::ManagerDockBackend(manager).sources()) {
@@ -501,6 +591,35 @@ TEST_CASE_METHOD(ObsFixture, "buffers that need more memory than the budget shar
 	CHECK_FALSE(manager.status(firstUuid).budgetLimited);
 	manager.manualStop();
 	CHECK_FALSE(manager.status(firstUuid).budgetLimited);
+}
+
+TEST_CASE_METHOD(ObsFixture, "a buffer that starts in a poll gets its share of the budget", "[obs][manager]")
+{
+	OBSSourceAutoRelease first = createTestPattern(320, 180, "First");
+	OBSSourceAutoRelease late = createTestPattern(0, 0, "Late");
+	const std::string firstUuid = uuidOf(first);
+	const std::string lateUuid = uuidOf(late);
+	FakeHost host;
+	CaptureManager manager(host);
+	BufferSettings settings = selecting(firstUuid);
+	settings.sources[lateUuid].selected = true;
+	settings.startWithOutputs = false;
+	settings.length = 60s;
+	settings.bufferMemoryMiB = 2;
+	manager.setSettings(settings);
+	REQUIRE(manager.manualStart());
+	REQUIRE(manager.status(firstUuid).stats.state == CaptureState::Running);
+	const size_t alone = manager.buffer(firstUuid)->byteBudget();
+
+	OBSDataAutoRelease sized = obs_data_create();
+	obs_data_set_int(sized, "width", 320);
+	obs_data_set_int(sized, "height", 180);
+	obs_source_update(late, sized);
+	REQUIRE(waitFor([&] { return obs_source_get_width(late) == 320; }, 5s));
+	manager.poll();
+	REQUIRE(manager.status(lateUuid).stats.state == CaptureState::Running);
+	CHECK(manager.buffer(firstUuid)->byteBudget() < alone);
+	CHECK(manager.buffer(firstUuid)->byteBudget() + manager.buffer(lateUuid)->byteBudget() <= 2u << 20);
 }
 
 TEST_CASE_METHOD(ObsFixture, "a buffer whose chosen encoder cannot start says so", "[obs][manager]")

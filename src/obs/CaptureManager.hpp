@@ -185,6 +185,9 @@ private:
 	// What a start of the source is given, candidates filled as for start.
 	CaptureSettings captureSettings(const std::string &uuid,
 					std::optional<std::vector<EncoderInfo>> &candidates) const;
+	// The vendor of the adapter OBS renders on, asked once: it stays until OBS restarts,
+	// and asking enters the graphics context, which the dock would do every second.
+	Vendor renderVendor() const;
 	void stop(const std::string &uuid, Entry &entry);
 	// Holds the source active or lets go of it, as the settings and the source's own
 	// restart setting now say.
@@ -204,6 +207,7 @@ private:
 	CaptureHost &host_;
 	BufferSettings settings_;
 	uint64_t physicalMemory_ = 0;
+	mutable std::optional<Vendor> renderVendor_;
 	BufferLifecycle lifecycle_;
 	ReplayLibrary library_;
 	std::map<std::string, std::unique_ptr<Entry>> entries_;
