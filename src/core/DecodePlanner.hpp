@@ -29,9 +29,26 @@ struct DecodePlannerConfig {
 	size_t maxBytes = kDefaultDecodedCacheBytes;
 };
 
-// The bounds of the decoded-frame cache a user may set: 128 MiB to a quarter of the
-// adapter's dedicated video memory, at most 4 GiB, and never below the 128 MiB.
-size_t clampDecodedCacheBytes(size_t bytes, size_t dedicatedVideoMemory) noexcept;
+// Where a replay's decoded frames live. A discrete adapter decodes them into its own
+// video memory. The CPU path keeps them in system memory, and so does an integrated
+// adapter, whose own memory is at most a small part of system memory set aside for it.
+enum class FrameMemory { Video, System };
+
+struct MemorySizes {
+	uint64_t dedicatedVideo = 0;
+	uint64_t system = 0;
+};
+
+// The sizes of the decoded-frame cache a user may set, in whole MiB: 128 MiB to a quarter
+// of the memory its frames live in, at most 4 GiB, and never below the 128 MiB.
+struct DecodedCacheBounds {
+	uint64_t leastMiB = 0;
+	uint64_t mostMiB = 0;
+};
+
+DecodedCacheBounds decodedCacheBounds(FrameMemory where, MemorySizes sizes) noexcept;
+// The cache's size in bytes for a setting in MiB, kept within its bounds.
+size_t decodedCacheBytes(int64_t settingMiB, FrameMemory where, MemorySizes sizes) noexcept;
 
 // What the planner asked of its decoder, for tests and measurements.
 struct DecodeWork {

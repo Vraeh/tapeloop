@@ -18,37 +18,51 @@ namespace tapeloop::obs {
 namespace {
 
 // Paths that are not the optimal one work, and say so in the log in plain words.
-void warnAboutPath(const char *name, const char *encoder, EncoderPath path, ReadbackReason reason) noexcept
+void warnAboutPath(const char *name, const char *encoder, EncoderPath path, ReadbackReason reason, bool chosen) noexcept
 {
-	const char *why = "";
-	switch (reason) {
-	case ReadbackReason::None:
-		break;
-	case ReadbackReason::OtherAdapter:
-		why = "it runs on another graphics card than the one OBS renders on";
-		break;
-	case ReadbackReason::NoTextureInput:
-		why = "it takes no textures";
-		break;
-	case ReadbackReason::NoTextures:
-		why = "OBS cannot give it textures with this graphics card or renderer";
-		break;
-	}
-	switch (path) {
-	case EncoderPath::Texture:
-		break;
-	case EncoderPath::Readback:
+	constexpr const char *kCost =
+		"Replays work, but this costs CPU time and memory bandwidth: it is not the optimal path";
+	if (path == EncoderPath::Software && chosen) {
 		blog(LOG_WARNING,
-		     "[tapeloop] '%s' is encoded by %s, which takes every frame read back through memory "
-		     "instead of OBS's textures: %s. Replays work, but this costs CPU time and memory "
-		     "bandwidth: it is not the optimal path",
-		     name, encoder, why);
-		break;
-	case EncoderPath::Software:
+		     "[tapeloop] '%s' is encoded by %s on the CPU, the encoder chosen for replays. Replays work, "
+		     "but this costs CPU time: it is not the optimal path",
+		     name, encoder);
+		return;
+	}
+	if (path == EncoderPath::Software) {
 		blog(LOG_WARNING,
 		     "[tapeloop] '%s' is encoded by %s on the CPU because no hardware encoder could take it. "
 		     "Replays work, but this costs CPU time: it is not the optimal path",
 		     name, encoder);
+		return;
+	}
+	if (path != EncoderPath::Readback) {
+		return;
+	}
+	switch (reason) {
+	case ReadbackReason::OtherAdapter:
+		blog(LOG_WARNING,
+		     "[tapeloop] '%s' is encoded by %s, which runs on another graphics card than the one OBS "
+		     "renders on, so every frame is read back through memory for it. %s",
+		     name, encoder, kCost);
+		break;
+	case ReadbackReason::NoTextureInput:
+		blog(LOG_WARNING,
+		     "[tapeloop] '%s' is encoded by %s, which cannot take OBS's textures, so every frame is read "
+		     "back through memory for it. %s",
+		     name, encoder, kCost);
+		break;
+	case ReadbackReason::NoTextures:
+		blog(LOG_WARNING,
+		     "[tapeloop] '%s' is encoded by %s, but OBS cannot hand it textures with this graphics card or "
+		     "renderer, so every frame is read back through memory for it. %s",
+		     name, encoder, kCost);
+		break;
+	case ReadbackReason::None:
+		blog(LOG_WARNING,
+		     "[tapeloop] '%s' is encoded by %s, which takes every frame read back through memory instead "
+		     "of OBS's textures. %s",
+		     name, encoder, kCost);
 		break;
 	}
 }
@@ -200,18 +214,26 @@ StartResult SourceCapture::start(obs_source_t *source, const CaptureSettings &se
 				readbackReason_ = readbackReasonOf(candidate, renderVendor, textures);
 				blog(LOG_INFO, "[tapeloop] Capturing '%s' at %ux%u with %s", name, outputSize->width,
 				     outputSize->height, candidate.id.c_str());
-				warnAboutPath(name, candidate.id.c_str(), encoderPath_, readbackReason_);
 				const std::string &chosen = settings.encoderPreferences.chosen;
 				chosenEncoder_ = !chosen.empty() && candidate.id == chosen;
-				choiceSkipped_ =
-					!chosen.empty() && !chosenEncoder_ &&
+				warnAboutPath(name, candidate.id.c_str(), encoderPath_, readbackReason_,
+					      chosenEncoder_);
+				choiceSkipped_ = !chosen.empty() && !chosenEncoder_;
+				// A choice OBS does not offer, as one of a plugin gone or of a card
+				// turned off, is not among the candidates at all.
+				const bool tried =
 					std::any_of(candidates.begin(), candidates.end(),
-						    [&](const EncoderInfo &tried) { return tried.id == chosen; });
-				if (choiceSkipped_) {
+						    [&](const EncoderInfo &info) { return info.id == chosen; });
+				if (choiceSkipped_ && tried) {
 					blog(LOG_WARNING,
 					     "[tapeloop] %s, the encoder chosen for replays, could not start for '%s', "
 					     "which %s encodes instead, the next encoder in the automatic order",
 					     chosen.c_str(), name, candidate.id.c_str());
+				} else if (choiceSkipped_) {
+					blog(LOG_WARNING,
+					     "[tapeloop] %s, the encoder chosen for replays, is not available, so %s "
+					     "encodes '%s' instead, the next encoder in the automatic order",
+					     chosen.c_str(), candidate.id.c_str(), name);
 				}
 				return StartResult::Started;
 			}

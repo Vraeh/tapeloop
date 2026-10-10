@@ -17,6 +17,7 @@
 #include <QLabel>
 #include <QLineEdit>
 #include <QListWidget>
+#include <QMessageBox>
 #include <QMouseEvent>
 #include <QPushButton>
 #include <QSignalBlocker>
@@ -49,10 +50,11 @@ const char *readbackNote(ReadbackReason reason)
 	case ReadbackReason::NoTextureInput:
 		return "Dock.Status.Readback.NoTextureInput.Tooltip";
 	case ReadbackReason::NoTextures:
+		return "Dock.Status.Readback.NoTextures.Tooltip";
 	case ReadbackReason::None:
 		break;
 	}
-	return "Dock.Status.Readback.NoTextures.Tooltip";
+	return "Dock.Status.Readback.Tooltip";
 }
 
 // Qt cannot let an exception through its event loop; a failed change is dropped and the
@@ -303,14 +305,27 @@ TapeloopDock::TapeloopDock(DockBackend &backend, TextLookup text, QWidget *paren
 		}
 		refresh();
 	});
-	// The tag the list is filtered by goes from every replay, and the list shows them all
-	// again.
+	// The tag the list is filtered by goes from every replay, on disk too, so the dock
+	// asks first; not with exec(), for the reason the source settings dialog gives. The
+	// list then shows every replay again.
 	connect(deleteTag_, &QPushButton::clicked, this, [this] {
-		const std::string tag = tagFilter_->currentData().toString().toStdString();
-		if (!tag.empty()) {
-			guarded([&] { backend_.deleteTag(tag); });
+		const QString tag = tagFilter_->currentData().toString();
+		if (tag.isEmpty()) {
+			return;
 		}
-		refresh();
+		auto *question = new QMessageBox(QMessageBox::Question, text_("Dock.DeleteTag"),
+						 text_("Dock.DeleteTag.Question").arg(tag),
+						 QMessageBox::Yes | QMessageBox::No, this);
+		question->setObjectName("deleteTagQuestion");
+		question->setDefaultButton(QMessageBox::No);
+		question->setAttribute(Qt::WA_DeleteOnClose);
+		connect(question, &QMessageBox::finished, this, [this, tag](int answer) {
+			if (answer == QMessageBox::Yes) {
+				guarded([&] { backend_.deleteTag(tag.toStdString()); });
+			}
+			refresh();
+		});
+		question->open();
 	});
 	// Moving through the list with the keyboard picks as a click does, and a click on the
 	// row already current picks it again after a capture the list has not shown yet. The
@@ -537,7 +552,9 @@ void TapeloopDock::updateSources(const std::vector<DockSource> &sources)
 		}
 		if (path) {
 			note += (note.isEmpty() ? QString() : QStringLiteral("\n\n")) + text_(path);
-			if (sources[i].chosenEncoder && sources[i].encoderPath == EncoderPath::Readback) {
+			// Only another card is a choice the automatic order would have made otherwise.
+			if (sources[i].chosenEncoder && sources[i].encoderPath == EncoderPath::Readback &&
+			    sources[i].readbackReason == ReadbackReason::OtherAdapter) {
 				note += QStringLiteral(" ") + text_("Dock.Status.ReadbackChosen.Tooltip");
 			}
 		}

@@ -144,6 +144,11 @@ ReadbackReason readbackReasonOf(const EncoderInfo &encoder, Vendor renderVendor,
 	if (encoder.vendor == Vendor::Software || (encoder.vendor == Vendor::Apple && renderVendor == Vendor::Apple)) {
 		return ReadbackReason::None;
 	}
+	// VideoToolbox takes no textures anywhere, and on a Mac whose card OBS renders on is
+	// not Apple's, which adapter encodes is not known.
+	if (encoder.vendor == Vendor::Apple) {
+		return ReadbackReason::NoTextureInput;
+	}
 	// An Unknown render vendor tells nothing about where the encoder runs.
 	if (renderVendor != Vendor::Unknown && renderVendor != Vendor::Software && encoder.vendor != renderVendor) {
 		return ReadbackReason::OtherAdapter;

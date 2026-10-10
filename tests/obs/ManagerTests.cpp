@@ -403,7 +403,6 @@ TEST_CASE_METHOD(ObsFixture, "a source too small to start is retried", "[obs][ma
 	CHECK(manager.status(uuid).stats.state == CaptureState::Running);
 }
 
-// A manager capturing one test pattern with the given encoder, running with two GOPs.
 TEST_CASE_METHOD(ObsFixture, "a buffer whose chosen encoder cannot start says so", "[obs][manager]")
 {
 	// The NVENC stand-ins refuse to start until a test enables them, as NVENC does
@@ -432,15 +431,27 @@ TEST_CASE_METHOD(ObsFixture, "a buffer whose chosen encoder cannot start says so
 	CHECK_FALSE(source->chosenEncoder);
 	REQUIRE(manager.manualStop());
 
+	// A choice OBS does not offer, as QuickSync with the iGPU turned off, says so too.
+	LogCounter unavailable("the encoder chosen for replays, is not available");
+	settings.replayEncoder = "obs_qsv11_v2";
+	manager.setSettings(settings);
+	REQUIRE(manager.manualStart());
+	CHECK(manager.status(uuid).stats.state == CaptureState::Running);
+	CHECK(manager.status(uuid).stats.choiceSkipped);
+	CHECK(unavailable.lines == 1);
+	REQUIRE(manager.manualStop());
+
 	// The automatic order has no choice to skip.
 	settings.replayEncoder.clear();
 	manager.setSettings(settings);
 	REQUIRE(manager.manualStart());
 	CHECK_FALSE(manager.status(uuid).stats.choiceSkipped);
 	CHECK(said.lines == 1);
+	CHECK(unavailable.lines == 1);
 	manager.manualStop();
 }
 
+// A manager capturing one test pattern with the given encoder, running with two GOPs.
 struct NvencCapture {
 	OBSSourceAutoRelease pattern = createTestPattern(320, 180, "Pattern");
 	std::string uuid = uuidOf(pattern);
@@ -500,6 +511,13 @@ TEST_CASE_METHOD(ObsFixture, "a source whose HEVC encoder fails uses that vendor
 	});
 	REQUIRE(row != rows.end());
 	CHECK(row->hevcFailed);
+	// The choice gave way to its H.264, which the note of the failure says, so it is not
+	// a choice that could not start.
+	CHECK_FALSE(row->choiceSkipped);
+	// The stand-ins take no textures, which the dock hears of as the capture says.
+	CHECK(row->encoderPath == tapeloop::EncoderPath::Readback);
+	CHECK(row->readbackReason == capture.manager.status(capture.uuid).stats.readbackReason);
+	CHECK(row->readbackReason != tapeloop::ReadbackReason::None);
 
 	// An encoder chosen after the failure is the one that starts.
 	capture.settings.replayEncoder = "obs_x264";
