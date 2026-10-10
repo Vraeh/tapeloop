@@ -53,6 +53,8 @@ target_sources(
     ReplayWriter.hpp
     ReplaySize.cpp
     ReplaySize.hpp
+    ReplayStore.cpp
+    ReplayStore.hpp
     SourceBuffer.cpp
     SourceBuffer.hpp
 )

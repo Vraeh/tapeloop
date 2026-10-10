@@ -62,8 +62,10 @@ target_sources(
     core/ReplayNamesTests.cpp
     core/ReplayPlayerStateTests.cpp
     core/ReplaySizeTests.cpp
+    core/ReplayStoreTests.cpp
     core/ReplayWriterTests.cpp
     core/SourceBufferTests.cpp
+    core/StoredReplays.hpp
     core/SyntheticEncoder.hpp
     core/TempDirectory.hpp
 )
