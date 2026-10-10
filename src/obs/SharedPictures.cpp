@@ -60,8 +60,8 @@ void sayFailure(FailurePacer &pacer, const char *what, const char *outcome) noex
 		     outcome);
 	} else {
 		blog(LOG_WARNING,
-		     "[tapeloop] A replay picture could not be handed over on the GPU: %s %s, and %llu more "
-		     "failures since this was last said",
+		     "[tapeloop] A replay picture could not be handed over on the GPU: %s %s, as it did %llu "
+		     "more times since this was last said",
 		     what, outcome, static_cast<unsigned long long>(*unsaid));
 	}
 }
@@ -73,7 +73,9 @@ struct SharedPictures::Opened {
 	std::array<ComPtr<ID3D11Texture2D>, 2> textures;
 	std::array<ComPtr<IDXGIKeyedMutex>, 2> mutexes;
 	uint64_t generation = 0;
-	FailurePacer failures;
+	FailurePacer openFailures;
+	FailurePacer takeFailures;
+	FailurePacer giveFailures;
 };
 
 SharedPictures::SharedPictures() noexcept : opened_(new(std::nothrow) Opened)
@@ -148,7 +150,7 @@ bool SharedPictures::prepare(uint32_t width, uint32_t height) noexcept
 		++generation_;
 	}
 	if (released != 0) {
-		sayFailure(swapFailures_, "giving a new shared texture to the decoder", obsWords(released));
+		sayFailure(setUpFailures_, "giving a new shared texture to the decoder", obsWords(released));
 	}
 	copiesThroughMemory_ = false;
 	return true;
@@ -200,7 +202,7 @@ bool SharedPictures::publish(const decode::Picture &picture) noexcept
 		if (FAILED(result)) {
 			opened.textures[slot].Reset();
 			opened.mutexes[slot].Reset();
-			sayFailure(opened.failures, "opening a shared texture", hresultWords(result).data());
+			sayFailure(opened.openFailures, "opening a shared texture", hresultWords(result).data());
 		}
 	}
 
@@ -216,12 +218,12 @@ bool SharedPictures::publish(const decode::Picture &picture) noexcept
 						       picture.subresource, &box);
 			const HRESULT released = opened.mutexes[slot]->ReleaseSync(kFilled);
 			if (FAILED(released)) {
-				sayFailure(opened.failures, "giving a copied picture to OBS",
+				sayFailure(opened.giveFailures, "giving a copied picture to OBS",
 					   hresultWords(released).data());
 			}
 			copied = true;
 		} else {
-			sayFailure(opened.failures, "taking a shared texture to copy into",
+			sayFailure(opened.takeFailures, "taking a shared texture to copy into",
 				   hresultWords(acquired).data());
 		}
 	}
@@ -261,10 +263,10 @@ bool SharedPictures::draw(PictureRenderer &renderer, uint32_t width, uint32_t he
 		}
 	}
 	if (taken != 0) {
-		sayFailure(swapFailures_, "taking a copied picture to draw", obsWords(taken));
+		sayFailure(takeFailures_, "taking a copied picture to draw", obsWords(taken));
 	}
 	if (released != 0) {
-		sayFailure(swapFailures_, "giving a drawn texture back to the decoder", obsWords(released));
+		sayFailure(giveFailures_, "giving a drawn texture back to the decoder", obsWords(released));
 	}
 	if (shown < 0) {
 		return false;
@@ -288,6 +290,7 @@ void SharedPictures::rebuildDevice(void *, void *data) noexcept
 	// OBS made the textures again, with new handles, and holds them with key 0.
 	auto &self = *static_cast<SharedPictures *>(data);
 	int released = 0;
+	bool unshared = false;
 	{
 		std::lock_guard lock(self.mutex_);
 		if (!self.luma_[0]) {
@@ -295,14 +298,18 @@ void SharedPictures::rebuildDevice(void *, void *data) noexcept
 		}
 		for (size_t i = 0; i < self.luma_.size(); ++i) {
 			self.handles_[i] = gs_texture_get_shared_handle(self.luma_[i]);
+			unshared = unshared || self.handles_[i] == GS_INVALID_HANDLE;
 			const int result = gs_texture_release_sync(self.luma_[i], kFree);
 			released = released != 0 ? released : result;
 			self.keys_[i] = kFree;
 		}
 		++self.generation_;
 	}
+	if (unshared) {
+		sayFailure(self.setUpFailures_, "sharing a rebuilt texture", "failed: OBS gave it no shared handle");
+	}
 	if (released != 0) {
-		sayFailure(self.swapFailures_, "giving a rebuilt shared texture to the decoder", obsWords(released));
+		sayFailure(self.setUpFailures_, "giving a rebuilt shared texture to the decoder", obsWords(released));
 	}
 }
 

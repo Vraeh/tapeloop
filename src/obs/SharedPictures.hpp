@@ -27,7 +27,7 @@ namespace tapeloop::obs {
 // the graphics context; publish() on the decoder's thread. After a device loss OBS makes
 // the textures again with new handles, which publish() then opens. A call on a shared
 // texture or its keyed mutex that fails is said in the log, at most once a minute for
-// each side, since it can fail on every frame.
+// each kind of call, since it can fail on every frame.
 class SharedPictures {
 public:
 	SharedPictures() noexcept;
@@ -64,7 +64,9 @@ private:
 	// Graphics thread only.
 	std::array<gs_texture_t *, 2> luma_{};
 	std::array<gs_texture_t *, 2> chroma_{};
-	FailurePacer swapFailures_;
+	FailurePacer takeFailures_;
+	FailurePacer giveFailures_;
+	FailurePacer setUpFailures_;
 
 	// Shared by both threads, under mutex_. keys_ is the key each texture was last
 	// released with; generation_ changes whenever the textures are made again.
