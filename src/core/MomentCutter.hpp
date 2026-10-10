@@ -20,7 +20,7 @@ struct MomentClip {
 	Clip clip;
 };
 
-// One marked instant, cut from one or more sources over the same range.
+// One marked instant, cut from one or more sources, each over its own part of the range.
 struct Moment {
 	Nanoseconds start{0};
 	Nanoseconds end{0};
@@ -39,10 +39,12 @@ struct MomentCut {
 	std::vector<std::string> skipped;
 };
 
-// Cuts the range [anchor - preRoll, anchor] from every source, with a negative
-// pre-roll taken as zero. Each clip covers the part of the range its buffer holds and
-// records its own in and out frames; the moment's start and end are the range asked
-// for, not the part the clips cover.
+// Cuts the range [anchor - preRoll, anchor] from every source, but never reaching back
+// further than the source's own buffer window, a negative pre-roll or window taken as
+// zero: what is older than that is footage the buffer only kept for decoding, or that
+// came before the buffer stopped or before an outage. Each clip covers the part of its
+// range the buffer holds and records its own in and out frames; the moment's start and
+// end are the range asked for, not the part the clips cover.
 MomentCut cutMoment(std::span<const MomentSource> sources, Nanoseconds anchor, Nanoseconds preRoll);
 
 } // namespace tapeloop

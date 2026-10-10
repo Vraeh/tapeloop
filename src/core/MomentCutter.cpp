@@ -15,7 +15,9 @@ MomentCut cutMoment(std::span<const MomentSource> sources, Nanoseconds anchor, N
 	cut.moment.end = anchor;
 
 	for (const MomentSource &source : sources) {
-		Clip clip = source.buffer.get().clip(cut.moment.start, cut.moment.end);
+		const SourceBuffer &buffer = source.buffer.get();
+		const Nanoseconds reach = std::max(std::min(preRoll, buffer.window()), Nanoseconds{0});
+		Clip clip = buffer.clip(saturatingSub(anchor, reach), cut.moment.end);
 		if (clip.empty()) {
 			cut.skipped.push_back(source.sourceKey);
 		} else {

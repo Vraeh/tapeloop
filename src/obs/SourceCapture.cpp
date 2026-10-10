@@ -275,6 +275,13 @@ bool SourceCapture::sourceSizeMatches() const
 	return obs_source_get_width(source) == sourceSize_.width && obs_source_get_height(source) == sourceSize_.height;
 }
 
+void SourceCapture::expireBuffer(Nanoseconds now)
+{
+	if (buffer_) {
+		buffer_->expire(now);
+	}
+}
+
 CaptureStats SourceCapture::stats() const
 {
 	CaptureStats stats;
