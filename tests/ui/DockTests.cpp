@@ -362,6 +362,7 @@ TEST_CASE("the dock groups replays by broadcast and says what became of each")
 		{3, at, 2, {"goal"}, "Liga 2026-10-09 21-00", ReplayState::NotSaved, "", "disk full"},
 		{9, at, 2, {"goal"}, "Liga 2026-10-09 21-00", ReplayState::Stored, "2026-10-09 21-03-11", ""},
 		{2, at, 0, {}, "Liga 2026-10-09 21-00", ReplayState::Damaged, "2026-10-09 21-01-40", ""},
+		{1, at, 1, {}, "Amistoso 2026-10-01 10-00", ReplayState::Stored, "", ""},
 	};
 	backend.tags = {"goal"};
 	backend.captures = 5;
@@ -369,7 +370,7 @@ TEST_CASE("the dock groups replays by broadcast and says what became of each")
 	TapeloopDock dock(backend, localeText());
 	dock.refresh();
 	auto *list = child<QListWidget>(dock, "replays");
-	REQUIRE(list->count() == 7);
+	REQUIRE(list->count() == 9);
 	const auto idAt = [&](int row) {
 		return list->item(row)->data(Qt::UserRole).toULongLong();
 	};
@@ -387,6 +388,7 @@ TEST_CASE("the dock groups replays by broadcast and says what became of each")
 	CHECK(idAt(5) == 9u);
 	CHECK(list->item(6)->text() == "2026-10-09 21-01-40, damaged");
 	CHECK_FALSE(list->item(6)->toolTip().isEmpty());
+	CHECK(list->item(6)->flags() == Qt::NoItemFlags);
 	CHECK(list->currentRow() == 1);
 
 	// Moving down from the last replay of a broadcast skips the row that names the next.
@@ -400,6 +402,17 @@ TEST_CASE("the dock groups replays by broadcast and says what became of each")
 	const int picks = backend.picks;
 	Q_EMIT list->itemClicked(list->item(3));
 	CHECK(backend.picks == picks);
+	// Down goes past a damaged replay too, to the next broadcast, and back up.
+	QApplication::sendEvent(list, &down);
+	CHECK(backend.picked == 9u);
+	QApplication::sendEvent(list, &down);
+	CHECK(backend.picked == 1u);
+	CHECK(list->currentRow() == 8);
+	QKeyEvent up(QEvent::KeyPress, Qt::Key_Up, Qt::NoModifier);
+	QApplication::sendEvent(list, &up);
+	CHECK(backend.picked == 9u);
+	QCoreApplication::processEvents();
+	CHECK(list->currentRow() == 5);
 
 	// Picking a replay found on disk, which has a higher id than the last capture, keeps
 	// the filter the user chose.

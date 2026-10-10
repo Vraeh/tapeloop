@@ -93,10 +93,16 @@ public:
 	}
 	uint64_t currentReplay() const override { return picked; }
 	uint64_t lastCapture() const override { return captures; }
+	// As the library does, a damaged replay is never picked.
 	void pickReplay(uint64_t id) override
 	{
-		picked = id;
 		++picks;
+		for (const auto &replay : captured) {
+			if (replay.id == id && replay.state == tapeloop::ReplayState::Damaged) {
+				return;
+			}
+		}
+		picked = id;
 	}
 
 	bool toggleRunning() override

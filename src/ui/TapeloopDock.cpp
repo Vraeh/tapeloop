@@ -517,12 +517,14 @@ void TapeloopDock::updateReplays()
 	std::vector<uint64_t> ids;
 	std::vector<QString> texts;
 	std::vector<QString> tips;
+	std::vector<bool> damaged;
 	for (size_t i = 0; i < replays.size(); ++i) {
 		const DockReplay &replay = replays[i];
 		if (!replay.broadcast.empty() && (i == 0 || replays[i - 1].broadcast != replay.broadcast)) {
 			ids.push_back(0);
 			texts.push_back(QString::fromStdString(replay.broadcast));
 			tips.emplace_back();
+			damaged.push_back(false);
 		}
 		const QDateTime captured = QDateTime::fromMSecsSinceEpoch(
 			std::chrono::duration_cast<std::chrono::milliseconds>(replay.capturedAt.time_since_epoch())
@@ -553,6 +555,7 @@ void TapeloopDock::updateReplays()
 		ids.push_back(replay.id);
 		texts.push_back(std::move(text));
 		tips.push_back(std::move(tip));
+		damaged.push_back(replay.state == ReplayState::Damaged);
 	}
 	// Never while the left button is held on the list: moving the pointer then makes the
 	// row under it current, which after a rebuild can be another replay.
@@ -568,8 +571,14 @@ void TapeloopDock::updateReplays()
 				QFont font = item->font();
 				font.setBold(true);
 				item->setFont(font);
-			} else if (!tips[i].isEmpty()) {
+			}
+			if (!tips[i].isEmpty()) {
 				item->setToolTip(tips[i]);
+			}
+			// A damaged replay cannot be picked, and the arrow keys go past it as they go
+			// past a heading.
+			if (damaged[i]) {
+				item->setFlags(Qt::NoItemFlags);
 			}
 		}
 		shownReplays_ = std::move(ids);
