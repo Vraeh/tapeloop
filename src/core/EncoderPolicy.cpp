@@ -226,7 +226,8 @@ std::vector<EncoderInfo> replayEncoderChoices(std::span<const EncoderInfo> encod
 {
 	std::vector<EncoderInfo> choices;
 	for (const EncoderInfo &encoder : encoders) {
-		if (!encoder.deprecated && !encoder.internal && (encoder.codec == "h264" || encoder.codec == "hevc")) {
+		if (!encoder.deprecated && !encoder.internal && encoder.vendor != Vendor::Unknown &&
+		    (encoder.codec == "h264" || encoder.codec == "hevc")) {
 			choices.push_back(encoder);
 		}
 	}

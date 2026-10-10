@@ -208,11 +208,20 @@ TEST_CASE("the encoders to choose from are those whose replays the buffer can ho
 	encoders.push_back(encoder("obs_qsv11_av1", "av1", Vendor::Intel, true));
 	encoders.push_back(encoder("obs_nvenc_h264_soft", "h264", Vendor::Nvidia, false, true));
 	encoders.push_back(encoder("obs_qsv11", "h264", Vendor::Intel, false, false, true));
+	// An encoder of a vendor the settings know nothing of could add B-frames.
+	encoders.push_back(encoder("plugin_h264", "h264", Vendor::Unknown, true));
+	encoders.push_back(encoder("plugin_hevc", "hevc", Vendor::Unknown, false));
 	Ids ids;
 	for (const EncoderInfo &info : tapeloop::replayEncoderChoices(encoders)) {
 		ids.push_back(info.id);
 	}
 	CHECK(ids == Ids{"obs_x264", "obs_qsv11_v2", "obs_qsv11_hevc", "obs_nvenc_h264_tex", "obs_nvenc_hevc_tex"});
+
+	// Chosen anyway, as a choice saved by an earlier version, it gets the automatic order.
+	EncoderPreferences preferences;
+	preferences.chosen = "plugin_h264";
+	CHECK(tapeloop::replayEncoderCandidates(encoders, Vendor::Nvidia, preferences).front().id ==
+	      "obs_nvenc_hevc_tex");
 }
 
 TEST_CASE("replay candidates fall back to H.264 on a vendor without HEVC")

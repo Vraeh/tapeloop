@@ -90,7 +90,8 @@ std::vector<EncoderInfo> replayEncoderCandidates(std::span<const EncoderInfo> en
 						 const EncoderPreferences &preferences);
 
 // The encoders a user may choose for replays: those that encode H.264 or HEVC, which a
-// replay can hold, and that OBS neither hides nor deprecates, in the order given.
+// replay can hold, that OBS neither hides nor deprecates, and of a known vendor, since
+// only those get settings without B-frames, in the order given.
 std::vector<EncoderInfo> replayEncoderChoices(std::span<const EncoderInfo> encoders);
 
 struct ReplayEncoderParams {
