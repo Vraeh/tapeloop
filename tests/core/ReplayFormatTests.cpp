@@ -372,6 +372,24 @@ TEST_CASE("a tag edit goes to the older slot, and a torn edit leaves the previou
 	CHECK_THROWS_AS(tapeloop::encodeTagSlot(tooMany, 1), std::length_error);
 }
 
+TEST_CASE("tags fit a slot exactly when they can be encoded")
+{
+	// A slot has 4096 bytes: a 32-byte head, then 8 bytes and the name per tag.
+	const std::vector<std::string> fits{std::string(4056, 'a')};
+	const std::vector<std::string> over{std::string(4057, 'a')};
+	CHECK(tapeloop::tagsFit(fits));
+	CHECK_NOTHROW(tapeloop::encodeTagSlot(fits, 1));
+	CHECK_FALSE(tapeloop::tagsFit(over));
+	CHECK_THROWS_AS(tapeloop::encodeTagSlot(over, 1), std::length_error);
+	const std::vector<std::string> many(4064 / 9, "x");
+	CHECK(tapeloop::tagsFit(many));
+	std::vector<std::string> more = many;
+	more.emplace_back("x");
+	CHECK_FALSE(tapeloop::tagsFit(more));
+	CHECK_THROWS_AS(tapeloop::encodeTagSlot(more, 1), std::length_error);
+	CHECK(tapeloop::tagsFit({}));
+}
+
 TEST_CASE("a stored source locates frames as a clip does")
 {
 	const StoredSource source = twoSources().sources[1];

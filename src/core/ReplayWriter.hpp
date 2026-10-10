@@ -83,9 +83,11 @@ class ReplayWriter {
 public:
 	explicit ReplayWriter(ReplayWriterConfig config = {});
 
-	// Throws std::invalid_argument for a capture with no frames, and std::system_error
-	// or std::length_error when it cannot be written; the replay is then not saved, and
-	// the later captures of its sources write their GOPs again, into new segments.
+	// Throws std::invalid_argument for a capture with no frames, std::length_error for
+	// tags that do not fit, before anything is written, and std::system_error,
+	// std::length_error or std::runtime_error when it cannot be written; the replay is
+	// then not saved, and the later captures of its sources write their GOPs again, into
+	// new segments.
 	WrittenReplay write(const ReplayCapture &capture);
 
 	// Writes the tags into the manifest's older tag slot, so that a torn write leaves the

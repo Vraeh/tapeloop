@@ -398,6 +398,18 @@ FrameLocation locate(const StoredSource &source, Nanoseconds t) noexcept
 	return {};
 }
 
+bool tagsFit(std::span<const std::string> tags) noexcept
+{
+	size_t size = kTagSlotHeadSize;
+	for (const std::string &tag : tags) {
+		if (tag.size() > kTagSlotSize || size + kTagRecordHeadSize + tag.size() > kTagSlotSize) {
+			return false;
+		}
+		size += kTagRecordHeadSize + tag.size();
+	}
+	return true;
+}
+
 std::vector<uint8_t> encodeTagSlot(std::span<const std::string> tags, uint64_t generation)
 {
 	std::vector<uint8_t> slot(kTagSlotSize, 0);

@@ -91,7 +91,7 @@ public:
 	// Also takes it off every replay.
 	bool deleteTag(std::string_view tag);
 	// Creates the tag if it is new. False when there is no such replay or it is damaged,
-	// or the tag is not valid or already on it.
+	// or the tag is not valid, already on it, or more than its file has room for.
 	bool addTag(uint64_t id, std::string_view tag);
 	bool removeTag(uint64_t id, std::string_view tag);
 	// Sorted; empty for an unknown replay.

@@ -354,6 +354,15 @@ TEST_CASE("a broadcast folder that cannot be made fails the capture")
 	CHECK_THROWS_AS(writer.write(captureOf(dir.path() / "taken", {sourceOf("a", makeGops(1))})), std::system_error);
 }
 
+TEST_CASE("a capture whose tags do not fit is refused before anything is written")
+{
+	TempDirectory dir;
+	ReplayCapture capture = captureOf(dir.path() / "Liga", {sourceOf("a", makeGops(2))});
+	capture.tags = std::vector<std::string>(600, "Penalty");
+	CHECK_THROWS_AS(ReplayWriter().write(capture), std::length_error);
+	CHECK_FALSE(fs::exists(dir.path() / "Liga"));
+}
+
 TEST_CASE("tags go to the older slot of a manifest")
 {
 	TempDirectory dir;

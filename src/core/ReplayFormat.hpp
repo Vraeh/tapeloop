@@ -152,6 +152,9 @@ struct TagSlot {
 	std::vector<std::string> tags;
 };
 
+// Whether the tags fit one tag slot; encodeTagSlot throws std::length_error for those
+// that do not.
+bool tagsFit(std::span<const std::string> tags) noexcept;
 std::vector<uint8_t> encodeTagSlot(std::span<const std::string> tags, uint64_t generation);
 // Null for a slot that is torn or was never written.
 std::optional<TagSlot> decodeTagSlot(std::span<const uint8_t> slot);

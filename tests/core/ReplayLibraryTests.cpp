@@ -210,6 +210,22 @@ TEST_CASE("ReplayLibrary tags replays and filters by tag")
 	CHECK(library.tags()[0] == "goals");
 }
 
+TEST_CASE("ReplayLibrary puts on a replay only the tags its file has room for")
+{
+	ReplayLibrary library;
+	const uint64_t replay = library.addCaptured(captureAt(10), "Liga");
+	for (char name = 'a'; name < 'e'; ++name) {
+		CHECK(library.addTag(replay, std::string(992, name)));
+	}
+	CHECK_FALSE(library.addTag(replay, std::string(992, 'e')));
+	CHECK(library.tagsOf(replay).size() == 4);
+	CHECK(library.tags().size() == 4);
+	CHECK(library.addTag(replay, "short"));
+	// Another replay has room of its own.
+	const uint64_t other = library.addCaptured(captureAt(20), "Liga");
+	CHECK(library.addTag(other, std::string(992, 'e')));
+}
+
 TEST_CASE("ReplayLibrary keeps tag names tidy and tells them apart regardless of case")
 {
 	ReplayLibrary library;

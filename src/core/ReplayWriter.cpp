@@ -202,6 +202,9 @@ WrittenReplay ReplayWriter::write(const ReplayCapture &capture)
 			 [](const CaptureSource &source) { return !source.clip.empty(); })) {
 		throw std::invalid_argument("a replay needs a source with frames");
 	}
+	if (!tagsFit(capture.tags)) {
+		throw std::length_error("the tags of a replay do not fit its file");
+	}
 	if (capture.folder != folder_) {
 		sources_.clear();
 		folder_ = capture.folder;

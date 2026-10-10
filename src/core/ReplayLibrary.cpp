@@ -234,6 +234,10 @@ bool ReplayLibrary::addTag(uint64_t id, std::string_view tag)
 	if (name.empty() || found == replays_.end() || found->second.state == ReplayState::Damaged) {
 		return false;
 	}
+	std::vector<std::string> tags = found->second.tags;
+	if (!insertSorted(tags, name) || !tagsFit(tags)) {
+		return false;
+	}
 	// The tag list first: should the replay's own list then fail to grow, the tag is at
 	// least known.
 	insertSorted(tags_, name);
