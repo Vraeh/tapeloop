@@ -16,8 +16,8 @@ namespace tapeloop::obs {
 // The capture manager wired to the OBS frontend: streaming and recording events, scene
 // collection cleanup and exit, the scene collection save callback and save requests,
 // the replays on disk read once OBS has loaded, a poll every second on the UI thread,
-// and the hotkey that captures a replay, saved with the scene collection. Created and destroyed on the UI thread, at
-// module load and unload.
+// and the hotkey that captures a replay, saved with the scene collection. Created and
+// destroyed on the UI thread, at module load and unload.
 class FrontendBridge : private CaptureHost {
 public:
 	FrontendBridge();
