@@ -448,12 +448,17 @@ TEST_CASE("a scan deletes half written manifests and lists damaged ones")
 	const WrittenReplay cut = writer.write(captureOf(folder, {sourceOf("b", makeGops(2))}, "cut"));
 	const WrittenReplay orphan = writer.write(captureOf(folder, {sourceOf("c", makeGops(2))}, "orphan"));
 	File(folder / "torn.tplp.part", File::Mode::CreateNew).writeAt(0, std::vector<uint8_t>(5000, 7));
+	fs::create_directory(folder / "Export");
+	File(folder / "Export" / "kept - Camera a.mp4.part", File::Mode::CreateNew).flush();
+	File(folder / "Export" / "kept - Camera a.mp4", File::Mode::CreateNew).flush();
 	fs::resize_file(cut.manifest, fs::file_size(cut.manifest) - 1);
 	fs::remove(folder / "data" / "c-000001.tpls");
 
 	const tapeloop::ReplayScan scan = tapeloop::scanReplays(dir.path());
-	CHECK(scan.removed == std::vector<fs::path>{folder / "torn.tplp.part"});
+	CHECK(scan.removed ==
+	      std::vector<fs::path>{folder / "torn.tplp.part", folder / "Export" / "kept - Camera a.mp4.part"});
 	CHECK_FALSE(fs::exists(folder / "torn.tplp.part"));
+	CHECK(fs::exists(folder / "Export" / "kept - Camera a.mp4"));
 	REQUIRE(scan.replays.size() == 3);
 	CHECK(scan.replays[0].manifest == cut.manifest);
 	CHECK_FALSE(scan.replays[0].intact);

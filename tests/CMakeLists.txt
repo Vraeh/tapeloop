@@ -59,6 +59,7 @@ target_sources(
     core/MomentCutterTests.cpp
     core/ParameterSetsTests.cpp
     core/PlayheadTests.cpp
+    core/ReplayExportTests.cpp
     core/ReplayFormatTests.cpp
     core/ReplayLibraryTests.cpp
     core/ReplayNamesTests.cpp

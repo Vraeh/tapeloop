@@ -173,7 +173,7 @@ struct FoundReplay {
 
 struct ReplayScan {
 	std::vector<FoundReplay> replays;
-	// Manifests a crash left half written, which the scan deleted.
+	// Manifests and exports a crash left half written, which the scan deleted.
 	std::vector<std::filesystem::path> removed;
 	// What could not be read or deleted.
 	std::vector<std::string> errors;

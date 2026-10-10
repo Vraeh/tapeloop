@@ -64,6 +64,16 @@ std::vector<std::filesystem::path> listDirectory(const std::filesystem::path &di
 	return paths;
 }
 
+void removeHalfWritten(const std::filesystem::path &path, ReplayScan &scan)
+{
+	std::error_code error;
+	if (std::filesystem::remove(path, error)) {
+		scan.removed.push_back(path);
+	} else if (error) {
+		scan.errors.push_back(describe("cannot delete", path, error));
+	}
+}
+
 // What a manifest or a self-contained replay holds besides GOPs: its head, its index
 // chunk and its footer. The head is empty when the footer is not intact.
 struct ManifestBytes {
@@ -464,14 +474,19 @@ ReplayScan scanReplays(const std::filesystem::path &base)
 		for (const std::filesystem::path &path : listDirectory(folder, scan.errors)) {
 			const std::string name = utf8FromPath(path.filename());
 			if (name.ends_with(kPartExtension)) {
-				if (std::filesystem::remove(path, error)) {
-					scan.removed.push_back(path);
-				} else if (error) {
-					scan.errors.push_back(describe("cannot delete", path, error));
-				}
+				removeHalfWritten(path, scan);
 			} else if (name.ends_with(kManifestExtension) &&
 				   std::filesystem::is_regular_file(path, error)) {
 				scan.replays.push_back(readReplay(path, broadcast, scan.errors));
+			}
+		}
+		// An export a crash stopped left its file under a .part name.
+		const std::filesystem::path exports = folder / pathFromUtf8(kExportFolderName);
+		if (std::filesystem::is_directory(exports, error)) {
+			for (const std::filesystem::path &path : listDirectory(exports, scan.errors)) {
+				if (utf8FromPath(path.filename()).ends_with(".part")) {
+					removeHalfWritten(path, scan);
+				}
 			}
 		}
 	}

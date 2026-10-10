@@ -41,6 +41,9 @@ std::string safeFileName(std::string_view name, size_t maxBytes = kMaxFileNameBy
 std::string broadcastFolderName(std::string_view sceneCollection, LocalTime time);
 // "YYYY-MM-DD HH-MM-SS", the name of a replay's manifest without its extension.
 std::string replayFileStem(LocalTime time);
+// The folder of a broadcast folder that exported replays go to.
+inline constexpr std::string_view kExportFolderName = "Export";
+
 // "<source key>-NNNNNN.tpls", one segment of a source in the data folder, with the key
 // made safe.
 std::string segmentFileName(std::string_view sourceKey, uint32_t sequence);
