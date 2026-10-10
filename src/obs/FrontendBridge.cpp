@@ -3,6 +3,8 @@
 
 #include "obs/FrontendBridge.hpp"
 
+#include "obs/ProfileHotkeys.hpp"
+
 #include <obs-module.h>
 #include <util/base.h>
 
@@ -23,8 +25,8 @@ void runTask(void *param) noexcept
 	}
 }
 
-// Where the hotkey's bindings are kept in the scene collection.
-constexpr const char *kCaptureHotkeyKey = "tapeloop_capture_hotkey";
+// The profile keeps its bindings under this name, as OBS keeps those of its own hotkeys.
+constexpr const char *kCaptureHotkeyName = "tapeloop.capture_replay";
 
 } // namespace
 
@@ -33,8 +35,8 @@ FrontendBridge::FrontendBridge() : manager_(std::make_unique<CaptureManager>(sta
 	obs_frontend_add_event_callback(handleEvent, this);
 	obs_frontend_add_save_callback(handleSave, this);
 	obs_add_tick_callback(handleTick, this);
-	captureHotkey_ = obs_hotkey_register_frontend(
-		"tapeloop.capture_replay", obs_module_text("Hotkey.CaptureReplay"), handleCaptureHotkey, this);
+	captureHotkey_ = obs_hotkey_register_frontend(kCaptureHotkeyName, obs_module_text("Hotkey.CaptureReplay"),
+						      handleCaptureHotkey, this);
 }
 
 FrontendBridge::~FrontendBridge()
@@ -91,6 +93,13 @@ void FrontendBridge::requestSave()
 	obs_frontend_save();
 }
 
+void FrontendBridge::loadCaptureHotkey() noexcept
+{
+	if (captureHotkey_ != OBS_INVALID_HOTKEY_ID) {
+		loadProfileHotkey(captureHotkey_, kCaptureHotkeyName, obs_frontend_get_profile_config());
+	}
+}
+
 void FrontendBridge::handleEvent(obs_frontend_event event, void *data) noexcept
 {
 	auto &bridge = *static_cast<FrontendBridge *>(data);
@@ -113,7 +122,11 @@ void FrontendBridge::handleEvent(obs_frontend_event event, void *data) noexcept
 			manager.onSceneCollectionCleanup();
 			break;
 		case OBS_FRONTEND_EVENT_FINISHED_LOADING:
+			bridge.loadCaptureHotkey();
 			manager.loadLibrary();
+			break;
+		case OBS_FRONTEND_EVENT_PROFILE_CHANGED:
+			bridge.loadCaptureHotkey();
 			break;
 		case OBS_FRONTEND_EVENT_EXIT:
 			manager.onExit();
@@ -134,16 +147,8 @@ void FrontendBridge::handleSave(obs_data_t *collection, bool saving, void *data)
 	try {
 		if (saving) {
 			manager.save(collection);
-			if (bridge.captureHotkey_ != OBS_INVALID_HOTKEY_ID) {
-				OBSDataArrayAutoRelease bindings = obs_hotkey_save(bridge.captureHotkey_);
-				obs_data_set_array(collection, kCaptureHotkeyKey, bindings);
-			}
 		} else {
 			manager.load(collection);
-			if (bridge.captureHotkey_ != OBS_INVALID_HOTKEY_ID) {
-				OBSDataArrayAutoRelease bindings = obs_data_get_array(collection, kCaptureHotkeyKey);
-				obs_hotkey_load(bridge.captureHotkey_, bindings);
-			}
 		}
 	} catch (...) {
 		blog(LOG_ERROR, "[tapeloop] Saving or loading the settings failed");

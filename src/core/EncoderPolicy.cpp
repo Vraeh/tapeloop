@@ -135,16 +135,28 @@ EncoderPath encoderPathOf(const EncoderInfo &encoder, Vendor renderVendor, bool 
 	if (encoder.vendor == Vendor::Software) {
 		return EncoderPath::Software;
 	}
-	if (encoder.vendor == Vendor::Apple && renderVendor == Vendor::Apple) {
-		return EncoderPath::Texture;
+	return readbackReasonOf(encoder, renderVendor, nv12Textures) == ReadbackReason::None ? EncoderPath::Texture
+											     : EncoderPath::Readback;
+}
+
+ReadbackReason readbackReasonOf(const EncoderInfo &encoder, Vendor renderVendor, bool nv12Textures) noexcept
+{
+	if (encoder.vendor == Vendor::Software || (encoder.vendor == Vendor::Apple && renderVendor == Vendor::Apple)) {
+		return ReadbackReason::None;
+	}
+	// VideoToolbox takes no textures anywhere, and on a Mac whose card OBS renders on is
+	// not Apple's, which adapter encodes is not known.
+	if (encoder.vendor == Vendor::Apple) {
+		return ReadbackReason::NoTextureInput;
 	}
 	// An Unknown render vendor tells nothing about where the encoder runs.
-	const bool otherAdapter = renderVendor != Vendor::Unknown && renderVendor != Vendor::Software &&
-				  encoder.vendor != renderVendor;
-	if (!encoder.passTexture || otherAdapter || !nv12Textures) {
-		return EncoderPath::Readback;
+	if (renderVendor != Vendor::Unknown && renderVendor != Vendor::Software && encoder.vendor != renderVendor) {
+		return ReadbackReason::OtherAdapter;
 	}
-	return EncoderPath::Texture;
+	if (!encoder.passTexture) {
+		return ReadbackReason::NoTextureInput;
+	}
+	return nv12Textures ? ReadbackReason::None : ReadbackReason::NoTextures;
 }
 
 Vendor encoderVendor(std::string_view id)

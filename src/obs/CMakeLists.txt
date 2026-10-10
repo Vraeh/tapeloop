@@ -17,6 +17,8 @@ target_sources(
     ObsEncoders.hpp
     PictureRenderer.cpp
     PictureRenderer.hpp
+    ProfileHotkeys.cpp
+    ProfileHotkeys.hpp
     RenderAdapter.cpp
     RenderAdapter.hpp
     SettingsData.cpp

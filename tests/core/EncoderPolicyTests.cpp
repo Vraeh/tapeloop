@@ -487,6 +487,41 @@ TEST_CASE("an encoder's path is the optimal one only when it takes OBS's texture
 	      EncoderPath::Software);
 }
 
+TEST_CASE("an encoder that reads its frames back says why")
+{
+	using tapeloop::ReadbackReason;
+	using tapeloop::readbackReasonOf;
+	const EncoderInfo nvenc = encoder("obs_nvenc_hevc_tex", "hevc", Vendor::Nvidia, true);
+	const EncoderInfo qsv = encoder("obs_qsv11_v2", "h264", Vendor::Intel, true);
+	const EncoderInfo qsvSoft = encoder("obs_qsv11_soft", "h264", Vendor::Intel, false);
+	CHECK(readbackReasonOf(nvenc, Vendor::Nvidia, true) == ReadbackReason::None);
+	CHECK(readbackReasonOf(qsv, Vendor::Nvidia, true) == ReadbackReason::OtherAdapter);
+	CHECK(readbackReasonOf(qsvSoft, Vendor::Intel, true) == ReadbackReason::NoTextureInput);
+	CHECK(readbackReasonOf(nvenc, Vendor::Nvidia, false) == ReadbackReason::NoTextures);
+	// The adapter goes first: on another card the rest does not matter.
+	CHECK(readbackReasonOf(qsvSoft, Vendor::Nvidia, false) == ReadbackReason::OtherAdapter);
+	CHECK(readbackReasonOf(qsvSoft, Vendor::Intel, false) == ReadbackReason::NoTextureInput);
+	CHECK(readbackReasonOf(nvenc, Vendor::Unknown, false) == ReadbackReason::NoTextures);
+	CHECK(readbackReasonOf(encoder("com.apple.videotoolbox.videoencoder.ave.avc", "h264", Vendor::Apple, false),
+			       Vendor::Apple, false) == ReadbackReason::None);
+	// An Intel Mac rendering on its AMD card: VideoToolbox takes no textures, wherever it
+	// encodes.
+	CHECK(readbackReasonOf(encoder("com.apple.videotoolbox.videoencoder.ave.avc", "h264", Vendor::Apple, false),
+			       Vendor::Amd, true) == ReadbackReason::NoTextureInput);
+	CHECK(readbackReasonOf(encoder("obs_x264", "h264", Vendor::Software, false), Vendor::Nvidia, false) ==
+	      ReadbackReason::None);
+	// Every encoder that reads back has a reason, and only those.
+	for (const EncoderInfo &info : {nvenc, qsv, qsvSoft}) {
+		for (const Vendor render : {Vendor::Nvidia, Vendor::Intel, Vendor::Amd, Vendor::Unknown}) {
+			for (const bool nv12 : {true, false}) {
+				CHECK((tapeloop::encoderPathOf(info, render, nv12) ==
+				       tapeloop::EncoderPath::Readback) ==
+				      (readbackReasonOf(info, render, nv12) != ReadbackReason::None));
+			}
+		}
+	}
+}
+
 TEST_CASE("replay encoders prefer HEVC unless told otherwise, with H.264 of the same vendor after it")
 {
 	CHECK(EncoderPreferences{}.preferHevc);

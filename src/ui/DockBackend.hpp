@@ -29,8 +29,16 @@ struct DockSource {
 	// Not kept active off air although the settings ask: it restarts when it becomes
 	// active.
 	bool activationLeftOut = false;
-	// How its running encoder takes the frames; anything but Texture gets a note.
+	// How its running encoder takes the frames; anything but Texture gets a note, which
+	// for Readback says why.
 	EncoderPath encoderPath = EncoderPath::Texture;
+	ReadbackReason readbackReason = ReadbackReason::None;
+	// Its running encoder is the one chosen in the advanced settings, which explains a
+	// path that is not the optimal one.
+	bool chosenEncoder = false;
+	// The encoder chosen in the advanced settings could not start for it, or is not
+	// available, and the automatic order went on.
+	bool choiceSkipped = false;
 	// Its HEVC encoder failed while it ran, and it uses H.264 from its next start.
 	bool hevcFailed = false;
 };
@@ -82,6 +90,11 @@ public:
 	virtual std::vector<std::string> replayTags() const = 0;
 	// Creates the tag if it is new. False when the replay is gone or the name not valid.
 	virtual bool tagReplay(uint64_t id, const std::string &tag) = 0;
+	// False when the replay is gone or does not carry the tag.
+	virtual bool untagReplay(uint64_t id, const std::string &tag) = 0;
+	// Takes the tag off every replay that carries it and forgets it. False when there is
+	// no such tag.
+	virtual bool deleteTag(const std::string &tag) = 0;
 	// The replay that goes on air next; zero when there is none.
 	virtual uint64_t currentReplay() const = 0;
 	// The replay captured last, from the dock or by the hotkey; zero before the first.

@@ -48,6 +48,12 @@ struct CaptureStats {
 	std::string encoderId;
 	// Of the encoder running; Texture while none is.
 	EncoderPath encoderPath = EncoderPath::Texture;
+	ReadbackReason readbackReason = ReadbackReason::None;
+	// The encoder running is the one the user chose.
+	bool chosenEncoder = false;
+	// The user chose an encoder that could not start, or that OBS does not offer, so
+	// another one runs.
+	bool choiceSkipped = false;
 	FrameSize outputSize;
 	SourceBufferStats buffer;
 	// From the oldest frame held to the newest.
@@ -115,6 +121,9 @@ private:
 	obs_output_t *output_ = nullptr;
 	std::string encoderId_;
 	EncoderPath encoderPath_ = EncoderPath::Texture;
+	ReadbackReason readbackReason_ = ReadbackReason::None;
+	bool chosenEncoder_ = false;
+	bool choiceSkipped_ = false;
 };
 
 } // namespace tapeloop::obs

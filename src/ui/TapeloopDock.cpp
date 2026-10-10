@@ -17,6 +17,7 @@
 #include <QLabel>
 #include <QLineEdit>
 #include <QListWidget>
+#include <QMessageBox>
 #include <QMouseEvent>
 #include <QPushButton>
 #include <QSignalBlocker>
@@ -39,6 +40,21 @@ constexpr int kStatusColumn = 1;
 int seconds(Nanoseconds length)
 {
 	return static_cast<int>(std::chrono::duration_cast<std::chrono::seconds>(length).count());
+}
+
+const char *readbackNote(ReadbackReason reason)
+{
+	switch (reason) {
+	case ReadbackReason::OtherAdapter:
+		return "Dock.Status.Readback.OtherAdapter.Tooltip";
+	case ReadbackReason::NoTextureInput:
+		return "Dock.Status.Readback.NoTextureInput.Tooltip";
+	case ReadbackReason::NoTextures:
+		return "Dock.Status.Readback.NoTextures.Tooltip";
+	case ReadbackReason::None:
+		break;
+	}
+	return "Dock.Status.Readback.Tooltip";
 }
 
 // Qt cannot let an exception through its event loop; a failed change is dropped and the
@@ -99,9 +115,11 @@ TapeloopDock::TapeloopDock(DockBackend &backend, TextLookup text, QWidget *paren
 	  followsOutputs_(new QLabel(text_("Dock.FollowsOutputs"), this)),
 	  captureReplay_(new QPushButton(text_("Dock.CaptureReplay"), this)),
 	  tagFilter_(new QComboBox(this)),
+	  deleteTag_(new QPushButton(text_("Dock.DeleteTag"), this)),
 	  replays_(new ReplayList(this)),
 	  tagName_(new QLineEdit(this)),
-	  addTag_(new QPushButton(text_("Dock.AddTag"), this))
+	  addTag_(new QPushButton(text_("Dock.AddTag"), this)),
+	  removeTag_(new QPushButton(text_("Dock.RemoveTag"), this))
 {
 	sources_->setObjectName("sources");
 	sources_->setHorizontalHeaderLabels({text_("Dock.Source"), text_("Dock.Status")});
@@ -154,6 +172,10 @@ TapeloopDock::TapeloopDock(DockBackend &backend, TextLookup text, QWidget *paren
 	tagName_->setPlaceholderText(text_("Dock.TagName"));
 	addTag_->setObjectName("addTag");
 	addTag_->setToolTip(text_("Dock.AddTag.Tooltip"));
+	removeTag_->setObjectName("removeTag");
+	removeTag_->setToolTip(text_("Dock.RemoveTag.Tooltip"));
+	deleteTag_->setObjectName("deleteTag");
+	deleteTag_->setToolTip(text_("Dock.DeleteTag.Tooltip"));
 	followsOutputs_->setObjectName("followsOutputs");
 	followsOutputs_->setWordWrap(true);
 	followsOutputs_->hide();
@@ -181,11 +203,15 @@ TapeloopDock::TapeloopDock(DockBackend &backend, TextLookup text, QWidget *paren
 	layout->addWidget(startStop_);
 	layout->addWidget(followsOutputs_);
 	layout->addWidget(captureReplay_);
-	layout->addWidget(tagFilter_);
+	auto *filtering = new QHBoxLayout;
+	filtering->addWidget(tagFilter_, 1);
+	filtering->addWidget(deleteTag_);
+	layout->addLayout(filtering);
 	layout->addWidget(replays_, 1);
 	auto *tagging = new QHBoxLayout;
 	tagging->addWidget(tagName_, 1);
 	tagging->addWidget(addTag_);
+	tagging->addWidget(removeTag_);
 	layout->addLayout(tagging);
 
 	connect(sources_, &QTableWidget::itemChanged, this, [this](QTableWidgetItem *item) {
@@ -226,8 +252,8 @@ TapeloopDock::TapeloopDock(DockBackend &backend, TextLookup text, QWidget *paren
 			       checked ? 1 : 0);
 	});
 	connect(advanced_, &QCheckBox::toggled, this, [this](bool checked) {
-		advancedSettings_->setVisible(checked);
-		refresh();
+		changeSettings([](BufferSettings &settings, int on) { settings.showAdvanced = on != 0; },
+			       checked ? 1 : 0);
 	});
 	connect(replayEncoder_, &QComboBox::currentIndexChanged, this, [this](int index) {
 		guarded([&] {
@@ -270,6 +296,37 @@ TapeloopDock::TapeloopDock(DockBackend &backend, TextLookup text, QWidget *paren
 	};
 	connect(addTag_, &QPushButton::clicked, this, addTag);
 	connect(tagName_, &QLineEdit::returnPressed, this, addTag);
+	connect(removeTag_, &QPushButton::clicked, this, [this] {
+		const std::string tag = tagName_->text().toStdString();
+		bool removed = false;
+		guarded([&] { removed = backend_.untagReplay(backend_.currentReplay(), tag); });
+		if (removed) {
+			tagName_->clear();
+		}
+		refresh();
+	});
+	// The tag the list is filtered by goes from every replay, on disk too, so the dock
+	// asks first; not with exec(), for the reason the source settings dialog gives. The
+	// list then shows every replay again.
+	connect(deleteTag_, &QPushButton::clicked, this, [this] {
+		const QString tag = tagFilter_->currentData().toString();
+		if (tag.isEmpty()) {
+			return;
+		}
+		auto *question = new QMessageBox(QMessageBox::Question, text_("Dock.DeleteTag"),
+						 text_("Dock.DeleteTag.Question").arg(tag),
+						 QMessageBox::Yes | QMessageBox::No, this);
+		question->setObjectName("deleteTagQuestion");
+		question->setDefaultButton(QMessageBox::No);
+		question->setAttribute(Qt::WA_DeleteOnClose);
+		connect(question, &QMessageBox::finished, this, [this, tag](int answer) {
+			if (answer == QMessageBox::Yes) {
+				guarded([&] { backend_.deleteTag(tag.toStdString()); });
+			}
+			refresh();
+		});
+		question->open();
+	});
 	// Moving through the list with the keyboard picks as a click does, and a click on the
 	// row already current picks it again after a capture the list has not shown yet. The
 	// list is refreshed once the view is done with the event, since a rebuild inside it
@@ -346,6 +403,7 @@ void TapeloopDock::refresh()
 		const QSignalBlocker blockForceH264(forceH264_);
 		const QSignalBlocker blockEncoder(replayEncoder_);
 		const QSignalBlocker blockOtherAdapters(otherAdapters_);
+		const QSignalBlocker blockAdvanced(advanced_);
 		// A value being typed is not overwritten.
 		if (!length_->hasFocus()) {
 			length_->setValue(seconds(settings.length));
@@ -357,8 +415,10 @@ void TapeloopDock::refresh()
 		// A chosen encoder decides the codec itself.
 		forceH264_->setEnabled(settings.replayEncoder.empty());
 		otherAdapters_->setChecked(settings.allowOtherAdapters);
+		advanced_->setChecked(settings.showAdvanced);
+		advancedSettings_->setVisible(settings.showAdvanced);
 		// The encoders are looked up only while the advanced settings show them.
-		if (advanced_->isChecked()) {
+		if (settings.showAdvanced) {
 			updateEncoders(settings.replayEncoder);
 		}
 
@@ -482,15 +542,25 @@ void TapeloopDock::updateSources(const std::vector<DockSource> &sources)
 			case EncoderPath::Texture:
 				break;
 			case EncoderPath::Readback:
-				path = "Dock.Status.Readback.Tooltip";
+				path = readbackNote(sources[i].readbackReason);
 				break;
 			case EncoderPath::Software:
-				path = "Dock.Status.Software.Tooltip";
+				path = sources[i].chosenEncoder ? "Dock.Status.SoftwareChosen.Tooltip"
+								: "Dock.Status.Software.Tooltip";
 				break;
 			}
 		}
 		if (path) {
 			note += (note.isEmpty() ? QString() : QStringLiteral("\n\n")) + text_(path);
+			// Only another card is a choice the automatic order would have made otherwise.
+			if (sources[i].chosenEncoder && sources[i].encoderPath == EncoderPath::Readback &&
+			    sources[i].readbackReason == ReadbackReason::OtherAdapter) {
+				note += QStringLiteral(" ") + text_("Dock.Status.ReadbackChosen.Tooltip");
+			}
+		}
+		if (sources[i].selected && sources[i].state == SourceState::Running && sources[i].choiceSkipped) {
+			note += (note.isEmpty() ? QString() : QStringLiteral("\n\n")) +
+				text_("Dock.Status.ChoiceSkipped.Tooltip");
 		}
 		if (sources[i].selected && sources[i].hevcFailed) {
 			note += (note.isEmpty() ? QString() : QStringLiteral("\n\n")) +
@@ -635,7 +705,9 @@ void TapeloopDock::updateReplays()
 	replays_->setCurrentIndex(listed ? replays_->model()->index(static_cast<int>(shown - shownReplays_.begin()), 0)
 					 : QModelIndex());
 	addTag_->setEnabled(listed);
+	removeTag_->setEnabled(listed);
 	tagName_->setEnabled(listed);
+	deleteTag_->setEnabled(!tagFilter_->currentData().toString().isEmpty());
 }
 
 void TapeloopDock::updateEncoders(const std::string &chosen)

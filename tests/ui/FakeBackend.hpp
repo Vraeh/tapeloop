@@ -91,6 +91,29 @@ public:
 		}
 		return false;
 	}
+	bool untagReplay(uint64_t id, const std::string &tag) override
+	{
+		for (auto &replay : captured) {
+			const auto carried = std::find(replay.tags.begin(), replay.tags.end(), tag);
+			if (replay.id == id && carried != replay.tags.end()) {
+				replay.tags.erase(carried);
+				return true;
+			}
+		}
+		return false;
+	}
+	bool deleteTag(const std::string &tag) override
+	{
+		const auto known = std::find(tags.begin(), tags.end(), tag);
+		if (known == tags.end()) {
+			return false;
+		}
+		tags.erase(known);
+		for (auto &replay : captured) {
+			replay.tags.erase(std::remove(replay.tags.begin(), replay.tags.end(), tag), replay.tags.end());
+		}
+		return true;
+	}
 	uint64_t currentReplay() const override { return picked; }
 	uint64_t lastCapture() const override { return captures; }
 	// As the library does, a damaged replay is never picked.

@@ -49,6 +49,8 @@ struct BufferSettings {
 	// order may use encoders on another adapter than the one OBS renders on.
 	std::string replayEncoder;
 	bool allowOtherAdapters = true;
+	// Whether the dock shows the advanced settings.
+	bool showAdvanced = false;
 	std::map<std::string, SourceSettings> sources;
 
 	Nanoseconds lengthFor(const std::string &uuid) const;
@@ -89,6 +91,7 @@ struct SavedSettings {
 	bool forceH264 = false;
 	std::string replayEncoder;
 	bool allowOtherAdapters = true;
+	bool showAdvanced = false;
 	std::vector<SavedSource> sources;
 };
 

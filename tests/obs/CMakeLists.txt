@@ -124,6 +124,7 @@ target_sources(
     ObsFixture.cpp
     ObsFixture.hpp
     PictureTests.cpp
+    ProfileHotkeyTests.cpp
     SmokeTests.cpp
     TestEncoders.cpp
     TestEncoders.hpp

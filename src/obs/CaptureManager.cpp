@@ -155,6 +155,7 @@ void CaptureManager::onSceneCollectionCleanup()
 	savedNames_.clear();
 	foreignSettings_ = nullptr;
 	lifecycle_.reset(settings_.startWithOutputs, lifecycle_.streaming(), lifecycle_.recording());
+	library_.unpick();
 }
 
 void CaptureManager::onExit()
@@ -618,6 +619,7 @@ CaptureManager::StartOutcome CaptureManager::start(const std::string &uuid, Entr
 						     settings_.encoderPreferences());
 	}
 	CaptureSettings settings;
+	settings.encoderPreferences = settings_.encoderPreferences();
 	settings.resolution = settings_.resolutionFor(uuid);
 	settings.bufferLength = settings_.lengthFor(uuid);
 	settings.candidates = *candidates;
@@ -625,6 +627,11 @@ CaptureManager::StartOutcome CaptureManager::start(const std::string &uuid, Entr
 		const std::vector<EncoderInfo> encoders = registeredVideoEncoders();
 		for (const std::string &id : failed->second) {
 			settings.candidates = candidatesAfterHevcFailure(settings.candidates, encoders, id);
+		}
+		// A choice whose HEVC failed gives way to its H.264, which the dock says already.
+		if (std::find(failed->second.begin(), failed->second.end(), settings.encoderPreferences.chosen) !=
+		    failed->second.end()) {
+			settings.encoderPreferences.chosen.clear();
 		}
 	}
 	const StartResult result = entry.capture.start(source, settings, keepBuffer);

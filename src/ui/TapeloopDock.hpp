@@ -72,9 +72,11 @@ private:
 	QLabel *followsOutputs_;
 	QPushButton *captureReplay_;
 	QComboBox *tagFilter_;
+	QPushButton *deleteTag_;
 	QListWidget *replays_;
 	QLineEdit *tagName_;
 	QPushButton *addTag_;
+	QPushButton *removeTag_;
 	// The ids the replay list shows, newest first, zero for the rows naming a broadcast,
 	// and the text and tooltip of each.
 	std::vector<uint64_t> shownReplays_;

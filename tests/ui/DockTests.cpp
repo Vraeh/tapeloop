@@ -15,6 +15,7 @@
 #include <QKeyEvent>
 #include <QLabel>
 #include <QLineEdit>
+#include <QMessageBox>
 #include <QCheckBox>
 #include <QComboBox>
 #include <QDialog>
@@ -31,6 +32,7 @@
 #include <initializer_list>
 #include <set>
 #include <string>
+#include <utility>
 
 using namespace std::chrono_literals;
 using tapeloop::BufferSettings;
@@ -130,8 +132,9 @@ TEST_CASE("the advanced settings choose the replay encoder and whether other car
 	CHECK_FALSE(settings->isVisible());
 	advanced->setChecked(true);
 	CHECK(settings->isVisible());
-	// Showing them is not a change of the settings.
-	CHECK(backend.settingsChanges == 0);
+	// The switch is saved with the settings.
+	CHECK(backend.current.showAdvanced);
+	CHECK(backend.settingsChanges == 1);
 
 	auto *encoder = child<QComboBox>(dock, "replayEncoder");
 	REQUIRE(encoder->count() == 3);
@@ -169,6 +172,16 @@ TEST_CASE("the advanced settings choose the replay encoder and whether other car
 	dock.refresh();
 	CHECK(encoder->count() == 4);
 	CHECK(encoder->currentText() == "QuickSync H.264");
+
+	// The switch follows the settings, as after a scene collection switch.
+	backend.current.showAdvanced = false;
+	dock.refresh();
+	CHECK_FALSE(advanced->isChecked());
+	CHECK_FALSE(settings->isVisible());
+	backend.current.showAdvanced = true;
+	dock.refresh();
+	CHECK(advanced->isChecked());
+	CHECK(settings->isVisible());
 
 	// Tab goes through the advanced settings in the order they show.
 	const auto nextFocus = [](QWidget *from) {
@@ -230,6 +243,57 @@ TEST_CASE("a source on an encoder path that is not the optimal one says so")
 	CHECK(table->item(0, 1)->toolTip().contains("x264"));
 	CHECK(table->item(0, 1)->toolTip().contains("\n\n"));
 
+	// A source read back through memory says why, in plain words.
+	const std::pair<tapeloop::ReadbackReason, const char *> reasons[] = {
+		{tapeloop::ReadbackReason::OtherAdapter, "another graphics card"},
+		{tapeloop::ReadbackReason::NoTextureInput, "cannot take OBS's textures"},
+		{tapeloop::ReadbackReason::NoTextures, "with this graphics card or renderer"},
+	};
+	for (const auto &[reason, words] : reasons) {
+		backend.shown[1].readbackReason = reason;
+		dock.refresh();
+		const QString note = table->item(1, 1)->toolTip();
+		CHECK(note.contains(words));
+		CHECK(note.contains("read back through memory"));
+		CHECK_FALSE(note.contains("NV12"));
+	}
+
+	// Without a reason, as no capture gives, it says no more than it knows.
+	backend.shown[1].readbackReason = tapeloop::ReadbackReason::None;
+	dock.refresh();
+	CHECK(table->item(1, 1)->toolTip() == localeText()("Dock.Status.Readback.Tooltip"));
+
+	// An encoder chosen in the advanced settings on another card explains the path it
+	// takes; one OBS gives no textures, or that takes none, would read back in the
+	// automatic order too.
+	const QString chosenNote = localeText()("Dock.Status.ReadbackChosen.Tooltip");
+	backend.shown[1].chosenEncoder = true;
+	for (const auto &[reason, words] : reasons) {
+		backend.shown[1].readbackReason = reason;
+		dock.refresh();
+		CAPTURE(words);
+		CHECK(table->item(1, 1)->toolTip().endsWith(chosenNote) ==
+		      (reason == tapeloop::ReadbackReason::OtherAdapter));
+	}
+	backend.shown[0].chosenEncoder = true;
+	dock.refresh();
+	CHECK(table->item(0, 1)->toolTip().contains(localeText()("Dock.Status.SoftwareChosen.Tooltip")));
+	CHECK_FALSE(table->item(0, 1)->toolTip().contains("no hardware encoder could take it"));
+	CHECK_FALSE(table->item(0, 1)->toolTip().contains(chosenNote));
+	backend.shown[0].chosenEncoder = false;
+	backend.shown[1].chosenEncoder = false;
+
+	// A choice that could not start, whatever path the encoder after it takes.
+	backend.shown[2].choiceSkipped = true;
+	dock.refresh();
+	CHECK_FALSE(table->item(2, 1)->icon().isNull());
+	CHECK(table->item(2, 1)->toolTip() == localeText()("Dock.Status.ChoiceSkipped.Tooltip"));
+	backend.shown[2].state = SourceState::Failed;
+	dock.refresh();
+	CHECK(table->item(2, 1)->toolTip().isEmpty());
+	backend.shown[2].state = SourceState::Running;
+	backend.shown[2].choiceSkipped = false;
+
 	// A buffer that is stopped, failed or waiting has no encoder at work to speak of, and
 	// an unselected source no buffer.
 	for (const SourceState state : {SourceState::Stopped, SourceState::Failed, SourceState::Waiting}) {
@@ -241,6 +305,69 @@ TEST_CASE("a source on an encoder path that is not the optimal one says so")
 	backend.current.sources[backend.shown[1].uuid].selected = false;
 	dock.refresh();
 	CHECK(table->item(1, 1)->toolTip().isEmpty());
+}
+
+TEST_CASE("a tag comes off the selected replay, and a deleted one off every replay")
+{
+	FakeBackend backend = backendWithSources();
+	backend.captureReplay();
+	backend.captureReplay();
+	REQUIRE(backend.tagReplay(1, "goal"));
+	REQUIRE(backend.tagReplay(2, "goal"));
+	REQUIRE(backend.tagReplay(2, "save"));
+	TapeloopDock dock(backend, localeText());
+	auto *list = child<QListWidget>(dock, "replays");
+	auto *name = child<QLineEdit>(dock, "tagName");
+	auto *filter = child<QComboBox>(dock, "tagFilter");
+	auto *remove = child<QPushButton>(dock, "removeTag");
+	auto *erase = child<QPushButton>(dock, "deleteTag");
+	REQUIRE(backend.picked == 2u);
+	REQUIRE(list->count() == 2);
+	CHECK(remove->isEnabled());
+
+	// Off the selected replay only.
+	name->setText("goal");
+	remove->click();
+	CHECK(name->text().isEmpty());
+	CHECK(backend.captured[0].tags == std::vector<std::string>{"save"});
+	CHECK(backend.captured[1].tags == std::vector<std::string>{"goal"});
+	CHECK_FALSE(list->item(0)->text().contains("#goal"));
+	// A tag it does not carry stays typed, to be fixed.
+	name->setText("foul");
+	remove->click();
+	CHECK(name->text() == "foul");
+
+	// Deleting needs a tag to filter by, and takes it off every replay.
+	CHECK_FALSE(erase->isEnabled());
+	filter->setCurrentIndex(filter->findData("goal"));
+	REQUIRE(list->count() == 1);
+	CHECK(erase->isEnabled());
+	// It asks first, and No keeps the tag.
+	const auto answer = [&](QMessageBox::StandardButton button) {
+		erase->click();
+		auto *question = dock.findChild<QMessageBox *>("deleteTagQuestion");
+		REQUIRE(question);
+		CHECK(question->text().contains("#goal"));
+		question->button(button)->click();
+		QCoreApplication::processEvents();
+	};
+	answer(QMessageBox::No);
+	CHECK(backend.tags == std::vector<std::string>{"goal", "save"});
+	CHECK(backend.captured[1].tags == std::vector<std::string>{"goal"});
+	answer(QMessageBox::Yes);
+	CHECK(backend.tags == std::vector<std::string>{"save"});
+	CHECK(backend.captured[1].tags.empty());
+	CHECK(filter->currentIndex() == 0);
+	CHECK(filter->findData("goal") == -1);
+	CHECK(list->count() == 2);
+	CHECK_FALSE(erase->isEnabled());
+
+	// A replay the filter hides takes no tag off.
+	filter->setCurrentIndex(filter->findData("save"));
+	list->setCurrentRow(-1);
+	backend.picked = 1;
+	dock.refresh();
+	CHECK_FALSE(remove->isEnabled());
 }
 
 TEST_CASE("the dock captures replays and picks the one that goes on air")
@@ -815,7 +942,7 @@ TEST_CASE("every control of the dock can be reached with the keyboard")
 		CAPTURE(widget->objectName().toStdString());
 		CHECK((widget->focusPolicy() & Qt::TabFocus) != 0);
 	}
-	CHECK(controls == 16);
+	CHECK(controls == 18);
 }
 
 TEST_CASE("every string the dock asks for is in the locale file")

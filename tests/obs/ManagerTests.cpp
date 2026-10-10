@@ -403,6 +403,54 @@ TEST_CASE_METHOD(ObsFixture, "a source too small to start is retried", "[obs][ma
 	CHECK(manager.status(uuid).stats.state == CaptureState::Running);
 }
 
+TEST_CASE_METHOD(ObsFixture, "a buffer whose chosen encoder cannot start says so", "[obs][manager]")
+{
+	// The NVENC stand-ins refuse to start until a test enables them, as NVENC does
+	// without its driver.
+	OBSSourceAutoRelease pattern = createTestPattern(320, 180, "Pattern");
+	const std::string uuid = uuidOf(pattern);
+	FakeHost host;
+	CaptureManager manager(host);
+	tapeloop::obs::ManagerDockBackend backend(manager);
+	BufferSettings settings = selecting(uuid);
+	settings.startWithOutputs = false;
+	settings.replayEncoder = tapeloop::test::kNvencH264Id;
+	manager.setSettings(settings);
+	LogCounter said("the encoder chosen for replays, could not start");
+	REQUIRE(manager.manualStart());
+	const tapeloop::obs::CaptureStats stats = manager.status(uuid).stats;
+	CHECK(stats.state == CaptureState::Running);
+	CHECK(stats.encoderId != tapeloop::test::kNvencH264Id);
+	CHECK(stats.choiceSkipped);
+	CHECK(said.lines == 1);
+	const std::vector<tapeloop::ui::DockSource> sources = backend.sources();
+	const auto source = std::find_if(sources.begin(), sources.end(),
+					 [&](const tapeloop::ui::DockSource &listed) { return listed.uuid == uuid; });
+	REQUIRE(source != sources.end());
+	CHECK(source->choiceSkipped);
+	CHECK_FALSE(source->chosenEncoder);
+	REQUIRE(manager.manualStop());
+
+	// A choice OBS does not offer, as QuickSync with the iGPU turned off, says so too.
+	LogCounter unavailable("the encoder chosen for replays, is not available");
+	settings.replayEncoder = "obs_qsv11_v2";
+	manager.setSettings(settings);
+	REQUIRE(manager.manualStart());
+	CHECK(manager.status(uuid).stats.state == CaptureState::Running);
+	CHECK(manager.status(uuid).stats.choiceSkipped);
+	CHECK(unavailable.lines == 1);
+	REQUIRE(manager.manualStop());
+
+	// The automatic order has no choice to skip.
+	settings.replayEncoder.clear();
+	manager.setSettings(settings);
+	REQUIRE(manager.manualStart());
+	CHECK_FALSE(manager.status(uuid).stats.choiceSkipped);
+	CHECK(said.lines == 1);
+	CHECK(unavailable.lines == 1);
+	manager.manualStop();
+}
+
 // A manager capturing one test pattern with the given encoder, running with two GOPs.
 struct NvencCapture {
 	OBSSourceAutoRelease pattern = createTestPattern(320, 180, "Pattern");
@@ -463,6 +511,13 @@ TEST_CASE_METHOD(ObsFixture, "a source whose HEVC encoder fails uses that vendor
 	});
 	REQUIRE(row != rows.end());
 	CHECK(row->hevcFailed);
+	// The choice gave way to its H.264, which the note of the failure says, so it is not
+	// a choice that could not start.
+	CHECK_FALSE(row->choiceSkipped);
+	// The stand-ins take no textures, which the dock hears of as the capture says.
+	CHECK(row->encoderPath == tapeloop::EncoderPath::Readback);
+	CHECK(row->readbackReason == capture.manager.status(capture.uuid).stats.readbackReason);
+	CHECK(row->readbackReason != tapeloop::ReadbackReason::None);
 
 	// An encoder chosen after the failure is the one that starts.
 	capture.settings.replayEncoder = "obs_x264";
@@ -1497,7 +1552,7 @@ TEST_CASE_METHOD(ObsFixture, "replays and their tags are read back after OBS sta
 		manager.finishWrites();
 		CHECK(manager.tagReplay(foul, "Foul"));
 		CHECK(manager.tagReplay(foul, "Penalty"));
-		CHECK(manager.untagReplay(foul, "Penalty"));
+		CHECK(tapeloop::obs::ManagerDockBackend(manager).untagReplay(foul, "Penalty"));
 		captured = {manager.library().find(goal)->uuid, manager.library().find(foul)->uuid};
 		manager.onExit();
 	}
@@ -1520,8 +1575,8 @@ TEST_CASE_METHOD(ObsFixture, "replays and their tags are read back after OBS sta
 	}
 	CHECK(manager.library().tags().size() == 2);
 
-	// Deleting a tag reaches the replays on disk.
-	CHECK(manager.deleteReplayTag("goal"));
+	// Deleting a tag, from the dock, reaches the replays on disk.
+	CHECK(tapeloop::obs::ManagerDockBackend(manager).deleteTag("goal"));
 	manager.finishWrites();
 	CaptureManager again(host);
 	again.loadLibrary();
@@ -1625,6 +1680,37 @@ TEST_CASE_METHOD(ObsFixture, "a broadcast is named when the buffers start", "[ob
 	REQUIRE(manager.manualStart());
 	CHECK(tapeloop::utf8FromPath(manager.broadcastFolder().filename()).starts_with("Copa 20"));
 	manager.manualStop();
+}
+
+TEST_CASE_METHOD(ObsFixture, "a collection switch keeps the replays and drops the pick", "[obs][manager][replay]")
+{
+	OBSSourceAutoRelease pattern = createTestPattern(320, 180, "Pattern");
+	const std::string uuid = uuidOf(pattern);
+	FakeHost host;
+	CaptureManager manager(host);
+	BufferSettings settings = selecting(uuid);
+	settings.startWithOutputs = false;
+	manager.setSettings(settings);
+	REQUIRE(manager.manualStart());
+	REQUIRE(waitFor([&] { return hasGops(manager, uuid, 2); }, 60s));
+	const uint64_t first = manager.captureReplay();
+	const uint64_t second = manager.captureReplay();
+	REQUIRE(first != 0);
+	REQUIRE(second != 0);
+	REQUIRE(manager.tagReplay(first, "Goal"));
+	REQUIRE(manager.pickReplay(first));
+	REQUIRE(manager.library().current() == first);
+
+	manager.onSceneCollectionCleanup();
+	manager.finishWrites();
+	CHECK(manager.library().list() == std::vector<uint64_t>{second, first});
+	CHECK(manager.library().list("Goal") == std::vector<uint64_t>{first});
+	CHECK_FALSE(manager.library().picked());
+	CHECK(manager.library().current() == second);
+	// The next collection picks among them as before.
+	manager.setSettings(settings);
+	CHECK(manager.pickReplay(first));
+	CHECK(manager.library().current() == first);
 }
 
 TEST_CASE_METHOD(ObsFixture, "a collection switched while streaming starts a new broadcast", "[obs][manager][replay]")
@@ -1794,6 +1880,18 @@ TEST_CASE_METHOD(ObsFixture, "captures that pile up on a slow disk say so once",
 	CHECK(behind.lines == 2);
 	manager.finishWrites();
 	manager.manualStop();
+}
+
+TEST_CASE("the advanced switch is saved with the settings", "[obs][manager]")
+{
+	BufferSettings settings;
+	settings.showAdvanced = true;
+	OBSDataAutoRelease data = createSettingsData(tapeloop::saveSettings(settings));
+	CHECK(obs_data_get_bool(data, "show_advanced"));
+	CHECK(readSettingsData(data).showAdvanced);
+	// Settings saved before it hide the advanced settings, as the switch did.
+	obs_data_erase(data, "show_advanced");
+	CHECK_FALSE(readSettingsData(data).showAdvanced);
 }
 
 TEST_CASE("settings saved before the other-adapter setting allow other adapters", "[obs][manager]")

@@ -2,11 +2,13 @@
 // Copyright (C) 2026 Vicente Aedo <ryde1337@gmail.com>
 
 #include "ClipDecoder.hpp"
+#include "LogCounter.hpp"
 #include "ObsFixture.hpp"
 #include "TestEncoders.hpp"
 #include "TestPattern.hpp"
 
 #include "obs/CaptureOutput.hpp"
+#include "obs/ObsEncoders.hpp"
 #include "obs/SourceCapture.hpp"
 
 #include <catch2/catch_test_macros.hpp>
@@ -27,12 +29,14 @@ using tapeloop::Clip;
 using tapeloop::EncoderInfo;
 using tapeloop::FrameSize;
 using tapeloop::Nanoseconds;
+using tapeloop::ReadbackReason;
 using tapeloop::Vendor;
 using tapeloop::obs::CaptureSettings;
 using tapeloop::obs::CaptureState;
 using tapeloop::obs::SourceCapture;
 using tapeloop::obs::StartResult;
 using tapeloop::test::createTestPattern;
+using tapeloop::test::LogCounter;
 using tapeloop::test::ObsFixture;
 using tapeloop::test::waitFor;
 
@@ -373,6 +377,7 @@ TEST_CASE_METHOD(ObsFixture, "a capture reports the path its encoder takes the f
 	settings.candidates = {failing, testEncoder("obs_x264")};
 	REQUIRE(capture.start(pattern, settings) == StartResult::Started);
 	CHECK(capture.stats().encoderPath == tapeloop::EncoderPath::Software);
+	CHECK(capture.stats().readbackReason == ReadbackReason::None);
 	capture.stop();
 	CHECK(capture.stats().encoderPath == tapeloop::EncoderPath::Texture);
 
@@ -385,17 +390,69 @@ TEST_CASE_METHOD(ObsFixture, "a capture reports the path its encoder takes the f
 	texture.vendor = Vendor::Nvidia;
 	texture.passTexture = true;
 	settings.candidates = {texture};
+	LogCounter noTextures("but OBS cannot hand it textures with this graphics card or renderer");
 	REQUIRE(capture.start(pattern, settings) == StartResult::Started);
 	CHECK(capture.stats().encoderPath == (nv12 ? tapeloop::EncoderPath::Texture : tapeloop::EncoderPath::Readback));
+	CHECK(capture.stats().readbackReason == (nv12 ? ReadbackReason::None : ReadbackReason::NoTextures));
+	CHECK(noTextures.lines == (nv12 ? 0 : 1));
 	REQUIRE(waitFor([&] { return hasGops(capture, 2); }, 60s));
 	capture.stop();
+	CHECK(capture.stats().readbackReason == ReadbackReason::None);
 
-	// As QuickSync on another adapter than the one OBS renders on.
+	// As QuickSync on another adapter than the one OBS renders on, or without its texture
+	// path; which of the two, the render adapter decides.
 	EncoderInfo readback = testEncoder(tapeloop::test::kHevcEncoderId, "hevc");
 	readback.vendor = Vendor::Intel;
 	settings.candidates = {readback};
+	const ReadbackReason expected =
+		tapeloop::readbackReasonOf(readback, tapeloop::obs::renderAdapterVendor(), false);
+	REQUIRE(expected != ReadbackReason::None);
+	LogCounter said(expected == ReadbackReason::OtherAdapter ? "which runs on another graphics card"
+								 : "which cannot take OBS's textures");
 	REQUIRE(capture.start(pattern, settings) == StartResult::Started);
 	CHECK(capture.stats().encoderPath == tapeloop::EncoderPath::Readback);
+	CHECK(capture.stats().readbackReason == expected);
+	CHECK(said.lines == 1);
+	capture.stop();
+}
+
+TEST_CASE_METHOD(ObsFixture, "a capture says when the encoder chosen for it could not start", "[obs][capture]")
+{
+	OBSSourceAutoRelease pattern = createTestPattern(640, 360);
+	SourceCapture capture;
+	CaptureSettings settings;
+	settings.encoderPreferences.chosen = tapeloop::test::kFailingEncoderId;
+	settings.candidates = {testEncoder(tapeloop::test::kFailingEncoderId), testEncoder("obs_x264")};
+	LogCounter said("the encoder chosen for replays, could not start");
+	REQUIRE(capture.start(pattern, settings) == StartResult::Started);
+	CHECK(capture.stats().encoderId == "obs_x264");
+	CHECK(capture.stats().choiceSkipped);
+	CHECK_FALSE(capture.stats().chosenEncoder);
+	CHECK(said.lines == 1);
+	capture.stop();
+	CHECK_FALSE(capture.stats().choiceSkipped);
+
+	settings.encoderPreferences.chosen = "obs_x264";
+	settings.candidates = {testEncoder("obs_x264")};
+	LogCounter chosenX264("on the CPU, the encoder chosen for replays");
+	LogCounter noHardware("because no hardware encoder could take it");
+	REQUIRE(capture.start(pattern, settings) == StartResult::Started);
+	CHECK(capture.stats().chosenEncoder);
+	CHECK(chosenX264.lines == 1);
+	CHECK(noHardware.lines == 0);
+	CHECK_FALSE(capture.stats().choiceSkipped);
+	capture.stop();
+	CHECK_FALSE(capture.stats().chosenEncoder);
+
+	// A choice the candidates leave out, as one OBS does not offer, was not tried, and
+	// says so.
+	LogCounter unavailable("the encoder chosen for replays, is not available");
+	settings.encoderPreferences.chosen = tapeloop::test::kNvencHevcId;
+	REQUIRE(capture.start(pattern, settings) == StartResult::Started);
+	CHECK(capture.stats().choiceSkipped);
+	CHECK_FALSE(capture.stats().chosenEncoder);
+	CHECK(said.lines == 1);
+	CHECK(unavailable.lines == 1);
 	capture.stop();
 }
 

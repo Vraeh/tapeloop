@@ -75,7 +75,8 @@ public:
 	void onStreaming(bool active);
 	void onRecording(bool active);
 	// The scene collection is being cleared: every capture stops, every buffer goes and
-	// no source reference is kept, so that the frontend can free them all.
+	// no source reference is kept, so that the frontend can free them all. The replays
+	// stay, but none stays picked: the pick was made for the collection that goes.
 	void onSceneCollectionCleanup();
 	void onExit();
 
