@@ -65,8 +65,8 @@ struct EncoderPreferences {
 	// Try each vendor's HEVC encoder before its H.264 one. HEVC gives the same picture at
 	// a lower bitrate, so less memory per buffer and less disk per replay.
 	bool preferHevc = true;
-	// An encoder the user chose, tried before all others whatever its codec; empty for
-	// the automatic order alone.
+	// An encoder the user chose, tried before all others when it is one of the
+	// replayEncoderChoices; empty for the automatic order alone.
 	std::string chosen;
 	// Hardware encoders of another vendor than the adapter OBS renders on, whose frames
 	// travel through memory. Without them the automatic order goes from the render
@@ -82,7 +82,10 @@ struct EncoderPreferences {
 // order is the fixed one: NVIDIA, Intel and AMD texture encoders, VideoToolbox, x264.
 // Only H.264 encoders qualify, and HEVC ones when preferred; never deprecated or
 // internal ones, nor those of an Unknown vendor. Between equals the first listed
-// comes first.
+// comes first. Without other adapters, hardware encoders of another vendor than a hardware
+// render vendor are left out. An encoder the user chose goes before all of them, even
+// one this order leaves out, as long as OBS neither hides nor deprecates it and a replay
+// can hold what it encodes.
 std::vector<EncoderInfo> replayEncoderCandidates(std::span<const EncoderInfo> encoders, Vendor renderVendor,
 						 const EncoderPreferences &preferences);
 

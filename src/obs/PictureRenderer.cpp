@@ -210,17 +210,16 @@ bool PictureRenderer::drawNv12(gs_texture_t *luma, gs_texture_t *chroma, const d
 void PictureRenderer::drawPlanes(decode::PixelLayout layout, const std::array<gs_texture_t *, 3> &planes,
 				 uint32_t lumaWidth, uint32_t width, uint32_t height) noexcept
 {
-	gs_effect_set_texture(gs_effect_get_param_by_name(effect_, "luma"), planes[0]);
-	gs_effect_set_texture(gs_effect_get_param_by_name(effect_, "chroma"), planes[1]);
-	gs_effect_set_texture(gs_effect_get_param_by_name(effect_, "chroma_v"), planes[2]);
-	gs_effect_set_vec4(gs_effect_get_param_by_name(effect_, "to_rgb_r"), &toRgb_[0]);
-	gs_effect_set_vec4(gs_effect_get_param_by_name(effect_, "to_rgb_g"), &toRgb_[1]);
-	gs_effect_set_vec4(gs_effect_get_param_by_name(effect_, "to_rgb_b"), &toRgb_[2]);
-	gs_effect_set_vec3(gs_effect_get_param_by_name(effect_, "range_min"), &rangeMin_);
-	gs_effect_set_vec3(gs_effect_get_param_by_name(effect_, "range_max"), &rangeMax_);
+	gs_effect_set_texture(params_.luma, planes[0]);
+	gs_effect_set_texture(params_.chroma, planes[1]);
+	gs_effect_set_texture(params_.chromaV, planes[2]);
+	for (size_t row = 0; row < params_.toRgb.size(); ++row) {
+		gs_effect_set_vec4(params_.toRgb[row], &toRgb_[row]);
+	}
+	gs_effect_set_vec3(params_.rangeMin, &rangeMin_);
+	gs_effect_set_vec3(params_.rangeMax, &rangeMax_);
 	// Half a luma sample, in texture coordinates.
-	gs_effect_set_float(gs_effect_get_param_by_name(effect_, "chroma_shift"),
-			    lumaWidth ? 0.5f / static_cast<float>(lumaWidth) : 0.0f);
+	gs_effect_set_float(params_.chromaShift, lumaWidth ? 0.5f / static_cast<float>(lumaWidth) : 0.0f);
 
 	// As OBS draws its own asynchronous sources: in linear light when asked to or when the
 	// canvas is not plain sRGB, as a 16-bit SDR one is, with the framebuffer encoding it
@@ -262,6 +261,17 @@ bool PictureRenderer::makeEffect() noexcept
 		     error ? error : "no reason given");
 	}
 	bfree(error);
+	if (effect_) {
+		params_.luma = gs_effect_get_param_by_name(effect_, "luma");
+		params_.chroma = gs_effect_get_param_by_name(effect_, "chroma");
+		params_.chromaV = gs_effect_get_param_by_name(effect_, "chroma_v");
+		params_.toRgb = {gs_effect_get_param_by_name(effect_, "to_rgb_r"),
+				 gs_effect_get_param_by_name(effect_, "to_rgb_g"),
+				 gs_effect_get_param_by_name(effect_, "to_rgb_b")};
+		params_.rangeMin = gs_effect_get_param_by_name(effect_, "range_min");
+		params_.rangeMax = gs_effect_get_param_by_name(effect_, "range_max");
+		params_.chromaShift = gs_effect_get_param_by_name(effect_, "chroma_shift");
+	}
 	return effect_ != nullptr;
 }
 

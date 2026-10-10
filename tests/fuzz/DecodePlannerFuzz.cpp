@@ -101,6 +101,10 @@ extern "C" int LLVMFuzzerTestOneInput(const uint8_t *data, size_t size)
 	auto gopLength = std::make_shared<int64_t>(1);
 	FakeDecoder decoder([gopLength](int64_t pts) { return pts % *gopLength == 0; }, input.byte() % 4);
 	decoder.frameBytes = 1 + input.byte() % 40;
+	// Sometimes frames the decoder never gives, which the planner reports as InvalidData.
+	for (int skips = input.byte() % 8 - 4; skips > 0; --skips) {
+		decoder.dropped.insert(input.byte() % 64);
+	}
 	{
 		DecodePlanner planner(decoder, config);
 		Model model = readClip(input);
@@ -121,13 +125,17 @@ extern "C" int LLVMFuzzerTestOneInput(const uint8_t *data, size_t size)
 				const SyntheticEncoder encoder(encoderConfig(model.gopLength));
 				const DecodeResult result = planner.frameAt(encoder.timeOf(frame));
 				const int64_t shown = std::clamp<int64_t>(frame, 0, model.frames - 1);
+				last = shown;
+				if (decoder.dropped.contains(shown)) {
+					require(result.status == DecodeStatus::InvalidData);
+					break;
+				}
 				require(result.status == DecodeStatus::Ok);
 				require(result.frame.pts == shown);
 				require(decoder.made.at(result.frame.id).pts == shown);
 				const FakeDecoder::Session &session = decoder.sessionOf(result.frame.id);
 				require(session.codec == model.codecOfFrame[static_cast<size_t>(shown)]);
 				require(session.config == model.configOfFrame[static_cast<size_t>(shown)]);
-				last = shown;
 				break;
 			}
 			case 3:
@@ -138,8 +146,10 @@ extern "C" int LLVMFuzzerTestOneInput(const uint8_t *data, size_t size)
 				// A decoder that cannot open leaves the planner able to go on afterwards.
 				decoder.openStatus = DecodeStatus::Unsupported;
 				const SyntheticEncoder encoder(encoderConfig(model.gopLength));
-				const DecodeResult result = planner.frameAt(encoder.timeOf(input.byte() % 64));
-				require(result.status == DecodeStatus::Ok ||
+				const int64_t frame = input.byte() % 64;
+				const DecodeResult result = planner.frameAt(encoder.timeOf(frame));
+				const bool skipped = decoder.dropped.contains(std::min(frame, model.frames - 1));
+				require(result.status == (skipped ? DecodeStatus::InvalidData : DecodeStatus::Ok) ||
 					result.status == DecodeStatus::Unsupported);
 				decoder.openStatus = DecodeStatus::Ok;
 				break;
