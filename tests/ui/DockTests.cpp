@@ -186,7 +186,9 @@ TEST_CASE("the advanced settings choose the replay encoder and whether other car
 	// Tab goes through the advanced settings in the order they show.
 	const auto nextFocus = [](QWidget *from) {
 		QWidget *next = from->nextInFocusChain();
-		while (next != from && (!(next->focusPolicy() & Qt::TabFocus) || next->objectName().isEmpty())) {
+		// Qt's own parts, as a spin box's line edit, come after their control.
+		while (next != from && (!(next->focusPolicy() & Qt::TabFocus) || next->objectName().isEmpty() ||
+					next->objectName().startsWith("qt_"))) {
 			next = next->nextInFocusChain();
 		}
 		return next->objectName();
@@ -194,7 +196,40 @@ TEST_CASE("the advanced settings choose the replay encoder and whether other car
 	CHECK(nextFocus(advanced) == "replayEncoder");
 	CHECK(nextFocus(encoder) == "otherAdapters");
 	CHECK(nextFocus(otherAdapters) == "forceH264");
-	CHECK(nextFocus(forceH264) == "startStop");
+	CHECK(nextFocus(forceH264) == "bufferMemory");
+	CHECK(nextFocus(child<QSpinBox>(dock, "bufferMemory")) == "startStop");
+}
+
+TEST_CASE("the advanced settings set the memory the buffers may use")
+{
+	FakeBackend backend = backendWithSources();
+	backend.current.showAdvanced = true;
+	TapeloopDock dock(backend, localeText());
+	dock.show();
+	auto *memory = child<QSpinBox>(dock, "bufferMemory");
+	auto *warning = child<QLabel>(dock, "memoryWarning");
+	// Automatic until set, and it says how much that is: a quarter of the computer's.
+	CHECK(memory->value() == 0);
+	CHECK(memory->text() == localeText()("Dock.BufferMemory.Automatic").arg(4096));
+	CHECK(memory->maximum() == 16384);
+	CHECK_FALSE(warning->isVisible());
+
+	memory->setValue(6144);
+	CHECK(backend.current.bufferMemoryMiB == 6144);
+	CHECK_FALSE(warning->isVisible());
+	// Above half of the computer's memory it warns.
+	memory->setValue(9000);
+	CHECK(backend.current.bufferMemoryMiB == 9000);
+	CHECK(warning->isVisible());
+	memory->setValue(0);
+	CHECK(backend.current.bufferMemoryMiB == 0);
+	CHECK_FALSE(warning->isVisible());
+
+	// With the computer's memory unknown, automatic sets no limit.
+	backend.memory = 0;
+	dock.refresh();
+	CHECK(memory->text() == localeText()("Dock.BufferMemory.AutomaticUnknown"));
+	CHECK_FALSE(warning->isVisible());
 }
 
 TEST_CASE("the encoder list holds still while it is open")
@@ -948,7 +983,7 @@ TEST_CASE("every control of the dock can be reached with the keyboard")
 		CAPTURE(widget->objectName().toStdString());
 		CHECK((widget->focusPolicy() & Qt::TabFocus) != 0);
 	}
-	CHECK(controls == 18);
+	CHECK(controls == 19);
 }
 
 TEST_CASE("every string the dock asks for is in the locale file")

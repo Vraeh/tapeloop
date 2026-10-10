@@ -27,6 +27,7 @@ public:
 	// The broadcast the next capture belongs to.
 	std::string capturing;
 	std::vector<std::string> tags;
+	uint64_t memory = uint64_t{16} << 30;
 	std::vector<tapeloop::ui::EncoderChoice> choices = {{"obs_nvenc_hevc_tex", "NVIDIA NVENC HEVC"},
 							    {"obs_x264", "x264"}};
 
@@ -77,6 +78,7 @@ public:
 		return listed;
 	}
 	std::vector<std::string> replayTags() const override { return tags; }
+	uint64_t physicalMemory() const override { return memory; }
 	bool tagReplay(uint64_t id, const std::string &tag) override
 	{
 		for (auto &replay : captured) {

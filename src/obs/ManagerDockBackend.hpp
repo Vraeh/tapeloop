@@ -25,6 +25,7 @@ public:
 	uint64_t captureReplay() override { return manager_.captureReplay(); }
 	std::vector<ui::DockReplay> replays(const std::string &tag = {}) const override;
 	std::vector<std::string> replayTags() const override;
+	uint64_t physicalMemory() const override { return manager_.physicalMemory(); }
 	bool tagReplay(uint64_t id, const std::string &tag) override { return manager_.tagReplay(id, tag); }
 	bool untagReplay(uint64_t id, const std::string &tag) override { return manager_.untagReplay(id, tag); }
 	bool deleteTag(const std::string &tag) override { return manager_.deleteReplayTag(tag); }

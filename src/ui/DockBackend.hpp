@@ -77,6 +77,8 @@ public:
 	virtual BufferSettings settings() const = 0;
 	virtual void setSettings(const BufferSettings &settings) = 0;
 	virtual std::vector<EncoderChoice> encoderChoices() const = 0;
+	// The computer's memory in bytes, zero when it cannot be read.
+	virtual uint64_t physicalMemory() const = 0;
 
 	virtual bool running() const = 0;
 	virtual bool manualControlEnabled() const = 0;
