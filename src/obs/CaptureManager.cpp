@@ -29,6 +29,9 @@ namespace {
 
 // The folder of every broadcast, inside OBS's recording folder.
 constexpr std::string_view kReplayFolder = "Tapeloop";
+// How many jobs may wait for the store before the log says the disk falls behind: a
+// capture keeps its GOPs in memory until it is written, whatever the buffers drop.
+constexpr size_t kStoreBacklogWarning = 3;
 
 bool addInput(void *param, obs_source_t *source) noexcept
 {
@@ -346,6 +349,16 @@ uint64_t CaptureManager::captureReplay()
 		     static_cast<unsigned long long>(id));
 		library_.notSaved(id, "it could not be handed to the writer");
 		throw;
+	}
+	const size_t backlog = store_.pending();
+	if (backlog < kStoreBacklogWarning) {
+		backlogLogged_ = false;
+	} else if (!backlogLogged_) {
+		blog(LOG_WARNING,
+		     "[tapeloop] The disk falls behind: %zu replays, tag edits or scans wait for the writer, "
+		     "and every replay waiting keeps its footage in memory",
+		     backlog);
+		backlogLogged_ = true;
 	}
 	return id;
 }

@@ -1562,6 +1562,58 @@ TEST_CASE_METHOD(ObsFixture, "a tag that cannot be written says so in the log", 
 	manager.manualStop();
 }
 
+TEST_CASE_METHOD(ObsFixture, "captures the store keeps up with say nothing of the disk", "[obs][manager][replay]")
+{
+	OBSSourceAutoRelease pattern = createTestPattern(320, 180, "Pattern");
+	const std::string uuid = uuidOf(pattern);
+	FakeHost host;
+	CaptureManager manager(host);
+	BufferSettings settings = selecting(uuid);
+	settings.startWithOutputs = false;
+	manager.setSettings(settings);
+	REQUIRE(manager.manualStart());
+	REQUIRE(waitFor([&] { return hasGops(manager, uuid, 2); }, 60s));
+
+	LogCounter behind("The disk falls behind");
+	for (int capture = 0; capture < 4; ++capture) {
+		CHECK(manager.captureReplay() != 0);
+		manager.finishWrites();
+	}
+	CHECK(behind.lines == 0);
+	manager.manualStop();
+}
+
+// A disk slow enough for the store to fall behind cannot be made from a test. Run with
+// every fsync slowed down, as under strace -f -e trace=none -e inject=fsync:delay_exit=200000.
+TEST_CASE_METHOD(ObsFixture, "captures that pile up on a slow disk say so once", "[.slow-disk]")
+{
+	OBSSourceAutoRelease pattern = createTestPattern(320, 180, "Pattern");
+	const std::string uuid = uuidOf(pattern);
+	FakeHost host;
+	CaptureManager manager(host);
+	BufferSettings settings = selecting(uuid);
+	settings.startWithOutputs = false;
+	manager.setSettings(settings);
+	REQUIRE(manager.manualStart());
+	REQUIRE(waitFor([&] { return hasGops(manager, uuid, 2); }, 60s));
+
+	LogCounter behind("The disk falls behind");
+	for (int capture = 0; capture < 6; ++capture) {
+		manager.captureReplay();
+	}
+	CHECK(behind.lines == 1);
+	manager.finishWrites();
+	manager.captureReplay();
+	manager.finishWrites();
+	CHECK(behind.lines == 1);
+	for (int capture = 0; capture < 6; ++capture) {
+		manager.captureReplay();
+	}
+	CHECK(behind.lines == 2);
+	manager.finishWrites();
+	manager.manualStop();
+}
+
 TEST_CASE("settings saved before the other-adapter setting allow other adapters", "[obs][manager]")
 {
 	OBSDataAutoRelease data = createSettingsData(tapeloop::saveSettings(BufferSettings{}));

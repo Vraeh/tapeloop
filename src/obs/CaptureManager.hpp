@@ -196,6 +196,8 @@ private:
 	// The replay each capture the store is writing belongs to, by ticket.
 	std::map<uint64_t, uint64_t> writing_;
 	bool priorityLogged_ = false;
+	// Whether the log says the store falls behind, until a capture finds it caught up.
+	bool backlogLogged_ = false;
 	ReplayStore store_;
 };
 
