@@ -3,6 +3,8 @@
 
 #include "core/ReplayFormat.hpp"
 
+#include "core/Crc32c.hpp"
+
 #include "../core/SyntheticEncoder.hpp"
 #include "FuzzInput.hpp"
 
@@ -11,6 +13,7 @@
 #include <cstdint>
 #include <memory>
 #include <optional>
+#include <span>
 #include <string>
 #include <vector>
 
@@ -36,6 +39,50 @@ void damage(FuzzInput &input, std::vector<uint8_t> &bytes)
 		const size_t at = static_cast<size_t>(input.u64() % bytes.size());
 		bytes[at] ^= static_cast<uint8_t>(input.byte() | 1);
 	}
+}
+
+uint64_t load64(std::span<const uint8_t> bytes, size_t at)
+{
+	uint64_t value = 0;
+	for (size_t i = 0; i < 8; ++i) {
+		value |= uint64_t{bytes[at + i]} << (8 * i);
+	}
+	return value;
+}
+
+void store32(std::span<uint8_t> bytes, size_t at, uint32_t value)
+{
+	for (size_t i = 0; i < 4; ++i) {
+		bytes[at + i] = static_cast<uint8_t>(value >> (8 * i));
+	}
+}
+
+// Computes the CRCs of a chunk again over what its header and payload hold now, so that
+// damage gets past them to the checks behind; returns the new header CRC.
+uint32_t resealChunk(std::span<uint8_t> chunk)
+{
+	if (chunk.size() < tapeloop::kChunkHeaderSize) {
+		return 0;
+	}
+	const uint64_t payloadSize = std::min<uint64_t>(load64(chunk, 8), chunk.size() - tapeloop::kChunkHeaderSize);
+	store32(chunk, 24, tapeloop::crc32c(chunk.subspan(tapeloop::kChunkHeaderSize, payloadSize)));
+	const uint32_t headerCrc = tapeloop::crc32c(chunk.first(28));
+	store32(chunk, 28, headerCrc);
+	return headerCrc;
+}
+
+// The manifest's header, index chunk and footer CRCs computed again.
+void resealManifest(std::vector<uint8_t> &manifest)
+{
+	const std::span<uint8_t> bytes(manifest);
+	if (bytes.size() < tapeloop::kManifestIndexOffset + tapeloop::kManifestFooterSize) {
+		return;
+	}
+	store32(bytes, 60, tapeloop::crc32c(bytes.first(60)));
+	resealChunk(bytes.subspan(tapeloop::kManifestIndexOffset,
+				  bytes.size() - tapeloop::kManifestIndexOffset - tapeloop::kManifestFooterSize));
+	const std::span<uint8_t> footer = bytes.last(tapeloop::kManifestFooterSize);
+	store32(footer, 60, tapeloop::crc32c(footer.first(60)));
 }
 
 std::vector<std::shared_ptr<const Gop>> readGops(FuzzInput &input, int64_t &frame)
@@ -104,9 +151,12 @@ bool sameIndex(const ReplayIndex &a, const ReplayIndex &b)
 }
 
 // A manifest of real GOP chunks, damaged a little: it either decodes to what was written
-// or is refused, and every GOP it lists reads back or is refused.
+// or is refused, and every GOP it lists reads back or is refused. Resealed, the damage
+// passes the CRCs: the manifest is then refused or decodes to an index of its own, and
+// the GOPs at the places it gives are read the way the reader reads them.
 void writtenThenDamaged(FuzzInput &input)
 {
+	const bool reseal = input.flag();
 	ReplayIndex index;
 	index.capturedAtUtc = static_cast<int64_t>(input.u64());
 	index.capturedAtClock = Nanoseconds{static_cast<int64_t>(input.u64() >> 1)};
@@ -139,21 +189,32 @@ void writtenThenDamaged(FuzzInput &input)
 
 	std::vector<uint8_t> manifest = tapeloop::encodeManifest(index, {});
 	damage(input, manifest);
+	if (reseal) {
+		resealManifest(manifest);
+	}
 	const std::optional<ReplayIndex> read = tapeloop::decodeManifest(manifest);
-	if (read) {
+	if (read && reseal) {
+		const std::optional<ReplayIndex> again = tapeloop::decodeManifest(tapeloop::encodeManifest(*read, {}));
+		require(again && sameIndex(*again, *read));
+	} else if (read) {
 		require(sameIndex(*read, index));
 	}
 	(void)tapeloop::decodeTags(manifest);
 	(void)tapeloop::nextTagWrite(manifest);
 
 	damage(input, segment);
-	for (const StoredSource &source : index.sources) {
+	const ReplayIndex &placed = read && reseal ? *read : index;
+	for (const StoredSource &source : placed.sources) {
 		for (const tapeloop::StoredGop &stored : source.gops) {
-			const std::span<const uint8_t> chunk =
-				std::span<const uint8_t>(segment).subspan(stored.offset, stored.size);
+			if (stored.offset > segment.size() || stored.size > segment.size() - stored.offset) {
+				continue;
+			}
+			const std::span<uint8_t> chunk =
+				std::span<uint8_t>(segment).subspan(stored.offset, stored.size);
+			const uint32_t headerCrc = reseal ? resealChunk(chunk) : stored.headerCrc;
 			const std::shared_ptr<const Gop> gop =
-				tapeloop::decodeGopChunk(chunk, stored.headerCrc, source.runs[stored.run]);
-			if (gop) {
+				tapeloop::decodeGopChunk(chunk, headerCrc, source.runs[stored.run]);
+			if (gop && !reseal) {
 				require(gop->packets().size() == stored.packetCount);
 			}
 			(void)tapeloop::peekGopKey(chunk);
