@@ -87,10 +87,10 @@ private:
 	mutable std::mutex mutex_;
 	std::condition_variable wake_;
 	std::condition_variable idle_;
+	// The job running is the first, until it has finished.
 	std::deque<Job> jobs_;
 	std::list<StoreResult> results_;
 	uint64_t nextTicket_ = 1;
-	size_t running_ = 0;
 	bool stopping_ = false;
 	// 0 until the thread has tried, then 1 when lowered and 2 when not.
 	std::atomic<int> lowPriority_{0};

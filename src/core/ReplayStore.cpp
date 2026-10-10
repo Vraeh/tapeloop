@@ -61,13 +61,13 @@ std::vector<StoreResult> ReplayStore::poll()
 void ReplayStore::waitUntilIdle()
 {
 	std::unique_lock lock(mutex_);
-	idle_.wait(lock, [this] { return jobs_.empty() && running_ == 0; });
+	idle_.wait(lock, [this] { return jobs_.empty(); });
 }
 
 size_t ReplayStore::pending() const
 {
 	const std::lock_guard lock(mutex_);
-	return jobs_.size() + running_;
+	return jobs_.size();
 }
 
 std::optional<bool> ReplayStore::lowPriority() const noexcept
@@ -102,18 +102,18 @@ void ReplayStore::run() noexcept
 		if (jobs_.empty()) {
 			return;
 		}
-		std::optional<Job> job(std::move(jobs_.front()));
-		jobs_.pop_front();
-		++running_;
+		// The job stays at the front while it runs, since moving it out would allocate
+		// with some standard libraries; a deque keeps an element in place while others
+		// are added behind it.
+		Job &job = jobs_.front();
 		const bool stopping = stopping_;
 		lock.unlock();
-		std::list<StoreResult> slot = std::move(job->slot);
-		slot.front() = execute(*job, stopping);
+		job.slot.front() = execute(job, stopping);
 		// The capture's GOPs go outside the lock, and before its result is seen.
-		job.reset();
+		job.capture.sources.clear();
 		lock.lock();
-		results_.splice(results_.end(), slot);
-		--running_;
+		results_.splice(results_.end(), job.slot);
+		jobs_.pop_front();
 		idle_.notify_all();
 	}
 }
@@ -141,7 +141,12 @@ StoreResult ReplayStore::execute(const Job &job, bool stopping) noexcept
 			break;
 		}
 	} catch (const std::exception &e) {
-		result.error = e.what();
+		try {
+			result.error = e.what();
+		} catch (...) {
+			// Short enough for the string's own buffer, so it needs no memory.
+			result.error = "out of memory";
+		}
 		if (result.error.empty()) {
 			result.error = "unknown error";
 		}
