@@ -305,7 +305,11 @@ uint64_t CaptureManager::captureReplay()
 		}
 	}
 	MomentCut cut = cutMoment(sources, now, reach);
-	if (broadcastName_.empty()) {
+	if (cut.moment.clips.empty()) {
+		return 0;
+	}
+	// OBS may have had no recording folder when the buffers started.
+	if (broadcastFolder_.empty()) {
 		nameBroadcast();
 	}
 	const auto capturedAt = std::chrono::system_clock::now();
@@ -352,12 +356,16 @@ void CaptureManager::loadLibrary()
 	if (!base.empty()) {
 		store_.scan(base);
 	}
+	scannedFolder_ = base;
 }
 
 void CaptureManager::finishWrites()
 {
-	store_.waitUntilIdle();
-	takeStoreResults();
+	// Taking in a capture can ask for its tags to be written.
+	do {
+		store_.waitUntilIdle();
+		takeStoreResults();
+	} while (store_.pending() != 0);
 }
 
 bool CaptureManager::tagReplay(uint64_t id, std::string_view tag)
@@ -405,9 +413,13 @@ void CaptureManager::nameBroadcast()
 		broadcastFolderName(host_.sceneCollectionName(), localTimeOf(std::chrono::system_clock::now()));
 	const std::filesystem::path base = replayFolder();
 	broadcastFolder_ = base.empty() ? std::filesystem::path() : base / pathFromUtf8(broadcastName_);
-	if (!base.empty()) {
-		blog(LOG_INFO, "[tapeloop] Replays of these buffers go to '%s'",
-		     utf8FromPath(broadcastFolder_).c_str());
+	if (base.empty()) {
+		return;
+	}
+	blog(LOG_INFO, "[tapeloop] Replays of these buffers go to '%s'", utf8FromPath(broadcastFolder_).c_str());
+	// A recording folder set or changed since OBS loaded has replays of its own.
+	if (base != scannedFolder_) {
+		loadLibrary();
 	}
 }
 

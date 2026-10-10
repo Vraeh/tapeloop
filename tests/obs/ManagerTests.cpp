@@ -1454,6 +1454,114 @@ TEST_CASE_METHOD(ObsFixture, "a broadcast is named when the buffers start", "[ob
 	manager.manualStop();
 }
 
+TEST_CASE_METHOD(ObsFixture, "a collection switched while streaming starts a new broadcast", "[obs][manager][replay]")
+{
+	OBSSourceAutoRelease pattern = createTestPattern(320, 180, "Pattern");
+	FakeHost host;
+	host.streaming = true;
+	CaptureManager manager(host);
+	const BufferSettings settings = selecting(uuidOf(pattern));
+	manager.setSettings(settings);
+	REQUIRE(manager.running());
+	REQUIRE(tapeloop::utf8FromPath(manager.broadcastFolder().filename()).starts_with("F\xC3\xBAtbol_ Liga_2026 20"));
+
+	// The buffers stop with the old collection and start with the new one, while the
+	// stream goes on throughout.
+	host.collection = "Copa";
+	manager.onSceneCollectionCleanup();
+	manager.setSettings(settings);
+	REQUIRE(manager.running());
+	CHECK(tapeloop::utf8FromPath(manager.broadcastFolder().filename()).starts_with("Copa 20"));
+	manager.onStreaming(false);
+}
+
+TEST_CASE_METHOD(ObsFixture, "a recording folder that appears later is used and read", "[obs][manager][replay]")
+{
+	OBSSourceAutoRelease pattern = createTestPattern(320, 180, "Pattern");
+	const std::string uuid = uuidOf(pattern);
+	FakeHost host;
+	// A replay already there from an earlier broadcast.
+	tapeloop::ReplayWriter().write(
+		tapeloop::test::captureOf(host.dir.path() / "Tapeloop" / "Copa 2026-10-01 10-00",
+					  {tapeloop::test::sourceOf("a", tapeloop::test::makeGops(2))}));
+	const std::string folder = host.folder;
+	host.folder.clear();
+	CaptureManager manager(host);
+	manager.loadLibrary();
+	BufferSettings settings = selecting(uuid);
+	settings.startWithOutputs = false;
+	manager.setSettings(settings);
+	REQUIRE(manager.manualStart());
+	CHECK(manager.broadcastFolder().empty());
+	REQUIRE(waitFor([&] { return hasGops(manager, uuid, 2); }, 60s));
+
+	host.folder = folder;
+	const uint64_t id = manager.captureReplay();
+	REQUIRE(id != 0);
+	manager.finishWrites();
+	CHECK(manager.library().find(id)->state == ReplayState::Stored);
+	CHECK(manager.broadcastFolder().parent_path() == host.dir.path() / "Tapeloop");
+	CHECK(manager.library().size() == 2);
+	manager.manualStop();
+}
+
+TEST_CASE_METHOD(ObsFixture, "tags edited while a replay is written reach its file before exit",
+		 "[obs][manager][replay]")
+{
+	OBSSourceAutoRelease pattern = createTestPattern(320, 180, "Pattern");
+	const std::string uuid = uuidOf(pattern);
+	FakeHost host;
+	CaptureManager manager(host);
+	BufferSettings settings = selecting(uuid);
+	settings.startWithOutputs = false;
+	manager.setSettings(settings);
+	REQUIRE(manager.manualStart());
+	REQUIRE(waitFor([&] { return hasGops(manager, uuid, 2); }, 60s));
+	const uint64_t kept = manager.captureReplay();
+	const uint64_t untagged = manager.captureReplay();
+	CHECK(manager.tagReplay(kept, "Goal"));
+	CHECK(manager.tagReplay(kept, "Foul"));
+	CHECK(manager.deleteReplayTag("Foul"));
+	CHECK(manager.tagReplay(untagged, "Save"));
+	CHECK(manager.untagReplay(untagged, "Save"));
+	manager.onExit();
+
+	const auto tagsOf = [&](uint64_t id) {
+		return tapeloop::decodeTags(tapeloop::test::fileBytes(manager.library().find(id)->manifest));
+	};
+	CHECK(tagsOf(kept) == std::vector<std::string>{"Goal"});
+	CHECK(tagsOf(untagged).empty());
+
+	// Read again, the library has each replay once.
+	manager.loadLibrary();
+	manager.finishWrites();
+	CHECK(manager.library().size() == 2);
+}
+
+TEST_CASE_METHOD(ObsFixture, "a tag that cannot be written says so in the log", "[obs][manager][replay]")
+{
+	OBSSourceAutoRelease pattern = createTestPattern(320, 180, "Pattern");
+	const std::string uuid = uuidOf(pattern);
+	FakeHost host;
+	CaptureManager manager(host);
+	BufferSettings settings = selecting(uuid);
+	settings.startWithOutputs = false;
+	manager.setSettings(settings);
+	REQUIRE(manager.manualStart());
+	REQUIRE(waitFor([&] { return hasGops(manager, uuid, 2); }, 60s));
+	const uint64_t id = manager.captureReplay();
+	manager.finishWrites();
+	const fs::path manifest = manager.library().find(id)->manifest;
+	REQUIRE(fs::remove(manifest));
+	fs::create_directory(manifest);
+
+	LogCounter failed("could not be saved");
+	CHECK(manager.tagReplay(id, "Goal"));
+	manager.finishWrites();
+	CHECK(failed.lines == 1);
+	manager.manualStop();
+}
+
 TEST_CASE("settings saved before the other-adapter setting allow other adapters", "[obs][manager]")
 {
 	OBSDataAutoRelease data = createSettingsData(tapeloop::saveSettings(BufferSettings{}));

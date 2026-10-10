@@ -101,7 +101,8 @@ public:
 	// the background into the broadcast folder named when the buffers last started, and
 	// the library keeps only its index. Zero when no buffer holds anything.
 	uint64_t captureReplay();
-	// Reads back, in the background, the replays of every broadcast folder.
+	// Reads back, in the background, the replays of every broadcast folder. Called once
+	// OBS has loaded, and again when buffers start with OBS recording somewhere else.
 	void loadLibrary();
 	// Waits for the replays being written and takes in what became of them.
 	void finishWrites();
@@ -113,8 +114,8 @@ public:
 	bool deleteReplayTag(std::string_view tag);
 	bool pickReplay(uint64_t id) { return library_.pick(id); }
 	// Where the replays of the buffers that run now go: a folder named after the scene
-	// collection and the minute they started, under OBS's recording folder. Empty when OBS
-	// has no recording folder.
+	// collection and the minute they started, under OBS's recording folder. Empty while
+	// OBS has no recording folder; then the first capture after it has one names it.
 	const std::filesystem::path &broadcastFolder() const noexcept { return broadcastFolder_; }
 	// Where every broadcast folder is.
 	std::filesystem::path replayFolder() const;
@@ -190,6 +191,8 @@ private:
 	bool wasRunning_ = false;
 	std::string broadcastName_;
 	std::filesystem::path broadcastFolder_;
+	// The folder of every broadcast the library was last read from.
+	std::filesystem::path scannedFolder_;
 	// The replay each capture the store is writing belongs to, by ticket.
 	std::map<uint64_t, uint64_t> writing_;
 	bool priorityLogged_ = false;
