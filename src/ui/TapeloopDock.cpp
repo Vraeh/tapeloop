@@ -542,7 +542,7 @@ void TapeloopDock::updateReplays()
 			break;
 		case ReplayState::NotSaved:
 			text = text_("Dock.Replay.NotSaved").arg(time).arg(sources);
-			tip = text_("Dock.Replay.NotSaved.Tooltip").arg(QString::fromStdString(replay.error));
+			tip = text_("Dock.Replay.NotSaved.Tooltip");
 			break;
 		case ReplayState::Damaged:
 			text = text_("Dock.Replay.Damaged").arg(QString::fromStdString(replay.fileName));

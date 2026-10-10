@@ -92,7 +92,6 @@ std::vector<ui::DockReplay> ManagerDockBackend::replays(const std::string &tag) 
 		replay.broadcast = found->broadcast;
 		replay.state = found->state;
 		replay.fileName = utf8FromPath(found->manifest.stem());
-		replay.error = found->error;
 		replays.push_back(std::move(replay));
 	}
 	// A broadcast's replays together, the broadcast with the newest replay first; the

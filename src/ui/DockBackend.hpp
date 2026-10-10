@@ -45,8 +45,6 @@ struct DockReplay {
 	// The name of its file without the extension, which is all a damaged replay has to
 	// show.
 	std::string fileName;
-	// Why it was not saved.
-	std::string error;
 };
 
 // An encoder a user may choose for replays.

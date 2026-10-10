@@ -337,7 +337,9 @@ uint64_t CaptureManager::captureReplay()
 	try {
 		writing_[store_.write(std::move(capture))] = id;
 	} catch (...) {
-		library_.notSaved(id, "out of memory");
+		blog(LOG_WARNING, "[tapeloop] Replay %llu could not be saved: it could not be handed to the writer",
+		     static_cast<unsigned long long>(id));
+		library_.notSaved(id, "it could not be handed to the writer");
 		throw;
 	}
 	return id;

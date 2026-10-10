@@ -357,12 +357,12 @@ TEST_CASE("the dock groups replays by broadcast and says what became of each")
 	FakeBackend backend = backendWithSources();
 	const auto at = std::chrono::system_clock::now();
 	backend.captured = {
-		{5, at, 3, {}, "Copa 2026-10-10 18-30", ReplayState::Stored, "2026-10-10 18-41-02", ""},
-		{4, at, 3, {}, "Copa 2026-10-10 18-30", ReplayState::Writing, "", ""},
-		{3, at, 2, {"goal"}, "Liga 2026-10-09 21-00", ReplayState::NotSaved, "", "disk full"},
-		{9, at, 2, {"goal"}, "Liga 2026-10-09 21-00", ReplayState::Stored, "2026-10-09 21-03-11", ""},
-		{2, at, 0, {}, "Liga 2026-10-09 21-00", ReplayState::Damaged, "2026-10-09 21-01-40", ""},
-		{1, at, 1, {}, "Amistoso 2026-10-01 10-00", ReplayState::Stored, "", ""},
+		{5, at, 3, {}, "Copa 2026-10-10 18-30", ReplayState::Stored, "2026-10-10 18-41-02"},
+		{4, at, 3, {}, "Copa 2026-10-10 18-30", ReplayState::Writing, ""},
+		{3, at, 2, {"goal"}, "Liga 2026-10-09 21-00", ReplayState::NotSaved, ""},
+		{9, at, 2, {"goal"}, "Liga 2026-10-09 21-00", ReplayState::Stored, "2026-10-09 21-03-11"},
+		{2, at, 0, {}, "Liga 2026-10-09 21-00", ReplayState::Damaged, "2026-10-09 21-01-40"},
+		{1, at, 1, {}, "Amistoso 2026-10-01 10-00", ReplayState::Stored, ""},
 	};
 	backend.tags = {"goal"};
 	backend.captures = 5;
@@ -384,7 +384,7 @@ TEST_CASE("the dock groups replays by broadcast and says what became of each")
 	CHECK(list->item(3)->text() == "Liga 2026-10-09 21-00");
 	CHECK(list->item(3)->flags() == Qt::NoItemFlags);
 	CHECK(list->item(4)->text().endsWith(", 2 sources, not saved #goal"));
-	CHECK(list->item(4)->toolTip().contains("disk full"));
+	CHECK(list->item(4)->toolTip() == localeText()("Dock.Replay.NotSaved.Tooltip"));
 	CHECK(idAt(5) == 9u);
 	CHECK(list->item(6)->text() == "2026-10-09 21-01-40, damaged");
 	CHECK_FALSE(list->item(6)->toolTip().isEmpty());
@@ -928,11 +928,11 @@ TEST_CASE("dock screenshots", "[.screenshots]")
 	using tapeloop::ReplayState;
 	const auto at = std::chrono::system_clock::now();
 	backend.captured = {
-		{5, at, 3, {}, "Copa 2026-10-10 18-30", ReplayState::Writing, "", ""},
-		{4, at - 95s, 3, {"goal"}, "Copa 2026-10-10 18-30", ReplayState::Stored, "", ""},
-		{3, at - 26h, 2, {"goal", "foul"}, "Liga 2026-10-09 21-00", ReplayState::Stored, "", ""},
-		{2, at - 26h - 4min, 2, {}, "Liga 2026-10-09 21-00", ReplayState::NotSaved, "", "disk full"},
-		{1, at, 0, {}, "Liga 2026-10-09 21-00", ReplayState::Damaged, "2026-10-09 21-01-40", ""},
+		{5, at, 3, {}, "Copa 2026-10-10 18-30", ReplayState::Writing, ""},
+		{4, at - 95s, 3, {"goal"}, "Copa 2026-10-10 18-30", ReplayState::Stored, ""},
+		{3, at - 26h, 2, {"goal", "foul"}, "Liga 2026-10-09 21-00", ReplayState::Stored, ""},
+		{2, at - 26h - 4min, 2, {}, "Liga 2026-10-09 21-00", ReplayState::NotSaved, ""},
+		{1, at, 0, {}, "Liga 2026-10-09 21-00", ReplayState::Damaged, "2026-10-09 21-01-40"},
 	};
 	backend.tags = {"foul", "goal"};
 	backend.captures = 5;
