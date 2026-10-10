@@ -5,7 +5,7 @@
 
 #include "core/BufferSettings.hpp"
 #include "core/EncoderPolicy.hpp"
-#include "core/ReplayLibrary.hpp"
+#include "core/ReplayState.hpp"
 
 #include <chrono>
 #include <cstdint>

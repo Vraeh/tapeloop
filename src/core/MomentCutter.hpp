@@ -7,7 +7,6 @@
 #include "core/MediaTime.hpp"
 #include "core/SourceBuffer.hpp"
 
-#include <cstdint>
 #include <functional>
 #include <span>
 #include <string>

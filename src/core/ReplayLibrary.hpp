@@ -5,6 +5,7 @@
 
 #include "core/Gop.hpp"
 #include "core/ReplayFormat.hpp"
+#include "core/ReplayState.hpp"
 #include "core/ReplayWriter.hpp"
 
 #include <chrono>
@@ -19,16 +20,6 @@
 #include <vector>
 
 namespace tapeloop {
-
-enum class ReplayState {
-	// Captured, and being written.
-	Writing,
-	Stored,
-	// Writing it failed: it plays only while the buffers still hold its GOPs.
-	NotSaved,
-	// Found on disk with a damaged manifest or a segment gone: it cannot play.
-	Damaged,
-};
 
 // A replay as the library keeps it: what a list of replays shows, and, for one captured
 // since OBS started, where each of its frames is and the buffers' own GOPs for as long as

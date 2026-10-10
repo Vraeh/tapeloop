@@ -49,12 +49,13 @@ target_sources(
     ReplayPlayerState.hpp
     ReplaySequence.cpp
     ReplaySequence.hpp
-    ReplayWriter.cpp
-    ReplayWriter.hpp
     ReplaySize.cpp
     ReplaySize.hpp
+    ReplayState.hpp
     ReplayStore.cpp
     ReplayStore.hpp
+    ReplayWriter.cpp
+    ReplayWriter.hpp
     SourceBuffer.cpp
     SourceBuffer.hpp
 )
