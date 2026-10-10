@@ -59,6 +59,7 @@ target_sources(
     core/PlayheadTests.cpp
     core/ReplayFormatTests.cpp
     core/ReplayLibraryTests.cpp
+    core/ReplayNamesTests.cpp
     core/ReplayPlayerStateTests.cpp
     core/ReplaySizeTests.cpp
     core/SourceBufferTests.cpp

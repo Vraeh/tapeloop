@@ -43,6 +43,8 @@ target_sources(
     ReplayFormat.hpp
     ReplayLibrary.cpp
     ReplayLibrary.hpp
+    ReplayNames.cpp
+    ReplayNames.hpp
     ReplayPlayerState.cpp
     ReplayPlayerState.hpp
     ReplaySequence.cpp
