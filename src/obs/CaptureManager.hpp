@@ -5,6 +5,7 @@
 
 #include "core/BufferLifecycle.hpp"
 #include "core/BufferSettings.hpp"
+#include "core/ReplayExport.hpp"
 #include "core/ReplayLibrary.hpp"
 #include "core/ReplayStore.hpp"
 #include "obs/SourceCapture.hpp"
@@ -51,11 +52,28 @@ struct SourceStatus {
 	bool budgetLimited = false;
 };
 
+// An export asked for since OBS started.
+struct ExportStatus {
+	enum class State { Waiting, Running, Done, Failed };
+
+	uint64_t replay = 0;
+	ExportFormat format = ExportFormat::Mp4;
+	State state = State::Waiting;
+	// The name of the replay's manifest without its extension.
+	std::string name;
+	// From 0 to 1 while it runs.
+	double progress = 0.0;
+	// What it wrote, once done.
+	std::vector<std::filesystem::path> files;
+	std::string error;
+};
+
 // Every selected source with its capture and buffer, started and stopped as the buffer
 // lifecycle and the settings say. Every call runs on the UI thread.
 class CaptureManager {
 public:
-	explicit CaptureManager(CaptureHost &host);
+	// Without an MP4 writer, replays export only as replay files.
+	explicit CaptureManager(CaptureHost &host, ReplayExporter::WriterFactory mp4 = {});
 	~CaptureManager();
 
 	CaptureManager(const CaptureManager &) = delete;
@@ -128,6 +146,15 @@ public:
 	bool untagReplay(uint64_t id, std::string_view tag);
 	bool deleteReplayTag(std::string_view tag);
 	bool pickReplay(uint64_t id) { return library_.pick(id); }
+	// Exports a stored replay into the Export folder of its broadcast folder, in the
+	// background. False for a replay that is not stored, or a format not available here.
+	bool exportReplay(uint64_t id, ExportFormat format);
+	bool canExport(ExportFormat format) const noexcept { return exporter_.canExport(format); }
+	// The exports asked for since OBS started, oldest first; only the last ones finished
+	// are kept.
+	std::vector<ExportStatus> exports() const;
+	// Waits for the exports asked for and takes in what became of them.
+	void finishExports();
 	// Where the replays of the buffers that run now go: a folder named after the scene
 	// collection and the minute they started, under OBS's recording folder. Empty while
 	// OBS has no recording folder; then the first capture after it has one names it.
@@ -200,11 +227,15 @@ private:
 	// recording folder.
 	void placeBroadcast();
 	void takeStoreResults();
+	void takeExportResults();
 	// Has the store write the replay's tags when it is stored on disk.
 	void saveTags(uint64_t id);
 	static void handleRemove(void *data, calldata_t *) noexcept;
 
 	CaptureHost &host_;
+	ReplayExporter exporter_;
+	// By ticket, so in the order they were asked for.
+	std::map<uint64_t, ExportStatus> exports_;
 	BufferSettings settings_;
 	uint64_t physicalMemory_ = 0;
 	mutable std::optional<Vendor> renderVendor_;

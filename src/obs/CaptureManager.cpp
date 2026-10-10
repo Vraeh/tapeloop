@@ -95,7 +95,10 @@ bool reactsToActivation(obs_source_t *source)
 
 } // namespace
 
-CaptureManager::CaptureManager(CaptureHost &host) : host_(host), physicalMemory_(os_get_sys_total_size())
+CaptureManager::CaptureManager(CaptureHost &host, ReplayExporter::WriterFactory mp4)
+	: host_(host),
+	  exporter_(std::move(mp4)),
+	  physicalMemory_(os_get_sys_total_size())
 {
 	lifecycle_.reset(settings_.startWithOutputs, host_.streamingActive(), host_.recordingActive());
 }
@@ -176,6 +179,7 @@ void CaptureManager::poll()
 		return;
 	}
 	takeStoreResults();
+	takeExportResults();
 	library_.releaseExpired();
 
 	for (auto it = entries_.begin(); it != entries_.end();) {
@@ -476,6 +480,81 @@ void CaptureManager::placeBroadcast()
 	}
 }
 
+bool CaptureManager::exportReplay(uint64_t id, ExportFormat format)
+{
+	const Replay *replay = library_.find(id);
+	if (!replay || replay->state != ReplayState::Stored || !exporter_.canExport(format)) {
+		return false;
+	}
+	ExportStatus status;
+	status.replay = id;
+	status.format = format;
+	status.name = utf8FromPath(replay->manifest.stem());
+	ExportRequest request;
+	request.format = format;
+	request.manifest = replay->manifest;
+	request.index = replay->index;
+	request.live = replay->live;
+	request.tags = replay->tags;
+	blog(LOG_INFO, "[tapeloop] Exporting '%s' %s", status.name.c_str(),
+	     format == ExportFormat::Mp4 ? "to MP4" : "as a replay file");
+	const uint64_t ticket = exporter_.exportReplay(std::move(request));
+	exports_.emplace(ticket, std::move(status));
+	return true;
+}
+
+std::vector<ExportStatus> CaptureManager::exports() const
+{
+	const std::optional<ExportProgress> progress = exporter_.progress();
+	std::vector<ExportStatus> statuses;
+	for (const auto &[ticket, export_] : exports_) {
+		statuses.push_back(export_);
+		if (progress && progress->ticket == ticket) {
+			statuses.back().state = ExportStatus::State::Running;
+			statuses.back().progress = progress->packets == 0
+							   ? 0.0
+							   : static_cast<double>(progress->packetsDone) /
+								     static_cast<double>(progress->packets);
+		}
+	}
+	return statuses;
+}
+
+void CaptureManager::finishExports()
+{
+	exporter_.waitUntilIdle();
+	takeExportResults();
+}
+
+void CaptureManager::takeExportResults()
+{
+	for (ExportResult &result : exporter_.poll()) {
+		const auto found = exports_.find(result.ticket);
+		if (found == exports_.end()) {
+			continue;
+		}
+		ExportStatus &status = found->second;
+		if (result.error.empty()) {
+			status.state = ExportStatus::State::Done;
+			status.files = std::move(result.files);
+			blog(LOG_INFO, "[tapeloop] Exported '%s' to %zu files in '%s'", status.name.c_str(),
+			     status.files.size(),
+			     status.files.empty() ? "" : utf8FromPath(status.files.front().parent_path()).c_str());
+		} else {
+			status.state = ExportStatus::State::Failed;
+			status.error = std::move(result.error);
+			blog(LOG_WARNING, "[tapeloop] The export of '%s' failed: %s", status.name.c_str(),
+			     status.error.c_str());
+		}
+	}
+	// What the dock shows is the last few.
+	constexpr size_t kKeptExports = 64;
+	while (exports_.size() > kKeptExports && (exports_.begin()->second.state == ExportStatus::State::Done ||
+						  exports_.begin()->second.state == ExportStatus::State::Failed)) {
+		exports_.erase(exports_.begin());
+	}
+}
+
 void CaptureManager::takeStoreResults()
 {
 	for (StoreResult &result : store_.poll()) {
@@ -519,7 +598,7 @@ void CaptureManager::takeStoreResults()
 				break;
 			}
 			for (const std::filesystem::path &removed : result.scan->removed) {
-				blog(LOG_INFO, "[tapeloop] Deleted '%s', a replay a crash left half written",
+				blog(LOG_INFO, "[tapeloop] Deleted '%s', which a crash left half written",
 				     utf8FromPath(removed).c_str());
 			}
 			for (const std::string &error : result.scan->errors) {

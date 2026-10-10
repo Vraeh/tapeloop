@@ -5,6 +5,7 @@
 #include "../core/TempDirectory.hpp"
 #include "AllocationCounter.hpp"
 #include "LogCounter.hpp"
+#include "Mp4Reader.hpp"
 #include "ObsFixture.hpp"
 #include "TestEncoders.hpp"
 #include "TestPattern.hpp"
@@ -13,6 +14,7 @@
 #include "core/FileIo.hpp"
 #include "core/GopReader.hpp"
 #include "core/ReplayWriter.hpp"
+#include "decode/Mp4Writer.hpp"
 #include "obs/CaptureManager.hpp"
 #include "obs/ManagerDockBackend.hpp"
 #include "obs/SettingsData.hpp"
@@ -35,6 +37,7 @@
 
 using namespace std::chrono_literals;
 using tapeloop::BufferSettings;
+using tapeloop::ExportFormat;
 using tapeloop::FrameSize;
 using tapeloop::Replay;
 using tapeloop::ReplayState;
@@ -45,6 +48,7 @@ using tapeloop::SavedSource;
 using tapeloop::SourceSettings;
 using tapeloop::obs::CaptureManager;
 using tapeloop::obs::CaptureState;
+using tapeloop::obs::ExportStatus;
 using tapeloop::obs::createSettingsData;
 using tapeloop::obs::readSettingsData;
 using tapeloop::test::createTestPattern;
@@ -2127,4 +2131,95 @@ TEST_CASE("settings saved before the other-adapter setting allow other adapters"
 	CHECK(readSettingsData(data).allowOtherAdapters);
 	obs_data_set_bool(data, "allow_other_adapters", false);
 	CHECK_FALSE(readSettingsData(data).allowOtherAdapters);
+}
+
+TEST_CASE_METHOD(ObsFixture, "a stored replay exports to MP4 and as a replay file", "[obs][manager][replay][export]")
+{
+	OBSSourceAutoRelease pattern = createTestPattern(320, 180, "Pattern");
+	const std::string uuid = uuidOf(pattern);
+	FakeHost host;
+	CaptureManager manager(host, [] { return std::make_unique<tapeloop::decode::Mp4Writer>(); });
+	BufferSettings settings = selecting(uuid);
+	settings.startWithOutputs = false;
+	manager.setSettings(settings);
+	REQUIRE(manager.manualStart());
+	REQUIRE(waitFor([&] { return hasGops(manager, uuid, 3); }, 60s));
+	const uint64_t id = manager.captureReplay();
+	REQUIRE(id != 0);
+	// Not before it is on disk.
+	CHECK_FALSE(manager.exportReplay(id, ExportFormat::Mp4));
+	manager.finishWrites();
+	const Replay *replay = manager.library().find(id);
+	REQUIRE(replay->state == ReplayState::Stored);
+	const fs::path manifest = replay->manifest;
+	const tapeloop::StoredSource source = replay->index->sources.front();
+
+	CHECK(manager.canExport(ExportFormat::Mp4));
+	LogCounter exported("[tapeloop] Exported '%s' to %zu files in '%s'");
+	REQUIRE(manager.exportReplay(id, ExportFormat::Mp4));
+	REQUIRE(manager.exportReplay(id, ExportFormat::Replay));
+	CHECK_FALSE(manager.exportReplay(id + 100, ExportFormat::Mp4));
+	REQUIRE(manager.exports().size() == 2);
+	manager.finishExports();
+	const std::vector<ExportStatus> exports = manager.exports();
+	REQUIRE(exports.size() == 2);
+	for (const ExportStatus &status : exports) {
+		CHECK(status.replay == id);
+		CHECK(status.state == ExportStatus::State::Done);
+		CHECK(status.error.empty());
+		CHECK(status.name == tapeloop::utf8FromPath(manifest.stem()));
+	}
+	CHECK(exported.lines == 2);
+
+	const fs::path folder = manifest.parent_path() / "Export";
+	REQUIRE(exports[0].files.size() == 1);
+	CHECK(exports[0].files[0] == folder / tapeloop::pathFromUtf8(exports[0].name + " - Pattern.mp4"));
+	// Every frame through the out point, the frames before the in point in its GOP
+	// included, as an independent reader finds them.
+	const tapeloop::test::Mp4Track track = tapeloop::test::readMp4(tapeloop::test::fileBytes(exports[0].files[0]));
+	size_t frames = 0;
+	for (const tapeloop::Nanoseconds time : source.frameTimes) {
+		frames += time <= source.out ? size_t{1} : size_t{0};
+	}
+	CHECK(track.samples.size() == frames);
+	REQUIRE(exports[1].files.size() == 1);
+	CHECK(exports[1].files[0] == folder / manifest.filename());
+	const std::optional<tapeloop::ReplayIndex> copy = tapeloop::readReplayIndex(exports[1].files[0]);
+	REQUIRE(copy);
+	CHECK(tapeloop::selfContained(*copy));
+	CHECK(copy->sources.front().frameTimes == source.frameTimes);
+	manager.manualStop();
+}
+
+TEST_CASE_METHOD(ObsFixture, "an export that fails says why", "[obs][manager][replay][export]")
+{
+	OBSSourceAutoRelease pattern = createTestPattern(320, 180, "Pattern");
+	const std::string uuid = uuidOf(pattern);
+	FakeHost host;
+	CaptureManager manager(host);
+	BufferSettings settings = selecting(uuid);
+	settings.startWithOutputs = false;
+	manager.setSettings(settings);
+	REQUIRE(manager.manualStart());
+	REQUIRE(waitFor([&] { return hasGops(manager, uuid, 2); }, 60s));
+	const uint64_t id = manager.captureReplay();
+	manager.finishWrites();
+	const Replay *replay = manager.library().find(id);
+	REQUIRE(replay->state == ReplayState::Stored);
+	// Without an MP4 writer only the replay file is there.
+	CHECK_FALSE(manager.canExport(ExportFormat::Mp4));
+	CHECK_FALSE(manager.exportReplay(id, ExportFormat::Mp4));
+
+	// A file where the Export folder goes.
+	tapeloop::File(replay->manifest.parent_path() / "Export", tapeloop::File::Mode::CreateNew).flush();
+	LogCounter failed("[tapeloop] The export of '%s' failed: %s");
+	REQUIRE(manager.exportReplay(id, ExportFormat::Replay));
+	manager.finishExports();
+	const std::vector<ExportStatus> exports = manager.exports();
+	REQUIRE(exports.size() == 1);
+	CHECK(exports[0].state == ExportStatus::State::Failed);
+	CHECK_FALSE(exports[0].error.empty());
+	CHECK(exports[0].files.empty());
+	CHECK(failed.lines == 1);
+	manager.manualStop();
 }
