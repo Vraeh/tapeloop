@@ -466,6 +466,25 @@ TEST_CASE("a scan deletes half written manifests and lists damaged ones")
 	CHECK(scan.errors.empty());
 }
 
+TEST_CASE("a scan checks the first segment a manifest names")
+{
+	TempDirectory dir;
+	const fs::path folder = dir.path() / "Liga 2026-10-09 21-00";
+	ReplayWriter writer;
+	const WrittenReplay written = writer.write(captureOf(folder, {sourceOf("a", makeGops(2))}, "zero"));
+	std::optional<ReplayIndex> index = readManifest(written.manifest);
+	REQUIRE(index);
+	for (tapeloop::StoredGop &gop : index->sources.at(0).gops) {
+		gop.segment = 0;
+	}
+	fs::remove(written.manifest);
+	File(written.manifest, File::Mode::CreateNew).writeAt(0, tapeloop::encodeManifest(*index, {}));
+
+	const tapeloop::ReplayScan scan = tapeloop::scanReplays(dir.path());
+	REQUIRE(scan.replays.size() == 1);
+	CHECK_FALSE(scan.replays[0].intact);
+}
+
 TEST_CASE("a scan of a base that does not exist finds nothing")
 {
 	TempDirectory dir;

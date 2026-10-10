@@ -8,6 +8,7 @@
 #include <algorithm>
 #include <functional>
 #include <memory>
+#include <optional>
 #include <random>
 #include <stdexcept>
 #include <system_error>
@@ -79,7 +80,7 @@ std::vector<uint8_t> readWhole(const std::filesystem::path &path)
 bool segmentsExist(const std::filesystem::path &manifest, const ReplayIndex &index)
 {
 	for (const StoredSource &source : index.sources) {
-		uint32_t checked = 0;
+		std::optional<uint32_t> checked;
 		for (const StoredGop &gop : source.gops) {
 			if (gop.segment == checked) {
 				continue;
