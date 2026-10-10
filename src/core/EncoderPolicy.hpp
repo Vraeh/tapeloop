@@ -45,12 +45,26 @@ enum class EncoderPath {
 	Software,
 };
 
+// Why a hardware encoder takes its frames through memory, for the note that says so.
+enum class ReadbackReason {
+	None,
+	// It runs on another adapter than the one OBS renders on.
+	OtherAdapter,
+	// It takes no textures at all.
+	NoTextureInput,
+	// OBS gives it no NV12 textures, which its renderer or adapter may not have.
+	NoTextures,
+};
+
 // renderVendor is that of the adapter OBS renders on, and nv12Textures whether OBS hands
 // the capture NV12 textures. A texture encoder of another vendor's adapter takes
 // frames through memory too: OBS 32's QuickSync, for one, hands itself over to its
 // non-texture variant when OBS renders elsewhere. VideoToolbox takes no textures, but
 // on a Mac it is the encoder of the adapter OBS renders on and the best path there is.
 EncoderPath encoderPathOf(const EncoderInfo &encoder, Vendor renderVendor, bool nv12Textures) noexcept;
+// None unless encoderPathOf gives Readback for the same encoder; the first reason that
+// holds, in the order of the enum, when several do.
+ReadbackReason readbackReasonOf(const EncoderInfo &encoder, Vendor renderVendor, bool nv12Textures) noexcept;
 
 // The vendor of an OBS encoder id, from the ids OBS 32 registers; Unknown for any other.
 // VideoToolbox ids cannot be told apart from its software encoders and all count as

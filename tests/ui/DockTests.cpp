@@ -31,6 +31,7 @@
 #include <initializer_list>
 #include <set>
 #include <string>
+#include <utility>
 
 using namespace std::chrono_literals;
 using tapeloop::BufferSettings;
@@ -229,6 +230,21 @@ TEST_CASE("a source on an encoder path that is not the optimal one says so")
 	CHECK(table->item(0, 1)->toolTip().contains("unpauses or refreshes when it becomes active"));
 	CHECK(table->item(0, 1)->toolTip().contains("x264"));
 	CHECK(table->item(0, 1)->toolTip().contains("\n\n"));
+
+	// A source read back through memory says why, in plain words.
+	const std::pair<tapeloop::ReadbackReason, const char *> reasons[] = {
+		{tapeloop::ReadbackReason::OtherAdapter, "another graphics card"},
+		{tapeloop::ReadbackReason::NoTextureInput, "cannot take OBS's textures"},
+		{tapeloop::ReadbackReason::NoTextures, "with this graphics card or renderer"},
+	};
+	for (const auto &[reason, words] : reasons) {
+		backend.shown[1].readbackReason = reason;
+		dock.refresh();
+		const QString note = table->item(1, 1)->toolTip();
+		CHECK(note.contains(words));
+		CHECK(note.contains("read back through memory"));
+		CHECK_FALSE(note.contains("NV12"));
+	}
 
 	// A buffer that is stopped, failed or waiting has no encoder at work to speak of, and
 	// an unselected source no buffer.

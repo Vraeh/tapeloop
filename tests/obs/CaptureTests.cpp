@@ -2,11 +2,13 @@
 // Copyright (C) 2026 Vicente Aedo <ryde1337@gmail.com>
 
 #include "ClipDecoder.hpp"
+#include "LogCounter.hpp"
 #include "ObsFixture.hpp"
 #include "TestEncoders.hpp"
 #include "TestPattern.hpp"
 
 #include "obs/CaptureOutput.hpp"
+#include "obs/ObsEncoders.hpp"
 #include "obs/SourceCapture.hpp"
 
 #include <catch2/catch_test_macros.hpp>
@@ -27,12 +29,14 @@ using tapeloop::Clip;
 using tapeloop::EncoderInfo;
 using tapeloop::FrameSize;
 using tapeloop::Nanoseconds;
+using tapeloop::ReadbackReason;
 using tapeloop::Vendor;
 using tapeloop::obs::CaptureSettings;
 using tapeloop::obs::CaptureState;
 using tapeloop::obs::SourceCapture;
 using tapeloop::obs::StartResult;
 using tapeloop::test::createTestPattern;
+using tapeloop::test::LogCounter;
 using tapeloop::test::ObsFixture;
 using tapeloop::test::waitFor;
 
@@ -373,6 +377,7 @@ TEST_CASE_METHOD(ObsFixture, "a capture reports the path its encoder takes the f
 	settings.candidates = {failing, testEncoder("obs_x264")};
 	REQUIRE(capture.start(pattern, settings) == StartResult::Started);
 	CHECK(capture.stats().encoderPath == tapeloop::EncoderPath::Software);
+	CHECK(capture.stats().readbackReason == ReadbackReason::None);
 	capture.stop();
 	CHECK(capture.stats().encoderPath == tapeloop::EncoderPath::Texture);
 
@@ -387,15 +392,23 @@ TEST_CASE_METHOD(ObsFixture, "a capture reports the path its encoder takes the f
 	settings.candidates = {texture};
 	REQUIRE(capture.start(pattern, settings) == StartResult::Started);
 	CHECK(capture.stats().encoderPath == (nv12 ? tapeloop::EncoderPath::Texture : tapeloop::EncoderPath::Readback));
+	CHECK(capture.stats().readbackReason == (nv12 ? ReadbackReason::None : ReadbackReason::NoTextures));
 	REQUIRE(waitFor([&] { return hasGops(capture, 2); }, 60s));
 	capture.stop();
+	CHECK(capture.stats().readbackReason == ReadbackReason::None);
 
-	// As QuickSync on another adapter than the one OBS renders on.
+	// As QuickSync on another adapter than the one OBS renders on, or without its texture
+	// path; which of the two, the render adapter decides.
 	EncoderInfo readback = testEncoder(tapeloop::test::kHevcEncoderId, "hevc");
 	readback.vendor = Vendor::Intel;
 	settings.candidates = {readback};
+	LogCounter said("takes every frame read back through memory");
 	REQUIRE(capture.start(pattern, settings) == StartResult::Started);
 	CHECK(capture.stats().encoderPath == tapeloop::EncoderPath::Readback);
+	CHECK(capture.stats().readbackReason ==
+	      tapeloop::readbackReasonOf(readback, tapeloop::obs::renderAdapterVendor(), false));
+	CHECK(capture.stats().readbackReason != ReadbackReason::None);
+	CHECK(said.lines == 1);
 	capture.stop();
 }
 

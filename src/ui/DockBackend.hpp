@@ -29,8 +29,10 @@ struct DockSource {
 	// Not kept active off air although the settings ask: it restarts when it becomes
 	// active.
 	bool activationLeftOut = false;
-	// How its running encoder takes the frames; anything but Texture gets a note.
+	// How its running encoder takes the frames; anything but Texture gets a note, which
+	// for Readback says why.
 	EncoderPath encoderPath = EncoderPath::Texture;
+	ReadbackReason readbackReason = ReadbackReason::None;
 	// Its HEVC encoder failed while it ran, and it uses H.264 from its next start.
 	bool hevcFailed = false;
 };

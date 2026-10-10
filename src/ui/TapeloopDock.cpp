@@ -41,6 +41,20 @@ int seconds(Nanoseconds length)
 	return static_cast<int>(std::chrono::duration_cast<std::chrono::seconds>(length).count());
 }
 
+const char *readbackNote(ReadbackReason reason)
+{
+	switch (reason) {
+	case ReadbackReason::OtherAdapter:
+		return "Dock.Status.Readback.OtherAdapter.Tooltip";
+	case ReadbackReason::NoTextureInput:
+		return "Dock.Status.Readback.NoTextureInput.Tooltip";
+	case ReadbackReason::NoTextures:
+	case ReadbackReason::None:
+		break;
+	}
+	return "Dock.Status.Readback.NoTextures.Tooltip";
+}
+
 // Qt cannot let an exception through its event loop; a failed change is dropped and the
 // next refresh shows the state as it is.
 template<typename Function> void guarded(Function &&function) noexcept
@@ -482,7 +496,7 @@ void TapeloopDock::updateSources(const std::vector<DockSource> &sources)
 			case EncoderPath::Texture:
 				break;
 			case EncoderPath::Readback:
-				path = "Dock.Status.Readback.Tooltip";
+				path = readbackNote(sources[i].readbackReason);
 				break;
 			case EncoderPath::Software:
 				path = "Dock.Status.Software.Tooltip";

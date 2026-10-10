@@ -48,6 +48,7 @@ struct CaptureStats {
 	std::string encoderId;
 	// Of the encoder running; Texture while none is.
 	EncoderPath encoderPath = EncoderPath::Texture;
+	ReadbackReason readbackReason = ReadbackReason::None;
 	FrameSize outputSize;
 	SourceBufferStats buffer;
 	// From the oldest frame held to the newest.
@@ -115,6 +116,7 @@ private:
 	obs_output_t *output_ = nullptr;
 	std::string encoderId_;
 	EncoderPath encoderPath_ = EncoderPath::Texture;
+	ReadbackReason readbackReason_ = ReadbackReason::None;
 };
 
 } // namespace tapeloop::obs

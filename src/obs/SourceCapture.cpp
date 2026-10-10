@@ -18,18 +18,31 @@ namespace tapeloop::obs {
 namespace {
 
 // Paths that are not the optimal one work, and say so in the log in plain words.
-void warnAboutPath(const char *name, const char *encoder, EncoderPath path) noexcept
+void warnAboutPath(const char *name, const char *encoder, EncoderPath path, ReadbackReason reason) noexcept
 {
+	const char *why = "";
+	switch (reason) {
+	case ReadbackReason::None:
+		break;
+	case ReadbackReason::OtherAdapter:
+		why = "it runs on another graphics card than the one OBS renders on";
+		break;
+	case ReadbackReason::NoTextureInput:
+		why = "it takes no textures";
+		break;
+	case ReadbackReason::NoTextures:
+		why = "OBS cannot give it textures with this graphics card or renderer";
+		break;
+	}
 	switch (path) {
 	case EncoderPath::Texture:
 		break;
 	case EncoderPath::Readback:
 		blog(LOG_WARNING,
 		     "[tapeloop] '%s' is encoded by %s, which takes every frame read back through memory "
-		     "instead of OBS's textures: it runs on another graphics card than the one OBS renders "
-		     "on, or OBS has no NV12 textures to give it. Replays work, but this costs CPU time and "
-		     "memory bandwidth: it is not the optimal path",
-		     name, encoder);
+		     "instead of OBS's textures: %s. Replays work, but this costs CPU time and memory "
+		     "bandwidth: it is not the optimal path",
+		     name, encoder, why);
 		break;
 	case EncoderPath::Software:
 		blog(LOG_WARNING,
@@ -181,11 +194,13 @@ StartResult SourceCapture::start(obs_source_t *source, const CaptureSettings &se
 				sourceSize_ = sourceSize;
 				outputSize_ = *outputSize;
 				encoderId_ = candidate.id;
-				encoderPath_ = encoderPathOf(candidate, renderAdapterVendor(),
-							     obs_encoder_video_tex_active(encoder, VIDEO_FORMAT_NV12));
+				const Vendor renderVendor = renderAdapterVendor();
+				const bool textures = obs_encoder_video_tex_active(encoder, VIDEO_FORMAT_NV12);
+				encoderPath_ = encoderPathOf(candidate, renderVendor, textures);
+				readbackReason_ = readbackReasonOf(candidate, renderVendor, textures);
 				blog(LOG_INFO, "[tapeloop] Capturing '%s' at %ux%u with %s", name, outputSize->width,
 				     outputSize->height, candidate.id.c_str());
-				warnAboutPath(name, candidate.id.c_str(), encoderPath_);
+				warnAboutPath(name, candidate.id.c_str(), encoderPath_, readbackReason_);
 				return StartResult::Started;
 			}
 
@@ -263,6 +278,7 @@ void SourceCapture::tearDown()
 	source_ = nullptr;
 	encoderId_.clear();
 	encoderPath_ = EncoderPath::Texture;
+	readbackReason_ = ReadbackReason::None;
 	outputSize_ = {};
 }
 
@@ -294,6 +310,7 @@ CaptureStats SourceCapture::stats() const
 	}
 	stats.encoderId = encoderId_;
 	stats.encoderPath = encoderPath_;
+	stats.readbackReason = readbackReason_;
 	stats.outputSize = outputSize_;
 	if (buffer_) {
 		stats.buffer = buffer_->stats();
