@@ -167,6 +167,30 @@ TEST_CASE("cutMoment takes from each source no more than its own window")
 	CHECK(clipOf(cutMoment(sources, 10s, 1s).moment, "close")->in() == firstFrameFrom(close, 9s));
 }
 
+TEST_CASE("cutMoment takes a negative pre-roll or window as zero")
+{
+	Camera camera(0ms);
+	camera.pushUntil(10s);
+	Camera shut(0ms, -1s);
+	shut.pushUntil(10s);
+	const Nanoseconds last = lastFrameUntil(camera, 10s);
+	REQUIRE(last == lastFrameUntil(shut, 10s));
+	const std::vector<MomentSource> sources = {{"camera", camera.buffer}, {"shut", shut.buffer}};
+
+	for (const Nanoseconds preRoll : {Nanoseconds{-1s}, Nanoseconds{1s}}) {
+		const MomentCut cut = cutMoment(sources, last, preRoll);
+		CAPTURE(preRoll.count());
+		CHECK(cut.skipped.empty());
+		const Clip *clip = clipOf(cut.moment, "shut");
+		REQUIRE(clip);
+		CHECK(clip->in() == last);
+		CHECK(clip->out() == last);
+	}
+	const Clip *clip = clipOf(cutMoment(sources, last, -1s).moment, "camera");
+	REQUIRE(clip);
+	CHECK(clip->in() == last);
+}
+
 TEST_CASE("cutMoment skips a source whose history does not reach the range")
 {
 	Camera current(0ms, 2s);
