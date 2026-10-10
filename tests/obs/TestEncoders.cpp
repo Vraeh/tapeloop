@@ -5,13 +5,17 @@
 
 #include <obs-module.h>
 
+#include <atomic>
 #include <cstdint>
+#include <new>
+#include <utility>
 
 namespace tapeloop::test {
 namespace {
 
 int brokenState = 0;
 int av1Initializations = 0;
+std::atomic<bool> nvencFails{false};
 // Not a real HEVC frame; nothing decodes what the HEVC test encoder makes.
 const uint8_t kHevcFrame[] = {0, 0, 0, 1, 0x26, 0x01, 0xaf};
 
@@ -52,6 +56,41 @@ void *createCounted(obs_data_t *, obs_encoder_t *) noexcept
 }
 
 void destroy(void *) noexcept {}
+
+const char *nvencName(void *) noexcept
+{
+	return "Tapeloop NVENC test encoder";
+}
+
+struct NvencState {
+	int64_t frames = 0;
+};
+
+void *createNvenc(obs_data_t *, obs_encoder_t *) noexcept
+{
+	return new (std::nothrow) NvencState;
+}
+
+void destroyNvenc(void *data) noexcept
+{
+	delete static_cast<NvencState *>(data);
+}
+
+bool encodeNvenc(void *data, encoder_frame *frame, encoder_packet *packet, bool *received) noexcept
+{
+	if (nvencFails) {
+		return false;
+	}
+	auto &state = *static_cast<NvencState *>(data);
+	packet->data = const_cast<uint8_t *>(kHevcFrame);
+	packet->size = sizeof(kHevcFrame);
+	packet->pts = frame->pts;
+	packet->dts = frame->pts;
+	packet->keyframe = state.frames++ % 30 == 0;
+	packet->type = OBS_ENCODER_VIDEO;
+	*received = true;
+	return true;
+}
 
 bool fail(void *, encoder_frame *, encoder_packet *, bool *) noexcept
 {
@@ -121,6 +160,21 @@ void registerTestEncoders()
 	texture.caps = OBS_ENCODER_CAP_PASS_TEXTURE;
 	texture.encode_texture2 = encodeTextureKeyframe;
 	obs_register_encoder(&texture);
+
+	nvencFails = false;
+	for (const auto &[id, codec] : {std::pair{kNvencHevcId, "hevc"}, std::pair{kNvencH264Id, "h264"}}) {
+		obs_encoder_info nvenc = videoEncoder(id, codec);
+		nvenc.get_name = nvencName;
+		nvenc.create = createNvenc;
+		nvenc.destroy = destroyNvenc;
+		nvenc.encode = encodeNvenc;
+		obs_register_encoder(&nvenc);
+	}
+}
+
+void failTestNvenc(bool fail)
+{
+	nvencFails = fail;
 }
 
 int av1EncoderInitializations()

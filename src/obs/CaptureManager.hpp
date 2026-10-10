@@ -43,6 +43,9 @@ struct SourceStatus {
 	// The settings ask to keep it active off air, but it restarts when it becomes active,
 	// so it is not held.
 	bool activationLeftOut = false;
+	// Its HEVC encoder failed while it ran, so from its next start until OBS closes it
+	// tries the same vendor's H.264 first.
+	bool hevcFailed = false;
 };
 
 // Every selected source with its capture and buffer, started and stopped as the buffer
@@ -170,6 +173,7 @@ private:
 	void updateActivation(const std::string &uuid, Entry &entry, obs_source_t *source);
 	void releaseAll();
 	void followOutputs();
+	void noteHevcFailure(const std::string &uuid, const Entry &entry);
 	void nameBroadcast();
 	// The folder of the broadcast named when the buffers started, once OBS has a
 	// recording folder.
@@ -198,6 +202,8 @@ private:
 	std::filesystem::path scannedFolder_;
 	// The replay each capture the store is writing belongs to, by ticket.
 	std::map<uint64_t, uint64_t> writing_;
+	// The HEVC encoder that failed while capturing a source, by source.
+	std::map<std::string, std::string> failedHevc_;
 	bool priorityLogged_ = false;
 	// Whether the log says the store falls behind, until a capture finds it caught up.
 	bool backlogLogged_ = false;

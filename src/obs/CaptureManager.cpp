@@ -175,6 +175,10 @@ void CaptureManager::poll()
 		}
 	}
 
+	for (const auto &[uuid, entry] : entries_) {
+		noteHevcFailure(uuid, *entry);
+	}
+
 	followOutputs();
 	if (!lifecycle_.running()) {
 		return;
@@ -285,6 +289,7 @@ SourceStatus CaptureManager::status(const std::string &uuid) const
 		status.stats = found->second->capture.stats();
 		status.activationLeftOut = found->second->activationLeftOut;
 	}
+	status.hevcFailed = failedHevc_.contains(uuid);
 	return status;
 }
 
@@ -603,7 +608,11 @@ CaptureManager::StartOutcome CaptureManager::start(const std::string &uuid, Entr
 	CaptureSettings settings;
 	settings.resolution = settings_.resolutionFor(uuid);
 	settings.bufferLength = settings_.lengthFor(uuid);
-	settings.candidates = *candidates;
+	const auto failed = failedHevc_.find(uuid);
+	settings.candidates =
+		failed == failedHevc_.end()
+			? *candidates
+			: candidatesAfterHevcFailure(*candidates, registeredVideoEncoders(), failed->second);
 	const StartResult result = entry.capture.start(source, settings, keepBuffer);
 	if (result != StartResult::Started) {
 		entry.retry = result == StartResult::NoSourceSize;
@@ -617,6 +626,22 @@ CaptureManager::StartOutcome CaptureManager::start(const std::string &uuid, Entr
 	signal_handler_connect(obs_source_get_signal_handler(source), "remove", handleRemove, &entry.removed);
 	entry.source = std::move(source);
 	return StartOutcome::Started;
+}
+
+void CaptureManager::noteHevcFailure(const std::string &uuid, const Entry &entry)
+{
+	const CaptureStats stats = entry.capture.stats();
+	if (stats.state != CaptureState::Failed || failedHevc_.contains(uuid)) {
+		return;
+	}
+	const char *codec = obs_get_encoder_codec(stats.encoderId.c_str());
+	if (!codec || std::strcmp(codec, "hevc") != 0) {
+		return;
+	}
+	failedHevc_.emplace(uuid, stats.encoderId);
+	const char *name = entry.source ? obs_source_get_name(entry.source) : nullptr;
+	blog(LOG_WARNING, "[tapeloop] %s failed while capturing '%s', which uses H.264 from its next start",
+	     stats.encoderId.c_str(), name ? name : uuid.c_str());
 }
 
 void CaptureManager::stop(Entry &entry)

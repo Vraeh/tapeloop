@@ -18,7 +18,14 @@ inline constexpr const char *kHevcEncoderId = "tapeloop_test_hevc";
 // The same, taking OBS's textures as hardware encoders do when OBS has NV12 textures.
 inline constexpr const char *kHevcTextureEncoderId = "tapeloop_test_hevc_texture";
 
+// Encoders under the ids of NVENC, which the harness has no driver for, without its
+// texture path: a keyframe of a few made-up bytes every 30 frames, and failing on every
+// frame while failTestNvenc(true).
+inline constexpr const char *kNvencHevcId = "obs_nvenc_hevc_tex";
+inline constexpr const char *kNvencH264Id = "obs_nvenc_h264_tex";
+
 void registerTestEncoders();
+void failTestNvenc(bool fail);
 
 // How many times libobs initialized an encoder of kAv1EncoderId since
 // registerTestEncoders.
