@@ -51,6 +51,32 @@ template<typename Function> void guarded(Function &&function) noexcept
 	}
 }
 
+// Qt goes past the rows that cannot be current only on the arrow keys, so Home, End and a
+// page key that stopped on a heading or a damaged replay did nothing. Such a move now
+// ends on the nearest row that can be current, back toward where it came from.
+class ReplayList : public QListWidget {
+public:
+	using QListWidget::QListWidget;
+
+protected:
+	QModelIndex moveCursor(CursorAction action, Qt::KeyboardModifiers modifiers) override
+	{
+		const QModelIndex target = QListWidget::moveCursor(action, modifiers);
+		if (!target.isValid() || (target.flags() & Qt::ItemIsEnabled)) {
+			return target;
+		}
+		const bool upward = action == MoveHome || action == MovePageUp || action == MoveUp ||
+				    action == MoveLeft || action == MovePrevious;
+		const int step = upward ? 1 : -1;
+		for (int row = target.row() + step; row >= 0 && row < count(); row += step) {
+			if (item(row)->flags() & Qt::ItemIsEnabled) {
+				return model()->index(row, 0);
+			}
+		}
+		return target;
+	}
+};
+
 } // namespace
 
 TapeloopDock::TapeloopDock(DockBackend &backend, TextLookup text, QWidget *parent)
@@ -73,7 +99,7 @@ TapeloopDock::TapeloopDock(DockBackend &backend, TextLookup text, QWidget *paren
 	  followsOutputs_(new QLabel(text_("Dock.FollowsOutputs"), this)),
 	  captureReplay_(new QPushButton(text_("Dock.CaptureReplay"), this)),
 	  tagFilter_(new QComboBox(this)),
-	  replays_(new QListWidget(this)),
+	  replays_(new ReplayList(this)),
 	  tagName_(new QLineEdit(this)),
 	  addTag_(new QPushButton(text_("Dock.AddTag"), this))
 {

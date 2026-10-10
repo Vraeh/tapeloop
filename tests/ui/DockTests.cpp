@@ -614,6 +614,44 @@ TEST_CASE("the dock picks up sources that come and go")
 	CHECK(table->item(2, 0)->text() == "Replay");
 }
 
+TEST_CASE("Home and End reach the first and last replay that can be picked")
+{
+	using tapeloop::ReplayState;
+	FakeBackend backend = backendWithSources();
+	const auto at = std::chrono::system_clock::now();
+	backend.captured = {
+		{3, at, 1, {}, "Copa 2026-10-10 18-30", ReplayState::Stored, "2026-10-10 18-41-02"},
+		{2, at, 1, {}, "Liga 2026-10-09 21-00", ReplayState::Stored, "2026-10-09 21-03-11"},
+		{1, at, 1, {}, "Liga 2026-10-09 21-00", ReplayState::Damaged, "2026-10-09 21-01-40"},
+	};
+	backend.captures = 3;
+	backend.picked = 3;
+	TapeloopDock dock(backend, localeText());
+	dock.refresh();
+	auto *list = child<QListWidget>(dock, "replays");
+	REQUIRE(list->count() == 5);
+	REQUIRE(list->currentRow() == 1);
+
+	// The first row names a broadcast and the last is damaged: neither can be current.
+	SECTION("End")
+	{
+		QKeyEvent end(QEvent::KeyPress, Qt::Key_End, Qt::NoModifier);
+		QApplication::sendEvent(list, &end);
+		CHECK(backend.picked == 2u);
+		CHECK(list->currentRow() == 3);
+	}
+	SECTION("Home")
+	{
+		backend.picked = 2;
+		dock.refresh();
+		REQUIRE(list->currentRow() == 3);
+		QKeyEvent home(QEvent::KeyPress, Qt::Key_Home, Qt::NoModifier);
+		QApplication::sendEvent(list, &home);
+		CHECK(backend.picked == 3u);
+		CHECK(list->currentRow() == 1);
+	}
+}
+
 TEST_CASE("the start and stop button follows the buffer lifecycle")
 {
 	FakeBackend backend = backendWithSources();
