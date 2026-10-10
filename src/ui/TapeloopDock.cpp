@@ -87,6 +87,8 @@ TapeloopDock::TapeloopDock(DockBackend &backend, TextLookup text, QWidget *paren
 	sources_->setTabKeyNavigation(false);
 	sources_->installEventFilter(this);
 	replays_->viewport()->installEventFilter(this);
+	// Moves without a button reach the filter only with tracking on.
+	replays_->viewport()->setMouseTracking(true);
 
 	sourceSettings_->setObjectName("sourceSettings");
 	sourceSettings_->setEnabled(false);
@@ -244,16 +246,23 @@ TapeloopDock::TapeloopDock(DockBackend &backend, TextLookup text, QWidget *paren
 	// row already current picks it again after a capture the list has not shown yet. The
 	// list is refreshed once the view is done with the event, since a rebuild inside it
 	// would leave the view selecting the row now under the pointer.
-	const auto pick = [this](QListWidgetItem *item) {
+	const auto pick = [this](QListWidgetItem *item, bool clicked) {
 		if (!item) {
 			return;
 		}
 		guarded([&] {
 			const uint64_t id = item->data(Qt::UserRole).toULongLong();
-			if (id != backend_.currentReplay()) {
+			const uint64_t current = backend_.currentReplay();
+			// A replay captured during the press is the one to show next, over the click
+			// that ends it.
+			const bool capturedDuringPress = clicked && currentAtPress_ && current != *currentAtPress_;
+			if (id != current && !capturedDuringPress) {
 				backend_.pickReplay(id);
 			}
 		});
+		if (clicked) {
+			currentAtPress_.reset();
+		}
 		if (!refreshQueued_) {
 			refreshQueued_ = true;
 			QMetaObject::invokeMethod(
@@ -265,8 +274,8 @@ TapeloopDock::TapeloopDock(DockBackend &backend, TextLookup text, QWidget *paren
 				Qt::QueuedConnection);
 		}
 	};
-	connect(replays_, &QListWidget::currentItemChanged, this, pick);
-	connect(replays_, &QListWidget::itemClicked, this, pick);
+	connect(replays_, &QListWidget::currentItemChanged, this, [pick](QListWidgetItem *item) { pick(item, false); });
+	connect(replays_, &QListWidget::itemClicked, this, [pick](QListWidgetItem *item) { pick(item, true); });
 	connect(startStop_, &QPushButton::clicked, this, [this] {
 		guarded([this] { backend_.toggleRunning(); });
 		refresh();
@@ -360,6 +369,25 @@ bool TapeloopDock::eventFilter(QObject *watched, QEvent *event)
 				return true;
 			}
 			leftButtonHeld_ = type != QEvent::MouseButtonRelease;
+			if (type == QEvent::MouseButtonPress) {
+				currentAtPress_.reset();
+				guarded([this] { currentAtPress_ = backend_.currentReplay(); });
+			}
+			// The second press of a double click comes after the first click's refresh,
+			// which can have put another replay under the pointer; the first click
+			// picked already.
+			if (type == QEvent::MouseButtonDblClick) {
+				return true;
+			}
+		}
+		if (type == QEvent::MouseMove) {
+			if (static_cast<QMouseEvent *>(event)->buttons() & Qt::LeftButton) {
+				// Dragging would make the row under the pointer current, which another one
+				// is once Qt scrolls a row pressed at the edge into view.
+				return true;
+			}
+			// A release that never came, as when a dialog opened during the press.
+			leftButtonHeld_ = false;
 		}
 	}
 	return QWidget::eventFilter(watched, event);

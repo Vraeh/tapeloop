@@ -397,6 +397,82 @@ TEST_CASE("a press on a replay picks that replay, whatever the list does meanwhi
 	CHECK(backend.picked == 1u);
 }
 
+TEST_CASE("a double click, a drag or a capture during a press does not pick another replay")
+{
+	FakeBackend backend = backendWithSources();
+	TapeloopDock dock(backend, localeText());
+	dock.show();
+	auto *capture = child<QPushButton>(dock, "captureReplay");
+	auto *list = child<QListWidget>(dock, "replays");
+	for (int i = 0; i < 3; ++i) {
+		capture->click();
+	}
+	REQUIRE(list->count() == 3);
+	QCoreApplication::processEvents();
+	QWidget *viewport = list->viewport();
+	const auto send = [&](QEvent::Type type, QPoint at, Qt::MouseButton button, Qt::MouseButtons buttons) {
+		QMouseEvent event(type, at, viewport->mapToGlobal(at), button, buttons, Qt::NoModifier);
+		QApplication::sendEvent(viewport, &event);
+	};
+	const auto rowAt = [&](int row) {
+		return list->visualItemRect(list->item(row)).center();
+	};
+	const auto shown = [&] {
+		return list->currentItem() ? list->currentItem()->data(Qt::UserRole).toULongLong() : 0;
+	};
+
+	SECTION("a double click after a capture the list has not shown")
+	{
+		backend.captureReplay();
+		const QPoint oldest = rowAt(2);
+		send(QEvent::MouseButtonPress, oldest, Qt::LeftButton, Qt::LeftButton);
+		send(QEvent::MouseButtonRelease, oldest, Qt::LeftButton, Qt::NoButton);
+		REQUIRE(backend.picked == 1u);
+		// The first click's refresh puts the new capture on top, under the second press.
+		QCoreApplication::processEvents();
+		REQUIRE(list->count() == 4);
+		send(QEvent::MouseButtonDblClick, oldest, Qt::LeftButton, Qt::LeftButton);
+		send(QEvent::MouseButtonRelease, oldest, Qt::LeftButton, Qt::NoButton);
+		QCoreApplication::processEvents();
+		CHECK(backend.picked == 1u);
+		CHECK(shown() == 1u);
+	}
+	SECTION("a drag with the button held")
+	{
+		send(QEvent::MouseButtonPress, rowAt(2), Qt::LeftButton, Qt::LeftButton);
+		REQUIRE(backend.picked == 1u);
+		send(QEvent::MouseMove, rowAt(1), Qt::NoButton, Qt::LeftButton);
+		send(QEvent::MouseMove, rowAt(0), Qt::NoButton, Qt::LeftButton);
+		send(QEvent::MouseButtonRelease, rowAt(0), Qt::LeftButton, Qt::NoButton);
+		QCoreApplication::processEvents();
+		CHECK(backend.picked == 1u);
+		CHECK(shown() == 1u);
+	}
+	SECTION("a capture between the press and the release")
+	{
+		const QPoint oldest = rowAt(2);
+		send(QEvent::MouseButtonPress, oldest, Qt::LeftButton, Qt::LeftButton);
+		REQUIRE(backend.picked == 1u);
+		backend.captureReplay();
+		send(QEvent::MouseButtonRelease, oldest, Qt::LeftButton, Qt::NoButton);
+		QCoreApplication::processEvents();
+		CHECK(backend.picked == 4u);
+		CHECK(shown() == 4u);
+	}
+	SECTION("a press whose release never came")
+	{
+		send(QEvent::MouseButtonPress, rowAt(1), Qt::LeftButton, Qt::LeftButton);
+		backend.captureReplay();
+		dock.refresh();
+		CHECK(list->count() == 3);
+		// The pointer moves on with no button down: the list catches up.
+		send(QEvent::MouseMove, rowAt(0), Qt::NoButton, Qt::NoButton);
+		dock.refresh();
+		CHECK(list->count() == 4);
+		CHECK(shown() == 4u);
+	}
+}
+
 TEST_CASE("a media source left out of activation says why")
 {
 	FakeBackend backend = backendWithSources();
