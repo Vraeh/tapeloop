@@ -20,6 +20,7 @@ extern "C" {
 #include <cstring>
 #include <limits>
 #include <new>
+#include <optional>
 #include <span>
 #include <stdexcept>
 #include <string>
@@ -64,11 +65,12 @@ AVCodecID codecIdOf(VideoCodec codec)
 }
 
 // The size of the pictures, which the sample entry and the track header carry, from the
-// parameter sets FFmpeg's parser reads in the configuration and the keyframe.
-std::pair<int, int> pictureSize(const Gop &first)
+// parameter sets FFmpeg's parser reads in the configuration and the keyframe, if it finds
+// them.
+std::optional<std::pair<int, int>> readPictureSize(const Gop &gop)
 {
-	const CodecConfig *config = first.codecConfig();
-	const std::span<const uint8_t> keyframe = first.packetData(0);
+	const CodecConfig *config = gop.codecConfig();
+	const std::span<const uint8_t> keyframe = gop.packetData(0);
 	std::vector<uint8_t> frame;
 	if (config) {
 		frame = *config;
@@ -77,7 +79,7 @@ std::pair<int, int> pictureSize(const Gop &first)
 	const int size = ffmpegSize(frame.size());
 	frame.resize(frame.size() + AV_INPUT_BUFFER_PADDING_SIZE, 0);
 
-	AVCodecParserContext *parser = av_parser_init(codecIdOf(first.codec()));
+	AVCodecParserContext *parser = av_parser_init(codecIdOf(gop.codec()));
 	AVCodecContext *context = avcodec_alloc_context3(nullptr);
 	std::pair<int, int> found{0, 0};
 	if (parser && context) {
@@ -91,9 +93,18 @@ std::pair<int, int> pictureSize(const Gop &first)
 	avcodec_free_context(&context);
 	av_parser_close(parser);
 	if (found.first <= 0 || found.second <= 0) {
-		throw std::runtime_error("the size of the pictures cannot be read from their parameter sets");
+		return std::nullopt;
 	}
 	return found;
+}
+
+std::pair<int, int> pictureSize(const Gop &gop)
+{
+	const std::optional<std::pair<int, int>> size = readPictureSize(gop);
+	if (!size) {
+		throw std::runtime_error("the size of the pictures cannot be read from their parameter sets");
+	}
+	return *size;
 }
 
 } // namespace
@@ -179,12 +190,17 @@ void Mp4Writer::open(const std::filesystem::path &path, const Gop &first)
 bool Mp4Writer::fits(const Gop &gop) const
 {
 	// Every configuration of a run has the size of its pictures, so only a new one is
-	// read. Without one the size cannot be told, and the file keeps its own.
+	// read. Without one, the parameter sets in the keyframe tell the size, as for the
+	// first GOP; a keyframe without them decodes with those before it, so it fits.
 	const CodecConfig *config = gop.codecConfig();
-	if (!config || *config == config_) {
+	if (config && *config == config_) {
 		return true;
 	}
-	return pictureSize(gop) == std::pair{width_, height_};
+	if (config) {
+		return pictureSize(gop) == std::pair{width_, height_};
+	}
+	const std::optional<std::pair<int, int>> size = readPictureSize(gop);
+	return !size || *size == std::pair{width_, height_};
 }
 
 void Mp4Writer::write(const Gop &gop, size_t packet, Nanoseconds time)

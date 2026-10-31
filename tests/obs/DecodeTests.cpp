@@ -897,27 +897,6 @@ TEST_CASE_METHOD(ObsFixture, "an MP4 export starts a new file where the picture 
 {
 	const Clip large = captureClip(2, 640, 360);
 	const Clip small = captureClip(2, 320, 180);
-	std::vector<std::shared_ptr<const Gop>> gops(large.gops().begin(), large.gops().end());
-	gops.insert(gops.end(), small.gops().begin(), small.gops().end());
-	tapeloop::test::TempDirectory dir;
-	{
-		Mp4Writer writer;
-		writer.open(dir.path() / "probe.mp4", *gops.front());
-		CHECK(writer.fits(*large.gops()[1]));
-		CHECK_FALSE(writer.fits(*small.gops().front()));
-	}
-
-	const tapeloop::WrittenReplay written = tapeloop::ReplayWriter().write(
-		tapeloop::test::captureOf(dir.path(), {tapeloop::test::sourceOf("a", gops)}));
-	tapeloop::ReplayExporter exporter([] { return std::make_unique<Mp4Writer>(); });
-	tapeloop::ExportRequest request;
-	request.manifest = written.manifest;
-	exporter.exportReplay(request);
-	exporter.waitUntilIdle();
-	const std::vector<tapeloop::ExportResult> results = exporter.poll();
-	REQUIRE(results.size() == 1);
-	REQUIRE(results[0].error.empty());
-	REQUIRE(results[0].files.size() == 2);
 	const auto packetsOf = [](const Clip &clip) {
 		size_t packets = 0;
 		for (const auto &gop : clip.gops()) {
@@ -925,14 +904,63 @@ TEST_CASE_METHOD(ObsFixture, "an MP4 export starts a new file where the picture 
 		}
 		return packets;
 	};
-	const Mp4Track first = tapeloop::test::readMp4(readFile(results[0].files[0]));
-	REQUIRE(first.entries.size() == 1);
-	CHECK(first.entries[0].width == 640);
-	CHECK(first.entries[0].height == 360);
-	CHECK(first.samples.size() == packetsOf(large));
-	const Mp4Track second = tapeloop::test::readMp4(readFile(results[0].files[1]));
-	REQUIRE(second.entries.size() == 1);
-	CHECK(second.entries[0].width == 320);
-	CHECK(second.entries[0].height == 180);
-	CHECK(second.samples.size() == packetsOf(small));
+	// With no configuration, as from an encoder that puts its parameter sets only in the
+	// stream and restarts at another size, the keyframes tell the sizes apart.
+	for (const bool inStream : {false, true}) {
+		CAPTURE(inStream);
+		std::vector<std::shared_ptr<const Gop>> gops;
+		if (inStream) {
+			SourceBuffer buffer = makeBuffer();
+			std::vector<Expected> expected;
+			buffer.setCodecConfig(VideoCodec::H264, {});
+			pushClip(buffer, large, 1s, 0, true, expected);
+			buffer.setCodecConfig(VideoCodec::H264, {});
+			pushClip(buffer, small, expected.back().time + 1s, 0, true, expected);
+			const Clip both = buffer.clip(Nanoseconds::min(), Nanoseconds::max());
+			gops.assign(both.gops().begin(), both.gops().end());
+			REQUIRE(gops.size() == large.gops().size() + small.gops().size());
+			REQUIRE_FALSE(gops.front()->codecConfig());
+			REQUIRE_FALSE(gops.back()->codecConfig());
+		} else {
+			gops.assign(large.gops().begin(), large.gops().end());
+			gops.insert(gops.end(), small.gops().begin(), small.gops().end());
+		}
+		const size_t split = large.gops().size();
+		tapeloop::test::TempDirectory dir;
+		{
+			Mp4Writer writer;
+			writer.open(dir.path() / "probe.mp4", *gops.front());
+			CHECK(writer.fits(*gops[1]));
+			CHECK_FALSE(writer.fits(*gops[split]));
+			// A keyframe without parameter sets decodes with those before it.
+			GopBuilder bare(kFrameInterval);
+			bare.setCodecConfig(VideoCodec::H264, nullptr);
+			const std::vector<uint8_t> keyframe =
+				tapeloop::test::withoutParameterSets(gops[split]->packetData(0), VideoCodec::H264);
+			bare.append({keyframe, 0, 0, Nanoseconds{0}, true});
+			CHECK(writer.fits(*bare.seal()));
+		}
+
+		const tapeloop::WrittenReplay written = tapeloop::ReplayWriter().write(
+			tapeloop::test::captureOf(dir.path(), {tapeloop::test::sourceOf("a", gops)}));
+		tapeloop::ReplayExporter exporter([] { return std::make_unique<Mp4Writer>(); });
+		tapeloop::ExportRequest request;
+		request.manifest = written.manifest;
+		exporter.exportReplay(request);
+		exporter.waitUntilIdle();
+		const std::vector<tapeloop::ExportResult> results = exporter.poll();
+		REQUIRE(results.size() == 1);
+		REQUIRE(results[0].error.empty());
+		REQUIRE(results[0].files.size() == 2);
+		const Mp4Track first = tapeloop::test::readMp4(readFile(results[0].files[0]));
+		REQUIRE(first.entries.size() == 1);
+		CHECK(first.entries[0].width == 640);
+		CHECK(first.entries[0].height == 360);
+		CHECK(first.samples.size() == packetsOf(large));
+		const Mp4Track second = tapeloop::test::readMp4(readFile(results[0].files[1]));
+		REQUIRE(second.entries.size() == 1);
+		CHECK(second.entries[0].width == 320);
+		CHECK(second.entries[0].height == 180);
+		CHECK(second.samples.size() == packetsOf(small));
+	}
 }
