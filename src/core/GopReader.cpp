@@ -128,4 +128,29 @@ void GopReader::remember(std::string key, std::shared_ptr<const Gop> gop)
 	}
 }
 
+StoredGops::StoredGops(std::filesystem::path manifest, StoredSource source, std::vector<std::weak_ptr<const Gop>> live,
+		       size_t cacheBytes)
+	: manifest_(std::move(manifest)),
+	  source_(std::move(source)),
+	  live_(std::move(live)),
+	  reader_(cacheBytes)
+{
+}
+
+std::vector<Nanoseconds> StoredGops::frameTimes() const
+{
+	std::vector<Nanoseconds> times;
+	for (const Nanoseconds time : source_.frameTimes) {
+		if (time >= source_.in && time <= source_.out) {
+			times.push_back(time);
+		}
+	}
+	return times;
+}
+
+std::shared_ptr<const Gop> StoredGops::read(size_t gop)
+{
+	return reader_.read(manifest_, source_, gop, gop < live_.size() ? live_[gop] : std::weak_ptr<const Gop>());
+}
+
 } // namespace tapeloop

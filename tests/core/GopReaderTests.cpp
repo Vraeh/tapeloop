@@ -246,3 +246,31 @@ TEST_CASE("a self-contained replay is read from its own file, its index without 
 		CHECK(sameGop(*gop, *gops[i]));
 	}
 }
+
+TEST_CASE("a stored source gives a planner its GOPs from the buffer while it holds them, else from disk")
+{
+	TempDirectory dir;
+	const Gops gops = makeGops(3);
+	tapeloop::CaptureSource trimmed{
+		"a", "Camera a", tapeloop::Clip(gops, gops.front()->packets()[2].time, gops.back()->packets()[1].time)};
+	const WrittenReplay written = ReplayWriter().write(captureOf(dir.path(), {trimmed}));
+	const StoredSource &source = written.index.sources.front();
+	tapeloop::StoredGops stored(written.manifest, source, {gops[0]});
+	CHECK(stored.gopCount() == 3);
+	CHECK(stored.packetCount(1) == gops[1]->packets().size());
+	// Only the frames between the in and out points play; the others serve decoding.
+	const std::vector<tapeloop::Nanoseconds> times = stored.frameTimes();
+	REQUIRE_FALSE(times.empty());
+	CHECK(times.front() == gops.front()->packets()[2].time);
+	CHECK(times.back() == gops.back()->packets()[1].time);
+	CHECK(times.size() == source.frameTimes.size() - 2 - (gops.back()->packets().size() - 2));
+	CHECK(stored.locate(gops[1]->packets()[3].time).gop == 1);
+	CHECK(stored.locate(gops[1]->packets()[3].time).packet == 3);
+
+	CHECK(stored.read(0) == gops[0]);
+	const std::shared_ptr<const Gop> fromDisk = stored.read(2);
+	REQUIRE(fromDisk);
+	CHECK(sameGop(*fromDisk, *gops[2]));
+	CHECK(stored.stats().live == 1);
+	CHECK(stored.stats().read == 1);
+}

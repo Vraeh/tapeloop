@@ -4,6 +4,7 @@
 #pragma once
 
 #include "core/Gop.hpp"
+#include "core/GopSource.hpp"
 #include "core/ReplayFormat.hpp"
 
 #include <cstddef>
@@ -16,6 +17,8 @@
 #include <vector>
 
 namespace tapeloop {
+
+inline constexpr size_t kDefaultGopCacheBytes = size_t{64} << 20;
 
 // Where the GOPs of a stored replay come from: the buffer, while it still holds the GOP,
 // and otherwise the segment on disk, through a small cache of the GOPs read last.
@@ -30,7 +33,7 @@ public:
 	};
 
 	// The cache holds at most cacheBytes of GOPs, but always the last one read.
-	explicit GopReader(size_t cacheBytes = size_t{64} << 20);
+	explicit GopReader(size_t cacheBytes = kDefaultGopCacheBytes);
 
 	// The GOP at index gop of the source in the replay whose manifest this is: live when
 	// it has not expired, else from the cache or the segment. Null when the segment
@@ -59,6 +62,29 @@ private:
 	// Kept from one read to the next, so reading does not allocate for it.
 	std::vector<uint8_t> chunk_;
 	Stats stats_;
+};
+
+// The GOPs of one source of a stored replay, for a decode planner: the buffer's own while
+// it holds them, else read through a reader of its own.
+class StoredGops final : public GopSource {
+public:
+	// live holds the buffer's GOPs by index, and may be shorter than the source's GOPs.
+	StoredGops(std::filesystem::path manifest, StoredSource source, std::vector<std::weak_ptr<const Gop>> live,
+		   size_t cacheBytes = kDefaultGopCacheBytes);
+
+	size_t gopCount() const noexcept override { return source_.gops.size(); }
+	size_t packetCount(size_t gop) const noexcept override { return source_.gops[gop].packetCount; }
+	FrameLocation locate(Nanoseconds t) const noexcept override { return tapeloop::locate(source_, t); }
+	std::vector<Nanoseconds> frameTimes() const override;
+	std::shared_ptr<const Gop> read(size_t gop) override;
+
+	const GopReader::Stats &stats() const noexcept { return reader_.stats(); }
+
+private:
+	std::filesystem::path manifest_;
+	StoredSource source_;
+	std::vector<std::weak_ptr<const Gop>> live_;
+	GopReader reader_;
 };
 
 } // namespace tapeloop

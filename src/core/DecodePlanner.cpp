@@ -6,6 +6,7 @@
 #include <algorithm>
 #include <cstdint>
 #include <limits>
+#include <span>
 #include <utility>
 
 namespace tapeloop {
@@ -29,6 +30,21 @@ std::optional<size_t> packetOfPts(const Gop &gop, int64_t pts) noexcept
 size_t distance(size_t a, size_t b) noexcept
 {
 	return a > b ? a - b : b - a;
+}
+
+std::span<const uint8_t> configOf(const Gop &gop) noexcept
+{
+	const CodecConfig *config = gop.codecConfig();
+	return config ? std::span<const uint8_t>(*config) : std::span<const uint8_t>();
+}
+
+// Whether a decoder opened for one GOP takes the other after a reset: open() is given
+// nothing but the codec and the configuration's bytes.
+bool opensAlike(const Gop &a, const Gop &b) noexcept
+{
+	const std::span<const uint8_t> left = configOf(a);
+	const std::span<const uint8_t> right = configOf(b);
+	return a.codec() == b.codec() && std::equal(left.begin(), left.end(), right.begin(), right.end());
 }
 
 } // namespace
@@ -63,26 +79,30 @@ DecodePlanner::~DecodePlanner()
 	decoder_.close();
 }
 
-void DecodePlanner::load(Clip clip)
+void DecodePlanner::load(std::unique_ptr<GopSource> gops)
 {
 	releaseAll();
-	if (open_) {
+	if (started_) {
 		decoder_.close();
-		open_ = false;
+		started_.reset();
 	}
 	fresh_ = true;
-	clip_ = std::move(clip);
-	openConfig_ = nullptr;
+	gops_ = std::move(gops);
 	streamGop_.reset();
 	lastGop_.reset();
 }
 
 DecodeResult DecodePlanner::frameAt(Nanoseconds t)
 {
-	if (clip_.empty()) {
+	if (!gops_ || gops_->gopCount() == 0) {
 		return {DecodeStatus::NoFrame, {}};
 	}
-	const FrameLocation at = clip_.locate(t);
+	const FrameLocation at = gops_->locate(t);
+	// A source describes a file that may be damaged, so a place it does not hold is
+	// refused rather than looked up.
+	if (at.gop >= gops_->gopCount() || at.packet >= gops_->packetCount(at.gop)) {
+		return {DecodeStatus::InvalidData, {}};
+	}
 	lastGop_ = at.gop;
 
 	KeptGop *kept = find(at.gop);
@@ -169,7 +189,7 @@ DecodePlanner::KeptGop &DecodePlanner::keep(size_t gop)
 	slot->received = 0;
 	slot->reached = 0;
 	slot->complete = false;
-	const size_t count = clip_.gops()[gop]->packets().size();
+	const size_t count = gops_->packetCount(gop);
 	slot->frames.assign(count, std::nullopt);
 	slot->dropped.assign(count, char{0});
 	slot->gop = gop;
@@ -248,8 +268,7 @@ void DecodePlanner::releaseAll() noexcept
 
 DecodeStatus DecodePlanner::decode(size_t gop, size_t packet)
 {
-	const Gop &source = *clip_.gops()[gop];
-	const size_t count = source.packets().size();
+	const size_t count = gops_->packetCount(gop);
 	// Frames come out in presentation order, so within one uninterrupted pass over a GOP
 	// a frame not out yet comes after every frame already out; one given back for room
 	// that the pass already went past needs a pass from the keyframe. The decoder is
@@ -258,11 +277,23 @@ DecodeStatus DecodePlanner::decode(size_t gop, size_t packet)
 	const KeptGop *before = find(gop);
 	const bool passed = streamGop_ == gop && packet < count && packet < passNext_;
 	if (streamGop_ != gop || flushed_ || (passed && before && before->dropped[packet])) {
-		const DecodeStatus status = startAt(gop);
+		std::shared_ptr<const Gop> read = streamGop_ == gop ? started_ : gops_->read(gop);
+		// A GOP the source cannot give, or one that is not what its index says, has no
+		// frames to show. It is kept with nothing more to come, so that it is not read again
+		// while it is kept; the slot it takes may be the one of the pass under way, which
+		// therefore ends.
+		if (!read || read->packets().size() != count) {
+			KeptGop &kept = keep(gop);
+			std::fill(kept.dropped.begin(), kept.dropped.end(), char{0});
+			kept.complete = true;
+			return fail(DecodeStatus::InvalidData);
+		}
+		const DecodeStatus status = startAt(gop, std::move(read));
 		if (status != DecodeStatus::Ok) {
 			return fail(status);
 		}
 	}
+	const Gop &source = *started_;
 	KeptGop &kept = keep(gop);
 
 	// A frame behind the pass that is not held is one the decoder skipped: one given back
@@ -310,33 +341,28 @@ DecodeStatus DecodePlanner::fail(DecodeStatus status) noexcept
 		// again before it decodes anything.
 		releaseAll();
 		decoder_.close();
-		open_ = false;
+		started_.reset();
 		fresh_ = true;
 	}
 	return status;
 }
 
-DecodeStatus DecodePlanner::startAt(size_t gop)
+DecodeStatus DecodePlanner::startAt(size_t gop, std::shared_ptr<const Gop> read)
 {
-	const Gop &source = *clip_.gops()[gop];
-	if (!open_ || source.codecConfig() != openConfig_ || source.codec() != openCodec_) {
-		const std::span<const uint8_t> config = source.codecConfig()
-								? std::span<const uint8_t>(*source.codecConfig())
-								: std::span<const uint8_t>();
+	if (!started_ || !opensAlike(*started_, *read)) {
 		++work_.opens;
-		const DecodeStatus status = decoder_.open(source.codec(), config);
-		open_ = status == DecodeStatus::Ok;
-		if (!open_) {
+		const DecodeStatus status = decoder_.open(read->codec(), configOf(*read));
+		if (status != DecodeStatus::Ok) {
+			started_.reset();
 			return status;
 		}
-		openConfig_ = source.codecConfig();
-		openCodec_ = source.codec();
 	} else if (!fresh_) {
 		decoder_.reset();
 		++work_.resets;
 	}
 	fresh_ = true;
 	streamGop_ = gop;
+	started_ = std::move(read);
 	nextPacket_ = 0;
 	passNext_ = 0;
 	flushed_ = false;
@@ -345,7 +371,8 @@ DecodeStatus DecodePlanner::startAt(size_t gop)
 
 DecodeStatus DecodePlanner::receiveAll(KeptGop &kept, size_t wanted)
 {
-	const Gop &source = *clip_.gops()[kept.gop];
+	// Frames come only from the GOP the decoder is being given.
+	const Gop &source = *started_;
 	for (;;) {
 		DecodedFrame frame;
 		const DecodeStatus status = decoder_.receive(frame);
