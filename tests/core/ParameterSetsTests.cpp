@@ -1,6 +1,8 @@
 // SPDX-License-Identifier: GPL-2.0-or-later
 // Copyright (C) 2026 Vicente Aedo <ryde1337@gmail.com>
 
+#include "NalUnitWriter.hpp"
+
 #include "core/ParameterSets.hpp"
 
 #include <catch2/catch_test_macros.hpp>
@@ -9,10 +11,11 @@
 #include <cstddef>
 #include <cstdint>
 #include <initializer_list>
-#include <utility>
 #include <vector>
 
 using tapeloop::VideoCodec;
+using tapeloop::test::NalUnit;
+using tapeloop::test::NalUnitWriter;
 
 namespace {
 
@@ -133,88 +136,9 @@ TEST_CASE("a packet the filter cannot read is copied whole")
 
 namespace {
 
-// A NAL unit as an encoder writes it: the fields, a stop bit, and a 3 wherever two zeros
-// come before a byte below 4, which would otherwise read as a start code.
-struct Unit {
-	Bytes bytes;
-	// How many bytes from the start hold every field written.
-	size_t fields = 0;
-};
-
-class UnitWriter {
-public:
-	explicit UnitWriter(Bytes header) : header_(std::move(header)) {}
-
-	void bit(bool value)
-	{
-		if (used_ % 8 == 0) {
-			payload_.push_back(0);
-		}
-		if (value) {
-			payload_.back() |= static_cast<uint8_t>(0x80U >> (used_ % 8));
-		}
-		++used_;
-	}
-
-	void bits(uint64_t value, int count)
-	{
-		for (int i = count - 1; i >= 0; --i) {
-			bit(((value >> i) & 1U) != 0);
-		}
-	}
-
-	void ue(uint64_t value)
-	{
-		const uint64_t code = value + 1;
-		int length = 0;
-		while ((code >> (length + 1)) != 0) {
-			++length;
-		}
-		bits(0, length);
-		bits(code, length + 1);
-	}
-
-	void se(int64_t value)
-	{
-		ue(value > 0 ? 2 * static_cast<uint64_t>(value) - 1 : 2 * static_cast<uint64_t>(-value));
-	}
-
-	Unit finish() const
-	{
-		const size_t fieldBytes = (used_ + 7) / 8;
-		Bytes raw = payload_;
-		if (used_ % 8 == 0) {
-			raw.push_back(0x80);
-		} else {
-			raw.back() |= static_cast<uint8_t>(0x80U >> (used_ % 8));
-		}
-		Unit unit;
-		unit.bytes = header_;
-		unit.fields = header_.size();
-		int zeros = 0;
-		for (size_t i = 0; i < raw.size(); ++i) {
-			if (zeros >= 2 && raw[i] <= 3) {
-				unit.bytes.push_back(3);
-				zeros = 0;
-			}
-			unit.bytes.push_back(raw[i]);
-			zeros = raw[i] == 0 ? zeros + 1 : 0;
-			if (i < fieldBytes) {
-				unit.fields = unit.bytes.size();
-			}
-		}
-		return unit;
-	}
-
-private:
-	Bytes header_;
-	Bytes payload_;
-	size_t used_ = 0;
-};
-
 // The general profile, tier and level of HEVC Main at level 3.1, with zeros that need
 // emulation prevention bytes.
-void writeHevcProfile(UnitWriter &writer)
+void writeHevcProfile(NalUnitWriter &writer)
 {
 	writer.bits(0x01, 8);
 	writer.bits(0x60000000, 32);
@@ -239,9 +163,10 @@ struct HevcSps {
 	bool predicted = false;
 };
 
-Unit hevcSps(const HevcSps &sps)
+NalUnit hevcSps(const HevcSps &sps)
 {
-	UnitWriter writer({static_cast<uint8_t>(0x42 | (sps.layer >> 5)), static_cast<uint8_t>((sps.layer << 3) | 1)});
+	NalUnitWriter writer(
+		{static_cast<uint8_t>(0x42 | (sps.layer >> 5)), static_cast<uint8_t>((sps.layer << 3) | 1)});
 	writer.bits(0, 4);
 	writer.bits(sps.subLayers, 3);
 	const bool shared = sps.layer != 0 && sps.subLayers == 7;
@@ -370,9 +295,9 @@ struct H264Sps {
 	uint64_t cycle = 0;
 };
 
-Unit h264Sps(const H264Sps &sps)
+NalUnit h264Sps(const H264Sps &sps)
 {
-	UnitWriter writer({0x67});
+	NalUnitWriter writer({0x67});
 	writer.bits(sps.profile, 8);
 	writer.bits(0, 8);
 	writer.bits(40, 8);
@@ -424,7 +349,7 @@ bool whole(VideoCodec codec, const Bytes &data)
 
 // The unit passes whole and fails cut anywhere before the end of its fields, down to its
 // header.
-void checkCuts(VideoCodec codec, const Unit &unit)
+void checkCuts(VideoCodec codec, const NalUnit &unit)
 {
 	CHECK(whole(codec, join({kLong, unit.bytes})));
 	for (size_t size = 1; size < unit.fields; ++size) {
@@ -488,7 +413,7 @@ TEST_CASE("an H.264 SPS passes with every field the muxer counts through, and fa
 
 TEST_CASE("a configuration passes when each SPS in it is whole")
 {
-	const Unit sps = hevcSps({});
+	const NalUnit sps = hevcSps({});
 	const Bytes cut(sps.bytes.begin(), sps.bytes.begin() + static_cast<std::ptrdiff_t>(sps.fields - 1));
 	CHECK(whole(VideoCodec::Hevc, join({kLong, kHevcVps, kLong, sps.bytes, kShort, kHevcPps})));
 	CHECK_FALSE(whole(VideoCodec::Hevc, join({kLong, kHevcVps, kLong, cut, kShort, kHevcPps})));
@@ -497,7 +422,7 @@ TEST_CASE("a configuration passes when each SPS in it is whole")
 	// Zero bytes after a unit do not count as its fields.
 	CHECK_FALSE(whole(VideoCodec::Hevc, join({kLong, kHevcVps, kLong, cut, {0, 0}, kLong, kHevcPps})));
 
-	const Unit h264 = h264Sps({});
+	const NalUnit h264 = h264Sps({});
 	const Bytes h264Cut(h264.bytes.begin(), h264.bytes.begin() + static_cast<std::ptrdiff_t>(h264.fields - 1));
 	CHECK(whole(VideoCodec::H264, join({kLong, h264.bytes, kLong, kPps})));
 	CHECK_FALSE(whole(VideoCodec::H264, join({kShort, h264Cut, kLong, kPps})));
@@ -508,7 +433,7 @@ TEST_CASE("a configuration passes when each SPS in it is whole")
 
 TEST_CASE("data the muxer takes as it is passes")
 {
-	const Unit sps = hevcSps({});
+	const NalUnit sps = hevcSps({});
 	const Bytes cut(sps.bytes.begin(), sps.bytes.begin() + static_cast<std::ptrdiff_t>(sps.fields - 1));
 	CHECK(whole(VideoCodec::Hevc, {}));
 	CHECK(whole(VideoCodec::H264, {}));
