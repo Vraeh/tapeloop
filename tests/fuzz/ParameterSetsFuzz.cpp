@@ -133,6 +133,39 @@ std::vector<uint8_t> expected(VideoCodec codec, std::span<const uint8_t> config,
 	return out;
 }
 
+std::vector<uint8_t> withStartCode(std::span<const uint8_t> nal)
+{
+	std::vector<uint8_t> out{0, 0, 0, 1};
+	out.insert(out.end(), nal.begin(), nal.end());
+	return out;
+}
+
+// The check of whole sequence parameter sets reads each unit on its own, so data passes
+// when each of its units would pass alone.
+void checkWholeSets(VideoCodec codec, std::span<const uint8_t> data)
+{
+	const std::vector<Unit> units = unitsOf(data);
+	const bool each = std::all_of(units.begin(), units.end(), [&](const Unit &unit) {
+		return tapeloop::sequenceParameterSetsAreWhole(codec, withStartCode(unit.nal));
+	});
+	require(tapeloop::sequenceParameterSetsAreWhole(codec, data) == each);
+}
+
+// A set the check finds whole stays whole with more bytes after it: it never reads past
+// the fields it needs, and a unit holds no start code to end it early.
+void checkLongerSets(VideoCodec codec, std::span<const uint8_t> data)
+{
+	for (const Unit &unit : unitsOf(data)) {
+		bool whole = false;
+		for (size_t size = 1; size <= unit.nal.size(); ++size) {
+			const bool now =
+				tapeloop::sequenceParameterSetsAreWhole(codec, withStartCode(unit.nal.first(size)));
+			require(now || !whole);
+			whole = now;
+		}
+	}
+}
+
 } // namespace
 
 // The configuration comes first, as long as its first byte says, then the packet.
@@ -149,5 +182,10 @@ extern "C" int LLVMFuzzerTestOneInput(const uint8_t *data, size_t size)
 	require(out.empty() == packet.empty());
 	// What was taken out is gone: filtering again changes nothing.
 	require(filtered(codec, config, out) == out);
+
+	checkWholeSets(codec, config);
+	checkWholeSets(codec, packet);
+	// The configuration is short enough to be read again at every length.
+	checkLongerSets(codec, config);
 	return 0;
 }
