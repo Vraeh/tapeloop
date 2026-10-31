@@ -10,6 +10,7 @@
 #include <algorithm>
 #include <exception>
 #include <iterator>
+#include <mutex>
 #include <stdexcept>
 #include <string_view>
 #include <system_error>
@@ -35,6 +36,55 @@ bool pathTaken(const std::filesystem::path &path)
 	// What cannot be checked is taken, so that nothing is written over it.
 	return found || error;
 }
+
+// The names of the .part files the exports of this process are writing, for a scan to
+// leave alone. Names only, so that two spellings of one folder cannot hide a file.
+struct PartsWriting {
+	std::mutex mutex;
+	std::vector<std::filesystem::path> names;
+};
+
+PartsWriting &partsWriting()
+{
+	static PartsWriting parts;
+	return parts;
+}
+
+// Marks the .part files of one export as being written, from before each is created
+// until it goes, which is after the export's Leftovers have dealt with the files.
+class WritingParts {
+public:
+	WritingParts() = default;
+	~WritingParts()
+	{
+		PartsWriting &parts = partsWriting();
+		const std::lock_guard lock(parts.mutex);
+		for (const std::filesystem::path &name : names_) {
+			const auto found = std::find(parts.names.begin(), parts.names.end(), name);
+			if (found != parts.names.end()) {
+				parts.names.erase(found);
+			}
+		}
+	}
+
+	WritingParts(const WritingParts &) = delete;
+	WritingParts &operator=(const WritingParts &) = delete;
+	WritingParts(WritingParts &&) = delete;
+	WritingParts &operator=(WritingParts &&) = delete;
+
+	void add(const std::filesystem::path &part)
+	{
+		std::filesystem::path name = part.filename();
+		names_.reserve(names_.size() + 1);
+		PartsWriting &parts = partsWriting();
+		const std::lock_guard lock(parts.mutex);
+		parts.names.push_back(name);
+		names_.push_back(std::move(name));
+	}
+
+private:
+	std::vector<std::filesystem::path> names_;
+};
 
 // Files deleted when it goes, unless kept: what a failed export wrote.
 class Leftovers {
@@ -141,6 +191,23 @@ std::filesystem::path freeExportPath(const std::filesystem::path &folder, const 
 		}
 	}
 	throw std::runtime_error("no free name for " + stem + extension + " in " + utf8FromPath(folder));
+}
+
+bool removeStaleExportPart(const std::filesystem::path &path, std::error_code &error)
+{
+	error.clear();
+	const std::string name = utf8FromPath(path.filename());
+	if (!name.ends_with(".mp4.part") && !name.ends_with(".tplp.part")) {
+		return false;
+	}
+	PartsWriting &parts = partsWriting();
+	// Held while deleting, so that no export can claim the name between the check and
+	// the delete.
+	const std::lock_guard lock(parts.mutex);
+	if (std::find(parts.names.begin(), parts.names.end(), path.filename()) != parts.names.end()) {
+		return false;
+	}
+	return std::filesystem::remove(path, error);
 }
 
 ReplayExporter::ReplayExporter(WriterFactory mp4) : mp4_(std::move(mp4)), worker_([this] { run(); }) {}
@@ -297,6 +364,7 @@ std::vector<std::filesystem::path> ReplayExporter::exportMp4(const ExportRequest
 
 	const std::filesystem::path folder = exportFolderOf(request.manifest);
 	std::filesystem::create_directories(folder);
+	WritingParts writing;
 	Leftovers leftovers;
 	std::vector<std::filesystem::path> files;
 	for (size_t s = 0; s < index.sources.size(); ++s) {
@@ -305,6 +373,7 @@ std::vector<std::filesystem::path> ReplayExporter::exportMp4(const ExportRequest
 		for (const Mp4Part &part : parts[s]) {
 			const std::filesystem::path target = freeExportPath(folder, stem, ".mp4", files);
 			const std::filesystem::path partPath = partPathOf(target);
+			writing.add(partPath);
 			leftovers.add(partPath);
 			std::unique_ptr<VideoFileWriter> writer = mp4_();
 			const std::shared_ptr<const Gop> first = readGop(request, index, reader, s, part.firstGop);
@@ -351,9 +420,11 @@ std::vector<std::filesystem::path> ReplayExporter::exportReplay(const ExportRequ
 	const std::filesystem::path folder = exportFolderOf(request.manifest);
 	std::filesystem::create_directories(folder);
 	const std::string stem = utf8FromPath(request.manifest.stem());
+	WritingParts writing;
 	Leftovers leftovers;
 	const std::filesystem::path target = freeExportPath(folder, stem, ".tplp", {});
 	const std::filesystem::path partPath = partPathOf(target);
+	writing.add(partPath);
 	File file(partPath, File::Mode::CreateNew);
 	leftovers.add(partPath);
 

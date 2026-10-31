@@ -3,6 +3,7 @@
 
 #include "core/ReplayWriter.hpp"
 
+#include "core/ReplayExport.hpp"
 #include "core/ReplayNames.hpp"
 
 #include <algorithm>
@@ -480,12 +481,16 @@ ReplayScan scanReplays(const std::filesystem::path &base)
 				scan.replays.push_back(readReplay(path, broadcast, scan.errors));
 			}
 		}
-		// An export a crash stopped left its file under a .part name.
+		// An export a crash stopped left its file under a .part name. A link in place of
+		// the folder is not followed, since it can lead to anyone's files.
 		const std::filesystem::path exports = folder / pathFromUtf8(kExportFolderName);
-		if (std::filesystem::is_directory(exports, error)) {
+		if (std::filesystem::is_directory(std::filesystem::symlink_status(exports, error))) {
 			for (const std::filesystem::path &path : listDirectory(exports, scan.errors)) {
-				if (utf8FromPath(path.filename()).ends_with(".part")) {
-					removeHalfWritten(path, scan);
+				std::error_code removeError;
+				if (removeStaleExportPart(path, removeError)) {
+					scan.removed.push_back(path);
+				} else if (removeError) {
+					scan.errors.push_back(describe("cannot delete", path, removeError));
 				}
 			}
 		}

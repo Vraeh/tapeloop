@@ -491,6 +491,28 @@ TEST_CASE("an exporter keeps no GOP once its exports are done")
 	}
 }
 
+TEST_CASE("a scan leaves alone the file an export is writing")
+{
+	TempDirectory dir;
+	const fs::path folder = dir.path() / "Liga 2026-10-09 21-00";
+	const WrittenReplay written = ReplayWriter().write(captureOf(folder, {sourceOf("a", makeGops(2))}));
+	std::vector<WrittenFile> files;
+	Pause pause(0);
+	ReplayExporter exporter(recording(files, -1, &pause));
+	exporter.exportReplay(requestFor(written, ExportFormat::Mp4));
+	pause.waitUntilReached();
+	const bool writing = fs::exists(folder / "Export" / "2026-10-09 21-05-42 - Camera a.mp4.part");
+	const tapeloop::ReplayScan scan = tapeloop::scanReplays(dir.path());
+	pause.release();
+	exporter.waitUntilIdle();
+	CHECK(writing);
+	CHECK(scan.removed.empty());
+	const std::vector<ExportResult> results = exporter.poll();
+	REQUIRE(results.size() == 1);
+	CHECK(results.front().error.empty());
+	CHECK(namesIn(folder / "Export") == std::vector<std::string>{"2026-10-09 21-05-42 - Camera a.mp4"});
+}
+
 TEST_CASE("an MP4 export without an MP4 writer fails, and so does one of a replay that is gone")
 {
 	TempDirectory dir;

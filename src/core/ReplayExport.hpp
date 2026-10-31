@@ -20,6 +20,7 @@
 #include <mutex>
 #include <optional>
 #include <string>
+#include <system_error>
 #include <thread>
 #include <vector>
 
@@ -74,6 +75,11 @@ std::filesystem::path exportFolderOf(const std::filesystem::path &manifest);
 // folder nor among taken. Throws std::runtime_error when a thousand are.
 std::filesystem::path freeExportPath(const std::filesystem::path &folder, const std::string &stem,
 				     const std::string &extension, const std::vector<std::filesystem::path> &taken);
+
+// Deletes the file at path if it is one an export stopped by a crash leaves, a .mp4.part
+// or a .tplp.part, and no export of this process is writing it. Returns whether it did;
+// error says why it could not.
+bool removeStaleExportPart(const std::filesystem::path &path, std::error_code &error);
 
 struct ExportRequest {
 	ExportFormat format = ExportFormat::Mp4;
