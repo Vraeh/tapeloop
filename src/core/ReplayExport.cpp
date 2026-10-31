@@ -371,37 +371,43 @@ std::vector<std::filesystem::path> ReplayExporter::exportMp4(const ExportRequest
 		const StoredSource &source = index.sources[s];
 		const std::string stem = mp4Stem(request.manifest, source.name);
 		for (const Mp4Part &part : parts[s]) {
-			const std::filesystem::path target = freeExportPath(folder, stem, ".mp4", files);
-			const std::filesystem::path partPath = partPathOf(target);
-			writing.add(partPath);
-			leftovers.add(partPath);
-			std::unique_ptr<VideoFileWriter> writer = mp4_();
-			const std::shared_ptr<const Gop> first = readGop(request, index, reader, s, part.firstGop);
-			writer->open(partPath, *first);
-			// A later part starts at its own keyframe; the first, at the in point, after
-			// the frames before it that decoding needs.
-			const Nanoseconds origin = std::max(source.in, first->startTime());
-			bool past = false;
-			for (size_t gop = part.firstGop; gop < part.endGop && !past; ++gop) {
-				const std::shared_ptr<const Gop> read =
-					gop == part.firstGop ? first : readGop(request, index, reader, s, gop);
-				const std::span<const PacketRecord> records = read->packets();
-				for (size_t packet = 0; packet < records.size(); ++packet) {
-					if (records[packet].time > source.out) {
-						past = true;
-						break;
+			size_t gop = part.firstGop;
+			std::shared_ptr<const Gop> read = readGop(request, index, reader, s, gop);
+			// A file from each GOP that does not fit the one before, such as one of
+			// another picture size.
+			while (read) {
+				const std::filesystem::path target = freeExportPath(folder, stem, ".mp4", files);
+				const std::filesystem::path partPath = partPathOf(target);
+				writing.add(partPath);
+				leftovers.add(partPath);
+				std::unique_ptr<VideoFileWriter> writer = mp4_();
+				writer->open(partPath, *read);
+				// A later file starts at its own keyframe; the first, at the in point,
+				// after the frames before it that decoding needs.
+				const Nanoseconds origin = std::max(source.in, read->startTime());
+				do {
+					const std::span<const PacketRecord> records = read->packets();
+					bool past = false;
+					for (size_t packet = 0; packet < records.size() && !past; ++packet) {
+						past = records[packet].time > source.out;
+						if (!past) {
+							writer->write(*read, packet, records[packet].time - origin);
+							countDone(1);
+						}
 					}
-					writer->write(*read, packet, records[packet].time - origin);
-					countDone(1);
-				}
+					read.reset();
+					if (!past && ++gop < part.endGop) {
+						read = readGop(request, index, reader, s, gop);
+					}
+				} while (read && writer->fits(*read));
+				writer->finish();
+				writer.reset();
+				File(partPath, File::Mode::ReadWrite).flush();
+				const std::filesystem::path path = publish(partPath, target, stem, ".mp4", files);
+				leftovers.forget(partPath);
+				leftovers.add(path);
+				files.push_back(path);
 			}
-			writer->finish();
-			writer.reset();
-			File(partPath, File::Mode::ReadWrite).flush();
-			const std::filesystem::path path = publish(partPath, target, stem, ".mp4", files);
-			leftovers.forget(partPath);
-			leftovers.add(path);
-			files.push_back(path);
 		}
 	}
 	leftovers.keepAll();

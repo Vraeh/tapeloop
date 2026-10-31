@@ -110,6 +110,8 @@ void Mp4Writer::open(const std::filesystem::path &path, const Gop &first)
 	frameTicks_ = std::max<int64_t>(ticksOf(first.frameDuration()), 1);
 	lastDts_ = std::numeric_limits<int64_t>::min();
 	const auto [width, height] = pictureSize(first);
+	width_ = width;
+	height_ = height;
 
 	int error = avformat_alloc_output_context2(&context_, nullptr, "mp4", nullptr);
 	if (error < 0 || !context_) {
@@ -162,6 +164,17 @@ void Mp4Writer::open(const std::filesystem::path &path, const Gop &first)
 	if (error < 0) {
 		fail("cannot write the start of " + utf8FromPath(path), error);
 	}
+}
+
+bool Mp4Writer::fits(const Gop &gop) const
+{
+	// Every configuration of a run has the size of its pictures, so only a new one is
+	// read. Without one the size cannot be told, and the file keeps its own.
+	const CodecConfig *config = gop.codecConfig();
+	if (!config || *config == config_) {
+		return true;
+	}
+	return pictureSize(gop) == std::pair{width_, height_};
 }
 
 void Mp4Writer::write(const Gop &gop, size_t packet, Nanoseconds time)

@@ -27,8 +27,8 @@
 namespace tapeloop {
 
 enum class ExportFormat {
-	// One MP4 per source by remux, and one per codec of a source whose encoder fell back
-	// from HEVC to H.264.
+	// One MP4 per source by remux, and one more each time the encoder of a source fell back
+	// from HEVC to H.264 or changed its picture size.
 	Mp4,
 	// One self-contained .tplp, which plays without the broadcast folder.
 	Replay,
@@ -49,6 +49,9 @@ public:
 
 	// Starts a file at path for GOPs of first's codec and configuration.
 	virtual void open(const std::filesystem::path &path, const Gop &first) = 0;
+	// Whether gop, of the codec of the file, can go on in it. One that cannot starts a file
+	// of its own.
+	virtual bool fits(const Gop &gop) const = 0;
 	// A packet of gop, in decode order, at time from the file's start, which is negative
 	// for the frames before it that only serve decoding. A GOP of another configuration of
 	// the same codec carries it along.
@@ -56,8 +59,9 @@ public:
 	virtual void finish() = 0;
 };
 
-// The GOPs of one MP4 file of a source: those with a frame between its in and out points,
-// as long as they keep one codec.
+// The GOPs of the MP4 files of a source with one codec: those with a frame between its in
+// and out points, as long as they keep that codec. A part goes on in a new file from a GOP
+// that does not fit the one open (VideoFileWriter::fits).
 struct Mp4Part {
 	size_t firstGop = 0;
 	size_t endGop = 0;

@@ -37,6 +37,9 @@ public:
 	Mp4Writer &operator=(Mp4Writer &&) = delete;
 
 	void open(const std::filesystem::path &path, const Gop &first) override;
+	// A GOP of another picture size does not fit: the sample entry and the track header
+	// carry the size of the first.
+	bool fits(const Gop &gop) const override;
 	void write(const Gop &gop, size_t packet, Nanoseconds time) override;
 	void finish() override;
 
@@ -56,6 +59,8 @@ private:
 	AVPacket *packet_ = nullptr;
 	// The configuration of the last packet written.
 	CodecConfig config_;
+	int width_ = 0;
+	int height_ = 0;
 	int64_t frameTicks_ = 1;
 	int64_t lastDts_ = std::numeric_limits<int64_t>::min();
 };

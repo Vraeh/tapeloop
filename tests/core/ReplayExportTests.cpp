@@ -98,14 +98,16 @@ private:
 };
 
 // Records what an MP4 export hands over, and writes a byte so the file exists. The
-// packet at failAt, counted over every file of the export, fails.
+// packet at failAt, counted over every file of the export, fails, and the GOP starting at
+// pts splitAt does not fit the file before it.
 class RecordingWriter final : public tapeloop::VideoFileWriter {
 public:
-	RecordingWriter(std::vector<WrittenFile> &files, int &written, int failAt, Pause *pause)
+	RecordingWriter(std::vector<WrittenFile> &files, int &written, int failAt, Pause *pause, int64_t splitAt)
 		: files_(files),
 		  written_(written),
 		  failAt_(failAt),
-		  pause_(pause)
+		  pause_(pause),
+		  splitAt_(splitAt)
 	{
 	}
 
@@ -115,6 +117,7 @@ public:
 		const uint8_t byte = 1;
 		File(path, File::Mode::CreateNew).writeAt(0, {&byte, 1});
 	}
+	bool fits(const Gop &gop) const override { return gop.packets().front().pts != splitAt_; }
 	void write(const Gop &gop, size_t packet, Nanoseconds time) override
 	{
 		if (pause_ != nullptr) {
@@ -133,6 +136,7 @@ private:
 	int &written_;
 	int failAt_;
 	Pause *pause_;
+	int64_t splitAt_;
 };
 
 // Writes a byte, and when the file is done takes the name it is meant for, as another
@@ -145,6 +149,7 @@ public:
 		const uint8_t byte = 1;
 		File(path, File::Mode::CreateNew).writeAt(0, {&byte, 1});
 	}
+	bool fits(const Gop &) const override { return true; }
 	void write(const Gop &, size_t, Nanoseconds) override {}
 	void finish() override
 	{
@@ -156,11 +161,12 @@ private:
 	fs::path part_;
 };
 
-ReplayExporter::WriterFactory recording(std::vector<WrittenFile> &files, int failAt = -1, Pause *pause = nullptr)
+ReplayExporter::WriterFactory recording(std::vector<WrittenFile> &files, int failAt = -1, Pause *pause = nullptr,
+					int64_t splitAt = -1)
 {
 	auto written = std::make_shared<int>(0);
-	return [&files, written, failAt, pause] {
-		return std::make_unique<RecordingWriter>(files, *written, failAt, pause);
+	return [&files, written, failAt, pause, splitAt] {
+		return std::make_unique<RecordingWriter>(files, *written, failAt, pause, splitAt);
 	};
 }
 
@@ -243,6 +249,30 @@ TEST_CASE("an MP4 part after a change of codec starts at its own first frame")
 	REQUIRE(files[1].times.size() == 9);
 	CHECK(files[1].times.front() == Nanoseconds{0});
 	CHECK(files[1].times.back() == hevc.back()->packets()[3].time - hevc.front()->startTime());
+}
+
+TEST_CASE("an MP4 part goes on in a new file from a GOP that does not fit the one before")
+{
+	TempDirectory dir;
+	const Gops gops = makeGops(4);
+	const WrittenReplay written = ReplayWriter().write(captureOf(dir.path(), {trimmed("a", gops)}));
+	REQUIRE(tapeloop::mp4Parts(written.index.sources.front()).size() == 1);
+	std::vector<WrittenFile> files;
+	ReplayExporter exporter(recording(files, -1, nullptr, gops[2]->packets().front().pts));
+	const ExportResult result = exportOnce(exporter, requestFor(written, ExportFormat::Mp4));
+	REQUIRE(result.error.empty());
+	REQUIRE(files.size() == 2);
+	REQUIRE(result.files.size() == 2);
+	CHECK(files[0].finished);
+	REQUIRE(files[0].times.size() == 10);
+	CHECK(files[0].times[2] == Nanoseconds{0});
+	// The next file starts at its own keyframe and goes on to the out point.
+	CHECK(files[1].finished);
+	REQUIRE(files[1].times.size() == 9);
+	CHECK(files[1].times.front() == Nanoseconds{0});
+	CHECK(files[1].times.back() == gops[3]->packets()[3].time - gops[2]->startTime());
+	CHECK(namesIn(dir.path() / "Export") ==
+	      std::vector<std::string>{"2026-10-09 21-05-42 - Camera a (2).mp4", "2026-10-09 21-05-42 - Camera a.mp4"});
 }
 
 TEST_CASE("an MP4 export writes each source from its in point, in the Export folder")
