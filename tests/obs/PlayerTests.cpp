@@ -2,6 +2,7 @@
 // Copyright (C) 2026 Vicente Aedo <ryde1337@gmail.com>
 
 #include "AllocationCounter.hpp"
+#include "LogCounter.hpp"
 #include "ObsFixture.hpp"
 #include "PlayerClips.hpp"
 #include "TestPattern.hpp"
@@ -61,6 +62,7 @@ using tapeloop::test::gopStarts;
 using tapeloop::test::kClipHeight;
 using tapeloop::test::kClipWidth;
 using tapeloop::test::ObsFixture;
+using tapeloop::test::LogCounter;
 using tapeloop::test::waitFor;
 
 namespace {
@@ -68,7 +70,7 @@ namespace {
 // One frame of a 60 Hz canvas.
 constexpr Nanoseconds kTick{16'666'667};
 
-std::unique_ptr<PictureDecoder> makeDecoder()
+std::unique_ptr<PictureDecoder> makeDecoder(bool)
 {
 	return std::make_unique<FFmpegDecoder>();
 }
@@ -399,19 +401,22 @@ private:
 int gpuTexture = 0;
 
 // What the decoders of a test's player share with the test: whether their pictures are
-// on the GPU, how much smaller than the clip they say they are, and how many were asked
-// for.
+// on the GPU, how much smaller than the clip they say they are, how many were asked for,
+// and how many decoders were made for each kind of picture.
 struct GpuMeter {
 	std::atomic<bool> onGpu{true};
 	std::atomic<uint32_t> crop{0};
 	std::atomic<size_t> pictures{0};
+	std::atomic<size_t> gpuDecoders{0};
+	std::atomic<size_t> memoryDecoders{0};
 };
 
 // An FFmpegDecoder whose pictures say they are on the GPU while the meter says so, as a
-// hardware decoder's are, and keep their planes for FakeGpuPictures to read.
+// hardware decoder's are, and keep their planes for FakeGpuPictures to read. One asked
+// for pictures in memory gives them in memory.
 class GpuDecoder final : public PictureDecoder {
 public:
-	explicit GpuDecoder(GpuMeter &meter) : meter_(meter) {}
+	GpuDecoder(GpuMeter &meter, bool onGpu) : meter_(meter), onGpu_(onGpu) {}
 
 	DecodeStatus open(VideoCodec codec, std::span<const uint8_t> config) noexcept override
 	{
@@ -433,7 +438,7 @@ public:
 	{
 		++meter_.pictures;
 		std::optional<Picture> picture = decoder_.picture(frame);
-		if (picture && meter_.onGpu) {
+		if (picture && onGpu_ && meter_.onGpu) {
 			picture->texture = &gpuTexture;
 			picture->width -= meter_.crop;
 			picture->height -= meter_.crop;
@@ -443,13 +448,15 @@ public:
 
 	static ReplayPlayer::DecoderFactory factory(GpuMeter &meter)
 	{
-		return [&meter]() -> std::unique_ptr<PictureDecoder> {
-			return std::make_unique<GpuDecoder>(meter);
+		return [&meter](bool onGpu) -> std::unique_ptr<PictureDecoder> {
+			++(onGpu ? meter.gpuDecoders : meter.memoryDecoders);
+			return std::make_unique<GpuDecoder>(meter, onGpu);
 		};
 	}
 
 private:
 	GpuMeter &meter_;
+	bool onGpu_;
 	FFmpegDecoder decoder_;
 };
 
@@ -790,14 +797,14 @@ TEST_CASE_METHOD(ObsFixture, "a replay player without a decoder keeps its playhe
 	for (const bool throws : {false, true}) {
 		CAPTURE(throws);
 		int calls = 0;
-		ReplayPlayer player([&]() -> std::unique_ptr<PictureDecoder> {
+		ReplayPlayer player([&](bool onGpu) -> std::unique_ptr<PictureDecoder> {
 			if (++calls == 1) {
 				if (throws) {
 					throw std::runtime_error("no decoder");
 				}
 				return nullptr;
 			}
-			return makeDecoder();
+			return makeDecoder(onGpu);
 		});
 		REQUIRE(player.load(gopsOf(clip)));
 		player.step(3);
@@ -948,9 +955,10 @@ TEST_CASE_METHOD(ObsFixture, "a replay player decodes on its own thread once sta
 	const std::vector<size_t> starts = gopStarts(clip, expected);
 
 	Screen screen;
-	for (const bool onGpu : {false, true}) {
-		CAPTURE(onGpu);
+	for (const auto [onGpu, refused] : {std::pair{false, false}, std::pair{true, false}, std::pair{true, true}}) {
+		CAPTURE(onGpu, refused);
 		FakeGpuPictures gpu;
+		gpu.refuse = refused;
 		GpuMeter meter;
 		ReplayPlayer player(onGpu ? GpuDecoder::factory(meter) : ReplayPlayer::DecoderFactory(makeDecoder), {},
 				    onGpu ? &gpu : nullptr);
@@ -1005,6 +1013,11 @@ TEST_CASE_METHOD(ObsFixture, "a replay player decodes on its own thread once sta
 		player.stop();
 		CHECK_FALSE(player.decodeNext());
 		CHECK_FALSE(player.start());
+		if (onGpu) {
+			CHECK(meter.gpuDecoders == 1);
+			CHECK(meter.memoryDecoders == (refused ? 1 : 0));
+			CHECK(gpu.prepares == 1);
+		}
 		// The playhead still answers, with nothing decoded for it.
 		const size_t at = player.state().frame;
 		REQUIRE(at > 0);
@@ -1113,8 +1126,13 @@ TEST_CASE_METHOD(ObsFixture, "a replay player switches between pictures in memor
 	}
 	CHECK(gpu.prepares == 1);
 
-	// Without GpuPictures, a picture on the GPU is not shown, and the playhead goes on.
-	ReplayPlayer blind(GpuDecoder::factory(meter));
+	// Without GpuPictures the decoder is asked for pictures in memory. One on the GPU is
+	// not shown, and the playhead goes on.
+	std::optional<bool> asked;
+	ReplayPlayer blind([&](bool onGpu) -> std::unique_ptr<PictureDecoder> {
+		asked = onGpu;
+		return std::make_unique<GpuDecoder>(meter, true);
+	});
 	meter.onGpu = true;
 	REQUIRE(blind.load(gopsOf(clip)));
 	for (size_t frame = 1; frame <= 3; ++frame) {
@@ -1123,6 +1141,7 @@ TEST_CASE_METHOD(ObsFixture, "a replay player switches between pictures in memor
 		CHECK_FALSE(blind.state().drawn);
 		CHECK(blind.state().frame == frame);
 	}
+	CHECK(asked == false);
 	meter.onGpu = false;
 	blind.step(1);
 	CHECK(checkTick(screen, blind, expected).frame == 4);
@@ -1210,36 +1229,62 @@ TEST_CASE_METHOD(ObsFixture, "a replay player hands its picture over again after
 	}
 }
 
-TEST_CASE_METHOD(ObsFixture, "a replay player whose GPU pictures cannot be prepared tries again at the next load",
+TEST_CASE_METHOD(ObsFixture, "a replay player whose GPU pictures cannot be prepared decodes in memory instead",
 		 "[obs][player]")
 {
-	const Clip clip = captureClip(2);
+	const Clip clip = captureClip(3);
+	REQUIRE(clip.gops().size() >= 3);
 	const std::vector<ExpectedFrame> expected = expectedFrames(clip);
+	const std::vector<size_t> starts = gopStarts(clip, expected);
 
 	Screen screen;
 	FakeGpuPictures gpu;
 	gpu.refuse = true;
 	GpuMeter meter;
+	const LogCounter said("so it decodes them in memory from now on");
 	ReplayPlayer player(GpuDecoder::factory(meter), {}, &gpu);
 	REQUIRE(player.load(gopsOf(clip)));
-	for (size_t frame = 1; frame <= 4; ++frame) {
-		player.step(1);
-		CHECK_FALSE(screen.frame(player).drawn);
-		CHECK_FALSE(player.state().drawn);
-		CHECK(player.state().frame == frame);
-	}
-	CHECK(gpu.prepares == 1);
-	CHECK(gpu.publishes == 0);
+	player.step(2);
 
-	// Not on every frame of the same clip, even once it could be.
+	// The render that finds the picture cannot be shown on the GPU draws nothing, and
+	// the frame the playhead is on comes back in memory.
+	player.tick(kTick);
+	Screen::decodeAll(player);
+	CHECK_FALSE(screen.draw(player).drawn);
+	CHECK(gpu.prepares == 1);
+	Screen::decodeAll(player);
+	const Shown shown = screen.draw(player);
+	CHECK(shown.drawn);
+	CHECK(shown.number == expected[2].number);
+	CHECK(player.state().drawn == size_t{2});
+	CHECK(meter.gpuDecoders == 1);
+	CHECK(meter.memoryDecoders == 1);
+
+	// The GpuPictures is not prepared again, even once it could be.
 	gpu.refuse = false;
-	player.step(1);
-	CHECK_FALSE(screen.frame(player).drawn);
-	CHECK(gpu.prepares == 1);
+	const size_t last = starts[0] + 2;
+	for (size_t frame = 3; frame <= last; ++frame) {
+		player.step(1);
+		CHECK(checkTick(screen, player, expected).frame == frame);
+	}
+	for (size_t frame = last; frame-- > starts[0] - 3;) {
+		player.step(-1);
+		CHECK(checkTick(screen, player, expected).frame == frame);
+	}
+	for (const size_t frame : {expected.size() - 1, starts[0] - 1}) {
+		player.seek(expected[frame].time);
+		CHECK(checkTick(screen, player, expected).frame == frame);
+	}
 
+	// The next clip is decoded in memory from its first frame.
 	REQUIRE(player.load(gopsOf(clip)));
-	showFirst(screen, player, expected, true);
-	CHECK(gpu.prepares == 2);
+	checkTick(screen, player, expected, 0ns);
 	player.step(1);
 	CHECK(checkTick(screen, player, expected).frame == 1);
+
+	CHECK(gpu.prepares == 1);
+	CHECK(gpu.publishes == 0);
+	CHECK(meter.gpuDecoders == 1);
+	CHECK(meter.memoryDecoders == 1);
+	CHECK(said.lines == 1);
 }

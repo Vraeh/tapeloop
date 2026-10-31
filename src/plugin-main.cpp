@@ -43,7 +43,7 @@ void addDock()
 tapeloop::obs::ReplayPlayer::DecoderFactory replayDecoders()
 {
 #ifdef TAPELOOP_FFMPEG
-	return [] {
+	return [](bool) {
 		return std::make_unique<tapeloop::decode::FFmpegDecoder>();
 	};
 #else

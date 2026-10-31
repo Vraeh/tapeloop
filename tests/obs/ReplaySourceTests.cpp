@@ -64,7 +64,7 @@ using tapeloop::test::ObsFixture;
 
 namespace {
 
-std::unique_ptr<PictureDecoder> makeDecoder()
+std::unique_ptr<PictureDecoder> makeDecoder(bool)
 {
 	return std::make_unique<FFmpegDecoder>();
 }
@@ -364,6 +364,8 @@ struct DecodeMeter {
 	std::atomic<int64_t> busy{0};
 	std::atomic<size_t> frames{0};
 	std::atomic<size_t> allocations{0};
+	std::atomic<size_t> decoders{0};
+	std::atomic<size_t> gpuDecoders{0};
 };
 
 // An FFmpegDecoder that times its calls and counts every allocation of the thread that
@@ -618,7 +620,11 @@ TEST_CASE_METHOD(ObsFixture, "a playing replay source allocates nothing per fram
 
 	// Declared before the source, whose decoding thread writes it until it is destroyed.
 	DecodeMeter meter;
-	registerReplaySource([&meter] { return std::make_unique<MeteredDecoder>(meter); });
+	registerReplaySource([&meter](bool onGpu) {
+		++meter.decoders;
+		meter.gpuDecoders += onGpu ? 1 : 0;
+		return std::make_unique<MeteredDecoder>(meter);
+	});
 	SourceRun run(expected);
 	REQUIRE(run.control().load(gopsOf(clip)));
 	run.frame();
@@ -674,6 +680,14 @@ TEST_CASE_METHOD(ObsFixture, "a playing replay source allocates nothing per fram
 	CHECK(run.gate().allocations() == 0);
 	CHECK(renders == 0);
 	CHECK(meter.allocations == decodingBefore);
+	// Only a source with shared textures, which needs Direct3D 11, asks for pictures on
+	// the GPU.
+	CHECK(meter.decoders == 1);
+#ifdef _WIN32
+	CHECK(meter.gpuDecoders == 1);
+#else
+	CHECK(meter.gpuDecoders == 0);
+#endif
 	REQUIRE(frames > 0);
 	REQUIRE(played > 0.0);
 	// The CPU path at the size of the test clips; FFmpeg's own buffers are not counted.

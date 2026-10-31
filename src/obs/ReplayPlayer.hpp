@@ -61,15 +61,22 @@ struct PlayerState {
 //
 // Pictures in memory are copied into buffers of the player's own, which render() uploads
 // into the caller's renderer. Pictures on the GPU are published into the GpuPictures the
-// player was given and drawn from there; without one they are not shown. Whenever its
-// generation changes, as after a device rebuild, the frame on screen is handed over again,
-// since what was drawn from it is gone and textures in OBS may have lost what they held.
+// player was given and drawn from there; without one they are not shown, and the decoder
+// is not asked for them. Whenever its generation changes, as after a device rebuild, the
+// frame on screen is handed over again, since what was drawn from it is gone and textures
+// in OBS may have lost what they held.
+//
+// When the GpuPictures cannot be prepared for the decoder's pictures, the player makes
+// another decoder, asked for pictures in memory, which picks the clip up at the frame the
+// playhead is on and decodes every clip after it. The GpuPictures is not prepared again,
+// and the change is logged once.
 class ReplayPlayer {
 public:
 	// Makes the decoder on the decoding thread, the first time a clip needs one, so
-	// that whatever device it opens is not opened on the caller's thread. Null, or an
-	// exception, leaves the clip without pictures, and the next load() tries again.
-	using DecoderFactory = std::function<std::unique_ptr<decode::PictureDecoder>()>;
+	// that whatever device it opens is not opened on the caller's thread. onGpu says
+	// whether its pictures may stay on the GPU; false asks for pictures in memory. Null,
+	// or an exception, leaves the clip without pictures, and the next load() tries again.
+	using DecoderFactory = std::function<std::unique_ptr<decode::PictureDecoder>(bool onGpu)>;
 
 	// The GpuPictures, if any, outlives the player.
 	explicit ReplayPlayer(DecoderFactory decoders, DecodePlannerConfig planner = {}, GpuPictures *gpu = nullptr);
@@ -155,13 +162,14 @@ private:
 		bool onGpu = false;
 	};
 	// What the decoding side takes in one go. republish asks for the frame on screen
-	// again.
+	// again, and inMemory for pictures in memory from now on.
 	struct Request {
 		bool newClip = false;
 		uint64_t clip = 0;
 		std::unique_ptr<GopSource> gops;
 		std::optional<Wanted> wanted;
 		bool republish = false;
+		bool inMemory = false;
 	};
 	// A picture in memory of the player's own: the decoding side fills one while
 	// render() reads another, and the third holds the newest one ready. A picture on the
@@ -187,6 +195,8 @@ private:
 	bool handOffGpu(const decode::Picture &picture, const Wanted &wanted) noexcept;
 	// Called by render() when the GpuPictures changes generation.
 	void republish() noexcept;
+	// Called by render() when the GpuPictures cannot be prepared.
+	void decodeInMemory() noexcept;
 	void decodeLoop() noexcept;
 
 	DecoderFactory decoders_;
@@ -208,6 +218,7 @@ private:
 	std::unique_ptr<GopSource> pendingGops_;
 	std::optional<Wanted> wanted_;
 	bool republish_ = false;
+	bool inMemory_ = false;
 	uint64_t requests_ = 0;
 	bool stopping_ = false;
 	PlayerState state_;
@@ -221,15 +232,19 @@ private:
 	std::optional<Wanted> posted_;
 	// The frame the renderer or the GpuPictures holds, while it is of the current clip.
 	std::optional<Shown> onScreen_;
-	// The size the GpuPictures was last prepared for, which is tried once for each clip,
-	// and the generation it had at the last render().
+	// The size the GpuPictures was last prepared for, whether it ever refused one, after
+	// which it is not prepared again, and the generation it had at the last render().
 	uint32_t preparedWidth_ = 0;
 	uint32_t preparedHeight_ = 0;
+	bool gpuRefused_ = false;
 	uint64_t gpuGeneration_ = 0;
 
-	// The decoding side only. The planner goes before the decoder it gives frames back
-	// to.
+	// The decoding side only. The clip is held here as well as by the planner, so that a
+	// planner made for another decoder can take it over; the planner goes before the
+	// decoder it gives frames back to.
+	std::shared_ptr<GopSource> gops_;
 	std::unique_ptr<decode::PictureDecoder> decoder_;
+	bool decoderOnGpu_ = false;
 	std::unique_ptr<DecodePlanner> planner_;
 	uint64_t handled_ = 0;
 	uint64_t decodingClip_ = 0;

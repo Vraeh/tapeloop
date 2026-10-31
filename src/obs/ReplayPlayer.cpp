@@ -3,12 +3,29 @@
 
 #include "obs/ReplayPlayer.hpp"
 
+#include <util/base.h>
+
 #include <algorithm>
 #include <cstring>
 #include <utility>
 
 namespace tapeloop::obs {
 namespace {
+
+// Plays a clip held elsewhere as well.
+class SharedGops final : public GopSource {
+public:
+	explicit SharedGops(std::shared_ptr<GopSource> gops) noexcept : gops_(std::move(gops)) {}
+
+	size_t gopCount() const noexcept override { return gops_->gopCount(); }
+	size_t packetCount(size_t gop) const noexcept override { return gops_->packetCount(gop); }
+	FrameLocation locate(Nanoseconds t) const noexcept override { return gops_->locate(t); }
+	std::vector<Nanoseconds> frameTimes() const override { return gops_->frameTimes(); }
+	std::shared_ptr<const Gop> read(size_t gop) override { return gops_->read(gop); }
+
+private:
+	std::shared_ptr<GopSource> gops_;
+};
 
 int32_t nextPreset(int32_t rate, bool up) noexcept
 {
@@ -242,10 +259,6 @@ void ReplayPlayer::tick(Nanoseconds elapsed) noexcept
 			playhead_.load(std::move(loadingTimes_));
 			clip_ = loaded;
 			onScreen_.reset();
-			// A size the GpuPictures could not be prepared for is tried again for the
-			// next clip, not on every frame.
-			preparedWidth_ = 0;
-			preparedHeight_ = 0;
 		}
 		if (i < count) {
 			apply(applying_[i]);
@@ -301,11 +314,15 @@ bool ReplayPlayer::render(PictureRenderer &renderer, uint32_t width, uint32_t he
 	}
 	if (gpu_) {
 		// A picture of a size the GpuPictures is not prepared for could not be published.
-		// Preparing it changes the generation, which brings that picture back.
-		if (gpuWidth != 0 && (gpuWidth != preparedWidth_ || gpuHeight != preparedHeight_)) {
+		// Preparing it changes the generation, which brings that picture back; when it
+		// cannot be prepared, the picture comes back in memory instead.
+		if (!gpuRefused_ && gpuWidth != 0 && (gpuWidth != preparedWidth_ || gpuHeight != preparedHeight_)) {
 			preparedWidth_ = gpuWidth;
 			preparedHeight_ = gpuHeight;
-			gpu_->prepare(gpuWidth, gpuHeight);
+			if (!gpu_->prepare(gpuWidth, gpuHeight)) {
+				gpuRefused_ = true;
+				decodeInMemory();
+			}
 		}
 		const uint64_t generation = gpu_->generation();
 		if (generation != gpuGeneration_) {
@@ -371,6 +388,7 @@ bool ReplayPlayer::takeRequest(Request &request, bool wait) noexcept
 	// tried again on every pass.
 	handled_ = requests_;
 	request.republish = std::exchange(republish_, false);
+	request.inMemory = inMemory_;
 	request.newClip = std::exchange(gopsPending_, false);
 	if (request.newClip) {
 		request.clip = loads_;
@@ -388,23 +406,39 @@ void ReplayPlayer::decode(Request &request) noexcept
 	}
 	bool loading = request.newClip;
 	try {
+		bool opening = loading;
+		if (request.inMemory && decoder_ && decoderOnGpu_) {
+			// The decoder made in its place picks the clip up at the frame the playhead
+			// is on.
+			planner_.reset();
+			decoder_.reset();
+			decoded_.reset();
+			handedOff_.reset();
+			opening = true;
+			blog(LOG_WARNING,
+			     "[tapeloop] A replay player cannot show pictures decoded on the GPU, so it decodes "
+			     "them in memory from now on. Replays work, but this costs CPU time: it is not the "
+			     "optimal path");
+		}
 		if (loading) {
 			decodingClip_ = request.clip;
 			decoded_.reset();
 			handedOff_.reset();
-			if (!planner_ && request.gops) {
-				if (!decoder_ && decoders_) {
-					decoder_ = decoders_();
-				}
-				if (decoder_) {
-					planner_ = std::make_unique<DecodePlanner>(*decoder_, plannerConfig_);
-				}
-			}
-			if (planner_) {
-				planner_->load(std::move(request.gops));
-			}
-			loading = false;
+			gops_ = std::move(request.gops);
 		}
+		if (opening && !planner_ && gops_) {
+			if (!decoder_ && decoders_) {
+				decoderOnGpu_ = gpu_ && !request.inMemory;
+				decoder_ = decoders_(decoderOnGpu_);
+			}
+			if (decoder_) {
+				planner_ = std::make_unique<DecodePlanner>(*decoder_, plannerConfig_);
+			}
+		}
+		if (opening && planner_) {
+			planner_->load(gops_ ? std::make_unique<SharedGops>(gops_) : nullptr);
+		}
+		loading = false;
 
 		if (!planner_ || !request.wanted || request.wanted->clip != decodingClip_) {
 			return;
@@ -425,9 +459,10 @@ void ReplayPlayer::decode(Request &request) noexcept
 		planner_->prefetch(wanted.direction);
 	} catch (...) {
 		// Out of memory. A planner that failed to take the new clip may still hold the
-		// one before, whose frames must not show for it.
+		// one before, whose frames must not show for it, and so may gops_.
 		if (loading) {
 			planner_.reset();
+			gops_.reset();
 		}
 	}
 }
@@ -515,6 +550,16 @@ void ReplayPlayer::republish() noexcept
 	wake_.notify_one();
 }
 
+void ReplayPlayer::decodeInMemory() noexcept
+{
+	{
+		const std::lock_guard lock(mutex_);
+		inMemory_ = true;
+		++requests_;
+	}
+	wake_.notify_one();
+}
+
 void ReplayPlayer::decodeLoop() noexcept
 {
 	while (true) {
@@ -527,6 +572,7 @@ void ReplayPlayer::decodeLoop() noexcept
 	// The decoder closes on the thread that opened it.
 	planner_.reset();
 	decoder_.reset();
+	gops_.reset();
 }
 
 PlayerState ReplayPlayer::state() const noexcept
