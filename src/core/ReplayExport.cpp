@@ -74,12 +74,20 @@ std::vector<size_t> gopFrames(const StoredSource &source)
 	return frames;
 }
 
-// The name the file is published under: the one it was written for, unless something
-// took that one meanwhile.
-std::filesystem::path publishedPath(const std::filesystem::path &target, const std::string &stem,
-				    const std::string &extension, const std::vector<std::filesystem::path> &taken)
+// Gives the written file the name it was written for, or the next free one if something
+// took that name meanwhile, and returns the name. A file that took it is never replaced.
+std::filesystem::path publish(const std::filesystem::path &partPath, const std::filesystem::path &target,
+			      const std::string &stem, const std::string &extension,
+			      const std::vector<std::filesystem::path> &taken)
 {
-	return pathTaken(target) ? freeExportPath(target.parent_path(), stem, extension, taken) : target;
+	std::filesystem::path path = target;
+	for (int tries = 0; tries < kMaxNameTries; ++tries) {
+		if (renameIfFree(partPath, path)) {
+			return path;
+		}
+		path = freeExportPath(target.parent_path(), stem, extension, taken);
+	}
+	throw std::runtime_error("no free name for " + stem + extension + " in " + utf8FromPath(target.parent_path()));
 }
 
 } // namespace
@@ -318,8 +326,7 @@ std::vector<std::filesystem::path> ReplayExporter::exportMp4(const ExportRequest
 			writer->finish();
 			writer.reset();
 			File(partPath, File::Mode::ReadWrite).flush();
-			const std::filesystem::path path = publishedPath(target, stem, ".mp4", files);
-			renameFile(partPath, path);
+			const std::filesystem::path path = publish(partPath, target, stem, ".mp4", files);
 			leftovers.forget(partPath);
 			leftovers.add(path);
 			files.push_back(path);
@@ -373,8 +380,7 @@ std::vector<std::filesystem::path> ReplayExporter::exportReplay(const ExportRequ
 	file.writeAt(0, encodeManifestHead(copy, request.tags));
 	file.flush();
 	file.close();
-	const std::filesystem::path path = publishedPath(target, stem, ".tplp", {});
-	renameFile(partPath, path);
+	const std::filesystem::path path = publish(partPath, target, stem, ".tplp", {});
 	leftovers.keepAll();
 	return {path};
 }

@@ -62,6 +62,11 @@ void syncDirectory(const std::filesystem::path &directory);
 // Renames from to to, replacing to if it exists, and returns once the rename is durable.
 void renameFile(const std::filesystem::path &from, const std::filesystem::path &to);
 
+// Renames from to to unless to exists, and returns whether it did once the rename is
+// durable. On a file system that can neither rename exclusively nor make hard links, a
+// file that appears at to between the check and the rename is replaced.
+bool renameIfFree(const std::filesystem::path &from, const std::filesystem::path &to);
+
 // Lowers the I/O priority of the calling thread, so that its writes yield to OBS's own
 // recording on a shared disk. Best effort: false where the platform refuses or has no
 // such setting.

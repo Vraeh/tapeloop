@@ -88,6 +88,27 @@ private:
 	int failAt_;
 };
 
+// Writes a byte, and when the file is done takes the name it is meant for, as another
+// program could just before the export publishes it.
+class NameTakingWriter final : public tapeloop::VideoFileWriter {
+public:
+	void open(const fs::path &path, const Gop &) override
+	{
+		part_ = path;
+		const uint8_t byte = 1;
+		File(path, File::Mode::CreateNew).writeAt(0, {&byte, 1});
+	}
+	void write(const Gop &, size_t, Nanoseconds) override {}
+	void finish() override
+	{
+		const uint8_t byte = 2;
+		File(fs::path(part_).replace_extension(), File::Mode::CreateNew).writeAt(0, {&byte, 1});
+	}
+
+private:
+	fs::path part_;
+};
+
 ReplayExporter::WriterFactory recording(std::vector<WrittenFile> &files, int failAt = -1)
 {
 	auto written = std::make_shared<int>(0);
@@ -231,6 +252,21 @@ TEST_CASE("a name an export would take, or its half-written file, is passed over
 	      dir.path() / "x (4).mp4");
 	CHECK(tapeloop::freeExportPath(dir.path(), "y", ".tplp", {}) == dir.path() / "y.tplp");
 	CHECK(tapeloop::mp4Stem(dir.path() / "2026-10-09 21-05-42.tplp", "Cam/1") == "2026-10-09 21-05-42 - Cam_1");
+}
+
+TEST_CASE("an export whose name is taken while it is written gets the next free one")
+{
+	TempDirectory dir;
+	const WrittenReplay written = ReplayWriter().write(captureOf(dir.path(), {sourceOf("a", makeGops(1))}));
+	ReplayExporter exporter([] { return std::make_unique<NameTakingWriter>(); });
+	const ExportResult result = exportOnce(exporter, requestFor(written, ExportFormat::Mp4));
+	REQUIRE(result.error.empty());
+	const fs::path folder = dir.path() / "Export";
+	REQUIRE(result.files.size() == 1);
+	CHECK(result.files.front() == folder / "2026-10-09 21-05-42 - Camera a (2).mp4");
+	CHECK(tapeloop::test::fileBytes(result.files.front()) == std::vector<uint8_t>{1});
+	CHECK(tapeloop::test::fileBytes(folder / "2026-10-09 21-05-42 - Camera a.mp4") == std::vector<uint8_t>{2});
+	CHECK(namesIn(folder).size() == 2);
 }
 
 TEST_CASE("a self-contained export plays without the broadcast folder")

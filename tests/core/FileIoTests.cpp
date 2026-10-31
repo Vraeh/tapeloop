@@ -197,6 +197,30 @@ TEST_CASE("a rename replaces the file it lands on")
 	CHECK_THROWS_AS(tapeloop::renameFile(part, published), std::system_error);
 }
 
+TEST_CASE("an exclusive rename leaves a file that has the name alone")
+{
+	TempDirectory dir;
+	const auto part = dir.path() / "replay.tplp.part";
+	const auto published = dir.path() / "replay.tplp";
+	File(part, File::Mode::CreateNew).writeAt(0, pattern(30, 12));
+	File(published, File::Mode::CreateNew).writeAt(0, pattern(60, 13));
+	CHECK_FALSE(tapeloop::renameIfFree(part, published));
+	{
+		File kept(published, File::Mode::ReadOnly);
+		CHECK(readAll(kept) == pattern(60, 13));
+		File left(part, File::Mode::ReadOnly);
+		CHECK(readAll(left) == pattern(30, 12));
+	}
+	std::filesystem::remove(published);
+	CHECK(tapeloop::renameIfFree(part, published));
+	CHECK_FALSE(std::filesystem::exists(part));
+	{
+		File file(published, File::Mode::ReadOnly);
+		CHECK(readAll(file) == pattern(30, 12));
+	}
+	CHECK_THROWS_AS(tapeloop::renameIfFree(part, dir.path() / "other.tplp"), std::system_error);
+}
+
 TEST_CASE("a directory can be made durable")
 {
 	TempDirectory dir;
