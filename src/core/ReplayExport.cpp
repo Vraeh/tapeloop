@@ -354,6 +354,8 @@ std::vector<std::filesystem::path> ReplayExporter::exportReplay(const ExportRequ
 	leftovers.add(partPath);
 
 	ReplayIndex copy = index;
+	// A replay of its own, which a library holding both lists next to the one it came from.
+	copy.id = newReplayId();
 	std::vector<uint8_t> chunks;
 	uint64_t offset = kManifestIndexOffset;
 	for (size_t s = 0; s < index.sources.size(); ++s) {

@@ -5,6 +5,7 @@
 
 #include "core/FileIo.hpp"
 #include "core/GopReader.hpp"
+#include "core/ReplayLibrary.hpp"
 #include "core/ReplayWriter.hpp"
 
 #include "StoredReplays.hpp"
@@ -294,7 +295,7 @@ TEST_CASE("a self-contained export plays without the broadcast folder")
 	const std::optional<ReplayIndex> index = tapeloop::readReplayIndex(exported);
 	REQUIRE(index);
 	CHECK(tapeloop::selfContained(*index));
-	CHECK(index->id == written.index.id);
+	CHECK(index->id != written.index.id);
 	REQUIRE(index->sources.size() == 2);
 	CHECK(index->sources[0].in == written.index.sources[0].in);
 	CHECK(index->sources[0].runs.size() == 2);
@@ -309,6 +310,28 @@ TEST_CASE("a self-contained export plays without the broadcast folder")
 			CHECK(sameGop(*read, *(*gops[s])[g]));
 		}
 	}
+}
+
+TEST_CASE("a self-contained export is listed next to the replay it came from")
+{
+	TempDirectory dir;
+	const WrittenReplay written =
+		ReplayWriter().write(captureOf(dir.path() / "Liga A", {sourceOf("a", makeGops(2))}));
+	ReplayExporter exporter;
+	const ExportResult result = exportOnce(exporter, requestFor(written, ExportFormat::Replay));
+	REQUIRE(result.error.empty());
+	fs::create_directories(dir.path() / "Liga B");
+	fs::copy_file(result.files.front(), dir.path() / "Liga B" / "Imported.tplp");
+
+	const tapeloop::ReplayScan scan = tapeloop::scanReplays(dir.path());
+	REQUIRE(scan.replays.size() == 2);
+	CHECK(scan.replays[0].intact);
+	CHECK(scan.replays[1].intact);
+	CHECK(scan.replays[0].id != scan.replays[1].id);
+	tapeloop::ReplayLibrary library;
+	CHECK(library.addFound(scan.replays[0]) != 0);
+	CHECK(library.addFound(scan.replays[1]) != 0);
+	CHECK(library.size() == 2);
 }
 
 TEST_CASE("an export reads the buffers' own GOPs while they last")
