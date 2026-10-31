@@ -130,32 +130,44 @@ std::unique_ptr<FFmpegDecoder::Device> FFmpegDecoder::createDevice(uint64_t luid
 	return device;
 }
 
-namespace {
-
-AVPixelFormat chooseFormat(AVCodecContext *, const AVPixelFormat *formats) noexcept
-{
-	for (const AVPixelFormat *format = formats; *format != AV_PIX_FMT_NONE; ++format) {
-		if (*format == AV_PIX_FMT_D3D11) {
-			return *format;
-		}
-	}
-	// The adapter cannot decode this stream, so FFmpeg does, on the CPU.
-	for (const AVPixelFormat *format = formats; *format != AV_PIX_FMT_NONE; ++format) {
-		const AVPixFmtDescriptor *descriptor = av_pix_fmt_desc_get(*format);
-		if (descriptor && (descriptor->flags & AV_PIX_FMT_FLAG_HWACCEL) == 0) {
-			return *format;
-		}
-	}
-	return AV_PIX_FMT_NONE;
-}
-
-} // namespace
-
 #else
 
 struct FFmpegDecoder::Device {};
 
 #endif
+
+namespace {
+
+// FFmpeg asks for the format once it knows the coded size of the pictures, which is never
+// smaller than the size they show, and before it sets up a hardware decoder's surfaces or
+// H.264's tables for that size. Its own limit, max_pixels, waits for the first picture.
+AVPixelFormat chooseFormat(AVCodecContext *context, const AVPixelFormat *formats) noexcept
+{
+	if (int64_t{context->coded_width} * context->coded_height > kMaxPixels) {
+		*static_cast<bool *>(context->opaque) = true;
+		return AV_PIX_FMT_NONE;
+	}
+#ifdef _WIN32
+	if (context->hw_device_ctx) {
+		for (const AVPixelFormat *format = formats; *format != AV_PIX_FMT_NONE; ++format) {
+			if (*format == AV_PIX_FMT_D3D11) {
+				return *format;
+			}
+		}
+		// The adapter cannot decode this stream, so FFmpeg does, on the CPU.
+		for (const AVPixelFormat *format = formats; *format != AV_PIX_FMT_NONE; ++format) {
+			const AVPixFmtDescriptor *descriptor = av_pix_fmt_desc_get(*format);
+			if (descriptor && (descriptor->flags & AV_PIX_FMT_FLAG_HWACCEL) == 0) {
+				return *format;
+			}
+		}
+		return AV_PIX_FMT_NONE;
+	}
+#endif
+	return avcodec_default_get_format(context, formats);
+}
+
+} // namespace
 
 void FFmpegDecoder::ContextDeleter::operator()(AVCodecContext *context) const noexcept
 {
@@ -224,6 +236,9 @@ DecodeStatus FFmpegDecoder::open(VideoCodec codec, std::span<const uint8_t> conf
 	context->thread_count = config_.threads;
 	context->flags |= AV_CODEC_FLAG_LOW_DELAY;
 	context->max_pixels = kMaxPixels;
+	context->get_format = chooseFormat;
+	context->opaque = &sizeRefused_;
+	sizeRefused_ = false;
 	if (!config.empty()) {
 		// libavcodec frees the extradata with the context and may read past its end.
 		context->extradata = static_cast<uint8_t *>(av_mallocz(config.size() + AV_INPUT_BUFFER_PADDING_SIZE));
@@ -243,7 +258,6 @@ DecodeStatus FFmpegDecoder::open(VideoCodec codec, std::span<const uint8_t> conf
 		if (!context->hw_device_ctx) {
 			return DecodeStatus::OutOfMemory;
 		}
-		context->get_format = chooseFormat;
 	}
 #endif
 
@@ -292,6 +306,9 @@ DecodeStatus FFmpegDecoder::send(std::span<const uint8_t> data, int64_t pts, int
 	packet_->dts = dts;
 	const int result = avcodec_send_packet(context_.get(), packet_.get());
 	av_packet_unref(packet_.get());
+	if (refusedSize()) {
+		return DecodeStatus::Unsupported;
+	}
 	// EAGAIN would mean frames of the previous packet were left in the decoder.
 	return statusOf(result);
 }
@@ -302,6 +319,10 @@ DecodeStatus FFmpegDecoder::receive(DecodedFrame &frame) noexcept
 		return DecodeStatus::InvalidData;
 	}
 	const int result = avcodec_receive_frame(context_.get(), received_.get());
+	if (refusedSize()) {
+		av_frame_unref(received_.get());
+		return DecodeStatus::Unsupported;
+	}
 	if (result == AVERROR(EAGAIN)) {
 		return DecodeStatus::NeedMore;
 	}
@@ -336,7 +357,11 @@ DecodeStatus FFmpegDecoder::flush() noexcept
 	if (!context_) {
 		return DecodeStatus::InvalidData;
 	}
-	return statusOf(avcodec_send_packet(context_.get(), nullptr));
+	const int result = avcodec_send_packet(context_.get(), nullptr);
+	if (refusedSize()) {
+		return DecodeStatus::Unsupported;
+	}
+	return statusOf(result);
 }
 
 void FFmpegDecoder::reset() noexcept
@@ -385,6 +410,19 @@ bool FFmpegDecoder::hasDevice() const noexcept
 size_t FFmpegDecoder::heldFrames() const noexcept
 {
 	return slots_.size() - freeSlots_.size();
+}
+
+bool FFmpegDecoder::refusedSize() noexcept
+{
+	if (!sizeRefused_) {
+		return false;
+	}
+	sizeRefused_ = false;
+	// H.264 asks for the format again only when it has none. Otherwise, after a picture
+	// it decoded, the next slice of the refused parameter sets would skip the question
+	// and size its tables for them.
+	context_->pix_fmt = AV_PIX_FMT_NONE;
+	return true;
 }
 
 DecodeStatus FFmpegDecoder::statusOf(int result) const noexcept

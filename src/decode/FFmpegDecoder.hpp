@@ -55,7 +55,9 @@ public:
 	// frames that need them never come out.
 	DecodeStatus open(VideoCodec codec, std::span<const uint8_t> config) noexcept override;
 	// InvalidData also when FFmpeg holds frames not yet received and takes no more
-	// packets until they are: receive every frame before the next send.
+	// packets until they are: receive every frame before the next send. Unsupported for
+	// pictures of more pixels than 8192x4320, refused before a hardware decoder makes
+	// its surfaces for them; receive and flush can return that too.
 	DecodeStatus send(std::span<const uint8_t> data, int64_t pts, int64_t dts) noexcept override;
 	// Unsupported for a picture in a format other than 8-bit 4:2:0. A picture decoded on
 	// the GPU is cropped at the right and the bottom only, which is all the encoders of
@@ -92,6 +94,9 @@ private:
 
 	// Windows only: a D3D11 device of that adapter, handed to FFmpeg; null on failure.
 	static std::unique_ptr<Device> createDevice(uint64_t luid) noexcept;
+	// Whether chooseFormat refused the size of the pictures in the call to FFmpeg just
+	// made; clears that for the next call.
+	bool refusedSize() noexcept;
 	DecodeStatus statusOf(int result) const noexcept;
 	Slot *slotOf(const DecodedFrame &frame) noexcept;
 	const Slot *slotOf(const DecodedFrame &frame) const noexcept;
@@ -110,6 +115,8 @@ private:
 	VideoCodec codec_ = VideoCodec::H264;
 	std::vector<uint8_t> runConfig_;
 	uint64_t skippedBytes_ = 0;
+	// Set by chooseFormat, through the context's opaque pointer.
+	bool sizeRefused_ = false;
 	std::vector<Slot> slots_;
 	std::vector<uint32_t> freeSlots_;
 };

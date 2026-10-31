@@ -632,11 +632,37 @@ TEST_CASE("the FFmpeg decoder takes pictures up to 8K and refuses larger ones", 
 	CHECK(picture->height == 4320);
 	decoder.release(frame);
 
-	// One row of macroblocks more.
+	// One row of macroblocks more, and one column. Unsupported rather than InvalidData:
+	// refused when FFmpeg asks for the format, before a hardware decoder makes its
+	// surfaces, and not when the first picture is allocated.
+	for (const H264Picture &larger : {flatH264Picture(512, 271), flatH264Picture(513, 270)}) {
+		REQUIRE(decoder.open(VideoCodec::H264, larger.config) == DecodeStatus::Ok);
+		CHECK(decoder.send(larger.keyframe, 0, 0) == DecodeStatus::Unsupported);
+		CHECK(decoder.receive(frame) != DecodeStatus::Ok);
+		CHECK(decoder.heldFrames() == 0);
+	}
+}
+
+TEST_CASE("the FFmpeg decoder refuses larger pictures mid-run each time", "[decode]")
+{
+	FFmpegDecoder decoder;
+	DecodedFrame frame;
+	const H264Picture largest = flatH264Picture(512, 270);
+	REQUIRE(decoder.open(VideoCodec::H264, largest.config) == DecodeStatus::Ok);
+	REQUIRE(decoder.send(largest.keyframe, 0, 0) == DecodeStatus::Ok);
+	REQUIRE(decoder.receive(frame) == DecodeStatus::Ok);
+	decoder.release(frame);
+
+	// After a picture it decoded, FFmpeg's H.264 decoder would ask for the format of the
+	// larger pictures only the first time and size its tables for them the second.
 	const H264Picture taller = flatH264Picture(512, 271);
-	REQUIRE(decoder.open(VideoCodec::H264, taller.config) == DecodeStatus::Ok);
-	CHECK(decoder.send(taller.keyframe, 0, 0) != DecodeStatus::Ok);
-	CHECK(decoder.receive(frame) != DecodeStatus::Ok);
+	std::vector<uint8_t> keyframe = taller.config;
+	keyframe.insert(keyframe.end(), taller.keyframe.begin(), taller.keyframe.end());
+	for (int64_t pts = 1; pts <= 2; ++pts) {
+		CHECK(decoder.send(keyframe, pts, pts) == DecodeStatus::Unsupported);
+		CHECK(decoder.receive(frame) != DecodeStatus::Ok);
+		decoder.reset();
+	}
 	CHECK(decoder.heldFrames() == 0);
 }
 
