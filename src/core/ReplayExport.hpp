@@ -80,9 +80,9 @@ std::filesystem::path exportFolderOf(const std::filesystem::path &manifest);
 std::filesystem::path freeExportPath(const std::filesystem::path &folder, const std::string &stem,
 				     const std::string &extension, const std::vector<std::filesystem::path> &taken);
 
-// Deletes the file at path if it is one an export stopped by a crash leaves, a .mp4.part
-// or a .tplp.part, and no export of this process is writing it. Returns whether it did;
-// error says why it could not.
+// Deletes the file at path if it is one an export stopped by a crash leaves, named for
+// the export's file with .tapeloop-part after it, and no export of this process is
+// writing it. Returns whether it did; error says why it could not.
 bool removeStaleExportPart(const std::filesystem::path &path, std::error_code &error);
 
 struct ExportRequest {
@@ -112,8 +112,9 @@ struct ExportProgress {
 };
 
 // Exports, on a thread of their own at low I/O priority, one at a time in the order they
-// were asked for. Each writes its files under a .part name and renames them when they are
-// complete, so a file with its final name is always whole. Safe to call from any thread.
+// were asked for. Each writes its files under a temporary name and renames them when
+// they are complete, so a file with its final name is always whole. Safe to call from
+// any thread.
 class ReplayExporter {
 public:
 	using WriterFactory = std::function<std::unique_ptr<VideoFileWriter>()>;

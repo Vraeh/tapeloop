@@ -2232,7 +2232,7 @@ TEST_CASE_METHOD(ObsFixture, "every export asked for says what became of it when
 	size_t files = 0;
 	std::error_code error;
 	for (const fs::directory_entry &entry : fs::directory_iterator(folder, error)) {
-		CHECK(entry.path().extension() != ".part");
+		CHECK(entry.path().extension() != ".tapeloop-part");
 		++files;
 	}
 	CHECK(files == static_cast<size_t>(exported.lines));

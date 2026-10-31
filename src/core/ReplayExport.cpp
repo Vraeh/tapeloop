@@ -19,7 +19,9 @@
 namespace tapeloop {
 namespace {
 
-constexpr std::string_view kPartSuffix = ".part";
+// Only Tapeloop writes it, so that a scan deletes no one else's file: a browser saves a
+// download in progress as name.mp4.part.
+constexpr std::string_view kPartSuffix = ".tapeloop-part";
 constexpr int kMaxNameTries = 1000;
 
 std::filesystem::path partPathOf(const std::filesystem::path &path)
@@ -37,8 +39,8 @@ bool pathTaken(const std::filesystem::path &path)
 	return found || error;
 }
 
-// The names of the .part files the exports of this process are writing, for a scan to
-// leave alone. Names only, so that two spellings of one folder cannot hide a file.
+// The names of the temporary files the exports of this process are writing, for a scan
+// to leave alone. Names only, so that two spellings of one folder cannot hide a file.
 struct PartsWriting {
 	std::mutex mutex;
 	std::vector<std::filesystem::path> names;
@@ -50,8 +52,8 @@ PartsWriting &partsWriting()
 	return parts;
 }
 
-// Marks the .part files of one export as being written, from before each is created
-// until it goes, which is after the export's Leftovers have dealt with the files.
+// Marks the temporary files of one export as being written, from before each is
+// created until it goes, which is after the export's Leftovers have dealt with the files.
 class WritingParts {
 public:
 	WritingParts() = default;
@@ -125,7 +127,8 @@ std::vector<size_t> gopFrames(const StoredSource &source)
 }
 
 // Gives the written file the name it was written for, or the next free one if something
-// took that name meanwhile, and returns the name. A file that took it is never replaced.
+// took that name meanwhile, and returns the name. A file that took it is replaced only
+// where renameIfFree cannot rename exclusively.
 std::filesystem::path publish(const std::filesystem::path &partPath, const std::filesystem::path &target,
 			      const std::string &stem, const std::string &extension,
 			      const std::vector<std::filesystem::path> &taken)
@@ -197,7 +200,7 @@ bool removeStaleExportPart(const std::filesystem::path &path, std::error_code &e
 {
 	error.clear();
 	const std::string name = utf8FromPath(path.filename());
-	if (!name.ends_with(".mp4.part") && !name.ends_with(".tplp.part")) {
+	if (!name.ends_with(kPartSuffix)) {
 		return false;
 	}
 	PartsWriting &parts = partsWriting();

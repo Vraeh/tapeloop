@@ -449,21 +449,23 @@ TEST_CASE("a scan deletes half written manifests and lists damaged ones")
 	const WrittenReplay orphan = writer.write(captureOf(folder, {sourceOf("c", makeGops(2))}, "orphan"));
 	File(folder / "torn.tplp.part", File::Mode::CreateNew).writeAt(0, std::vector<uint8_t>(5000, 7));
 	fs::create_directory(folder / "Export");
-	File(folder / "Export" / "kept - Camera a.mp4.part", File::Mode::CreateNew).flush();
+	File(folder / "Export" / "kept - Camera a.mp4.tapeloop-part", File::Mode::CreateNew).flush();
 	File(folder / "Export" / "kept - Camera a.mp4", File::Mode::CreateNew).flush();
-	File(folder / "Export" / "kept.tplp.part", File::Mode::CreateNew).flush();
-	// Only what an export writes is deleted.
+	File(folder / "Export" / "kept.tplp.tapeloop-part", File::Mode::CreateNew).flush();
+	// Only what an export writes is deleted, not a browser's download in progress.
 	File(folder / "Export" / "notes.part", File::Mode::CreateNew).flush();
+	File(folder / "Export" / "download.mp4.part", File::Mode::CreateNew).flush();
 	fs::resize_file(cut.manifest, fs::file_size(cut.manifest) - 1);
 	fs::remove(folder / "data" / "c-000001.tpls");
 
 	const tapeloop::ReplayScan scan = tapeloop::scanReplays(dir.path());
 	CHECK(scan.removed == std::vector<fs::path>{folder / "torn.tplp.part",
-						    folder / "Export" / "kept - Camera a.mp4.part",
-						    folder / "Export" / "kept.tplp.part"});
+						    folder / "Export" / "kept - Camera a.mp4.tapeloop-part",
+						    folder / "Export" / "kept.tplp.tapeloop-part"});
 	CHECK_FALSE(fs::exists(folder / "torn.tplp.part"));
 	CHECK(fs::exists(folder / "Export" / "kept - Camera a.mp4"));
 	CHECK(fs::exists(folder / "Export" / "notes.part"));
+	CHECK(fs::exists(folder / "Export" / "download.mp4.part"));
 	REQUIRE(scan.replays.size() == 3);
 	CHECK(scan.replays[0].manifest == cut.manifest);
 	CHECK_FALSE(scan.replays[0].intact);
@@ -484,7 +486,7 @@ TEST_CASE("a scan lists but deletes nothing through a link in place of a broadca
 	const WrittenReplay written = ReplayWriter().write(captureOf(elsewhere, {sourceOf("a", makeGops(1))}));
 	File(elsewhere / "notes.tplp.part", File::Mode::CreateNew).flush();
 	fs::create_directory(elsewhere / "Export");
-	File(elsewhere / "Export" / "download.mp4.part", File::Mode::CreateNew).flush();
+	File(elsewhere / "Export" / "stale.mp4.tapeloop-part", File::Mode::CreateNew).flush();
 	fs::create_directory(dir.path() / "base");
 	const fs::path folder = dir.path() / "base" / "Liga 2026-10-09 21-00";
 	std::error_code error;
@@ -496,7 +498,7 @@ TEST_CASE("a scan lists but deletes nothing through a link in place of a broadca
 	const tapeloop::ReplayScan scan = tapeloop::scanReplays(dir.path() / "base");
 	CHECK(scan.removed.empty());
 	CHECK(fs::exists(elsewhere / "notes.tplp.part"));
-	CHECK(fs::exists(elsewhere / "Export" / "download.mp4.part"));
+	CHECK(fs::exists(elsewhere / "Export" / "stale.mp4.tapeloop-part"));
 	REQUIRE(scan.replays.size() == 1);
 	CHECK(scan.replays[0].manifest == folder / written.manifest.filename());
 	CHECK(scan.replays[0].broadcast == "Liga 2026-10-09 21-00");
@@ -510,7 +512,7 @@ TEST_CASE("a scan leaves alone what a link in place of the Export folder leads t
 	ReplayWriter().write(captureOf(folder, {sourceOf("a", makeGops(1))}));
 	const fs::path elsewhere = dir.path() / "elsewhere";
 	fs::create_directory(elsewhere);
-	File(elsewhere / "download.mp4.part", File::Mode::CreateNew).flush();
+	File(elsewhere / "stale.mp4.tapeloop-part", File::Mode::CreateNew).flush();
 	std::error_code error;
 	fs::create_directory_symlink(elsewhere, folder / "Export", error);
 	if (error) {
@@ -519,7 +521,7 @@ TEST_CASE("a scan leaves alone what a link in place of the Export folder leads t
 
 	const tapeloop::ReplayScan scan = tapeloop::scanReplays(dir.path() / "base");
 	CHECK(scan.removed.empty());
-	CHECK(fs::exists(elsewhere / "download.mp4.part"));
+	CHECK(fs::exists(elsewhere / "stale.mp4.tapeloop-part"));
 	CHECK(scan.replays.size() == 1);
 	CHECK(scan.errors.empty());
 }

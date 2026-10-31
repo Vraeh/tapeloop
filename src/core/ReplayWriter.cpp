@@ -486,8 +486,8 @@ ReplayScan scanReplays(const std::filesystem::path &base)
 				scan.replays.push_back(readReplay(path, broadcast, scan.errors));
 			}
 		}
-		// An export a crash stopped left its file under a .part name. A link in place of
-		// the Export folder is not followed either.
+		// An export a crash stopped left its file under a temporary name. A link in place
+		// of the Export folder is not followed either.
 		const std::filesystem::path exports = folder / pathFromUtf8(kExportFolderName);
 		if (!linked && std::filesystem::is_directory(std::filesystem::symlink_status(exports, error))) {
 			for (const std::filesystem::path &path : listDirectory(exports, scan.errors)) {

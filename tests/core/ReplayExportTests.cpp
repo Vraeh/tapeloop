@@ -296,7 +296,7 @@ TEST_CASE("an MP4 export writes each source from its in point, in the Export fol
 	      std::vector<std::string>{"2026-10-09 21-05-42 - Camera a.mp4", "2026-10-09 21-05-42 - Camera b.mp4"});
 	REQUIRE(files.size() == 2);
 	CHECK(files[0].finished);
-	CHECK(files[0].path.filename() == "2026-10-09 21-05-42 - Camera a.mp4.part");
+	CHECK(files[0].path.filename() == "2026-10-09 21-05-42 - Camera a.mp4.tapeloop-part");
 
 	// The first source keeps the two frames before its in point for decoding, before
 	// zero, and nothing after its out point.
@@ -342,7 +342,7 @@ TEST_CASE("a name an export would take, or its half-written file, is passed over
 {
 	TempDirectory dir;
 	File(dir.path() / "x.mp4", File::Mode::CreateNew).flush();
-	File(dir.path() / "x (2).mp4.part", File::Mode::CreateNew).flush();
+	File(dir.path() / "x (2).mp4.tapeloop-part", File::Mode::CreateNew).flush();
 	CHECK(tapeloop::freeExportPath(dir.path(), "x", ".mp4", {}) == dir.path() / "x (3).mp4");
 	CHECK(tapeloop::freeExportPath(dir.path(), "x", ".mp4", {dir.path() / "x (3).mp4"}) ==
 	      dir.path() / "x (4).mp4");
@@ -552,7 +552,7 @@ TEST_CASE("a scan leaves alone the file an export is writing")
 	ReplayExporter exporter(recording(files, -1, &pause));
 	exporter.exportReplay(requestFor(written, ExportFormat::Mp4));
 	pause.waitUntilReached();
-	const bool writing = fs::exists(folder / "Export" / "2026-10-09 21-05-42 - Camera a.mp4.part");
+	const bool writing = fs::exists(folder / "Export" / "2026-10-09 21-05-42 - Camera a.mp4.tapeloop-part");
 	const tapeloop::ReplayScan scan = tapeloop::scanReplays(dir.path());
 	pause.release();
 	exporter.waitUntilIdle();
