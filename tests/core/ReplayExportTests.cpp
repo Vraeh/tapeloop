@@ -14,9 +14,11 @@
 #include <catch2/catch_test_macros.hpp>
 
 #include <algorithm>
+#include <condition_variable>
 #include <cstdint>
 #include <filesystem>
 #include <memory>
+#include <mutex>
 #include <optional>
 #include <stdexcept>
 #include <string>
@@ -56,14 +58,52 @@ struct WrittenFile {
 	bool finished = false;
 };
 
+// Holds an export at one of its packets until the test lets it go on.
+class Pause {
+public:
+	explicit Pause(int at) : at_(at) {}
+
+	void reach(int packet)
+	{
+		if (packet != at_) {
+			return;
+		}
+		std::unique_lock lock(mutex_);
+		reached_ = true;
+		changed_.notify_all();
+		changed_.wait(lock, [this] { return released_; });
+	}
+	void waitUntilReached()
+	{
+		std::unique_lock lock(mutex_);
+		changed_.wait(lock, [this] { return reached_; });
+	}
+	void release()
+	{
+		{
+			const std::lock_guard lock(mutex_);
+			released_ = true;
+		}
+		changed_.notify_all();
+	}
+
+private:
+	std::mutex mutex_;
+	std::condition_variable changed_;
+	int at_;
+	bool reached_ = false;
+	bool released_ = false;
+};
+
 // Records what an MP4 export hands over, and writes a byte so the file exists. The
 // packet at failAt, counted over every file of the export, fails.
 class RecordingWriter final : public tapeloop::VideoFileWriter {
 public:
-	RecordingWriter(std::vector<WrittenFile> &files, int &written, int failAt)
+	RecordingWriter(std::vector<WrittenFile> &files, int &written, int failAt, Pause *pause)
 		: files_(files),
 		  written_(written),
-		  failAt_(failAt)
+		  failAt_(failAt),
+		  pause_(pause)
 	{
 	}
 
@@ -75,6 +115,9 @@ public:
 	}
 	void write(const Gop &gop, size_t packet, Nanoseconds time) override
 	{
+		if (pause_ != nullptr) {
+			pause_->reach(written_);
+		}
 		if (written_++ == failAt_) {
 			throw std::runtime_error("no space left on the disk");
 		}
@@ -87,6 +130,7 @@ private:
 	std::vector<WrittenFile> &files_;
 	int &written_;
 	int failAt_;
+	Pause *pause_;
 };
 
 // Writes a byte, and when the file is done takes the name it is meant for, as another
@@ -110,11 +154,11 @@ private:
 	fs::path part_;
 };
 
-ReplayExporter::WriterFactory recording(std::vector<WrittenFile> &files, int failAt = -1)
+ReplayExporter::WriterFactory recording(std::vector<WrittenFile> &files, int failAt = -1, Pause *pause = nullptr)
 {
 	auto written = std::make_shared<int>(0);
-	return [&files, written, failAt] {
-		return std::make_unique<RecordingWriter>(files, *written, failAt);
+	return [&files, written, failAt, pause] {
+		return std::make_unique<RecordingWriter>(files, *written, failAt, pause);
 	};
 }
 
@@ -388,6 +432,63 @@ TEST_CASE("an MP4 export refuses a GOP whose times are not the ones its index gi
 	CHECK_FALSE(exportOnce(exporter, mp4).error.empty());
 	CHECK(files.empty());
 	CHECK(namesIn(dir.path() / "Export" / "Export").empty());
+}
+
+TEST_CASE("an export's progress never goes past its end")
+{
+	TempDirectory dir;
+	const Gops gops = makeGops(2);
+	const WrittenReplay written = ReplayWriter().write(captureOf(dir.path(), {sourceOf("a", gops)}));
+	// A first GOP from the buffers that holds all ten frames the index counts, so that
+	// the export writes more packets than it counted.
+	tapeloop::test::SyntheticEncoder::Config settings;
+	settings.gopLength = 2 * tapeloop::test::kGopLength;
+	tapeloop::test::SyntheticEncoder encoder(settings);
+	tapeloop::GopBuilder builder(encoder.frameDuration());
+	builder.setCodecConfig(VideoCodec::H264, tapeloop::test::h264Config());
+	for (int64_t frame = 0; frame < settings.gopLength; ++frame) {
+		builder.append(encoder.next());
+	}
+	const std::shared_ptr<const Gop> whole = builder.seal();
+	ExportRequest request = requestFor(written, ExportFormat::Mp4);
+	request.live = {{whole, gops[1]}};
+
+	std::vector<WrittenFile> files;
+	Pause pause(12);
+	ReplayExporter exporter(recording(files, -1, &pause));
+	const uint64_t ticket = exporter.exportReplay(request);
+	pause.waitUntilReached();
+	const std::optional<tapeloop::ExportProgress> progress = exporter.progress();
+	pause.release();
+	exporter.waitUntilIdle();
+	REQUIRE(progress);
+	CHECK(progress->ticket == ticket);
+	CHECK(progress->packets == 10);
+	CHECK(progress->packetsDone == 10);
+	REQUIRE(exporter.poll().size() == 1);
+	REQUIRE(files.size() == 1);
+	CHECK(files.front().times.size() == 15);
+}
+
+TEST_CASE("an exporter keeps no GOP once its exports are done")
+{
+	TempDirectory dir;
+	const WrittenReplay written = ReplayWriter().write(captureOf(dir.path(), {sourceOf("a", makeGops(2))}));
+	std::optional<ReplayIndex> read = tapeloop::readReplayIndex(written.manifest);
+	REQUIRE(read);
+	const auto index = std::make_shared<const ReplayIndex>(std::move(*read));
+	// Each GOP read from a segment holds the configuration of its run.
+	const std::shared_ptr<const tapeloop::CodecConfig> &config = index->sources.front().runs.front().config;
+	REQUIRE(config);
+	REQUIRE(config.use_count() == 1);
+	std::vector<WrittenFile> files;
+	ReplayExporter exporter(recording(files));
+	for (const ExportFormat format : {ExportFormat::Mp4, ExportFormat::Replay}) {
+		ExportRequest request = requestFor(written, format);
+		request.index = index;
+		REQUIRE(exportOnce(exporter, request).error.empty());
+		CHECK(config.use_count() == 1);
+	}
 }
 
 TEST_CASE("an MP4 export without an MP4 writer fails, and so does one of a replay that is gone")

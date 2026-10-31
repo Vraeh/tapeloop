@@ -143,8 +143,7 @@ std::filesystem::path freeExportPath(const std::filesystem::path &folder, const 
 	throw std::runtime_error("no free name for " + stem + extension + " in " + utf8FromPath(folder));
 }
 
-// Every GOP is read once, so the reader keeps only the last.
-ReplayExporter::ReplayExporter(WriterFactory mp4) : mp4_(std::move(mp4)), reader_(0), worker_([this] { run(); }) {}
+ReplayExporter::ReplayExporter(WriterFactory mp4) : mp4_(std::move(mp4)), worker_([this] { run(); }) {}
 
 ReplayExporter::~ReplayExporter()
 {
@@ -186,11 +185,13 @@ std::vector<ExportResult> ReplayExporter::poll()
 
 std::optional<ExportProgress> ReplayExporter::progress() const
 {
-	const uint64_t ticket = running_.load();
-	if (ticket == 0) {
+	const std::lock_guard lock(progressMutex_);
+	if (progress_.ticket == 0) {
 		return std::nullopt;
 	}
-	return ExportProgress{ticket, packetsDone_.load(), packets_.load()};
+	// The packets done are counted from the GOPs read and the whole from the index, so a
+	// GOP that does not match its index cannot take a report past the end.
+	return ExportProgress{progress_.ticket, std::min(progress_.packetsDone, progress_.packets), progress_.packets};
 }
 
 size_t ReplayExporter::pending() const
@@ -219,11 +220,9 @@ void ReplayExporter::run() noexcept
 		}
 		const Job &job = jobs_.front();
 		lock.unlock();
-		packets_ = 0;
-		packetsDone_ = 0;
-		running_ = job.ticket;
+		setProgress({job.ticket, 0, 0});
 		ExportResult result = execute(job);
-		running_ = 0;
+		setProgress({});
 		std::list<ExportResult> slot;
 		try {
 			slot.push_back(std::move(result));
@@ -253,8 +252,11 @@ ExportResult ReplayExporter::execute(const Job &job) noexcept
 			}
 			index = std::make_shared<const ReplayIndex>(std::move(*read));
 		}
-		result.files = job.request.format == ExportFormat::Mp4 ? exportMp4(job.request, *index)
-								       : exportReplay(job.request, *index);
+		// Every GOP is read once, so the reader keeps only the last, and nothing once the
+		// export is done.
+		GopReader reader(0);
+		result.files = job.request.format == ExportFormat::Mp4 ? exportMp4(job.request, *index, reader)
+								       : exportReplay(job.request, *index, reader);
 	} catch (const std::exception &e) {
 		result.files.clear();
 		try {
@@ -273,7 +275,8 @@ ExportResult ReplayExporter::execute(const Job &job) noexcept
 	return result;
 }
 
-std::vector<std::filesystem::path> ReplayExporter::exportMp4(const ExportRequest &request, const ReplayIndex &index)
+std::vector<std::filesystem::path> ReplayExporter::exportMp4(const ExportRequest &request, const ReplayIndex &index,
+							     GopReader &reader)
 {
 	if (!mp4_) {
 		throw std::runtime_error("MP4 export is not available here");
@@ -290,7 +293,7 @@ std::vector<std::filesystem::path> ReplayExporter::exportMp4(const ExportRequest
 			}
 		}
 	}
-	packets_ = packets;
+	setPacketCount(packets);
 
 	const std::filesystem::path folder = exportFolderOf(request.manifest);
 	std::filesystem::create_directories(folder);
@@ -304,7 +307,7 @@ std::vector<std::filesystem::path> ReplayExporter::exportMp4(const ExportRequest
 			const std::filesystem::path partPath = partPathOf(target);
 			leftovers.add(partPath);
 			std::unique_ptr<VideoFileWriter> writer = mp4_();
-			const std::shared_ptr<const Gop> first = readGop(request, index, s, part.firstGop);
+			const std::shared_ptr<const Gop> first = readGop(request, index, reader, s, part.firstGop);
 			writer->open(partPath, *first);
 			// A later part starts at its own keyframe; the first, at the in point, after
 			// the frames before it that decoding needs.
@@ -312,7 +315,7 @@ std::vector<std::filesystem::path> ReplayExporter::exportMp4(const ExportRequest
 			bool past = false;
 			for (size_t gop = part.firstGop; gop < part.endGop && !past; ++gop) {
 				const std::shared_ptr<const Gop> read =
-					gop == part.firstGop ? first : readGop(request, index, s, gop);
+					gop == part.firstGop ? first : readGop(request, index, reader, s, gop);
 				const std::span<const PacketRecord> records = read->packets();
 				for (size_t packet = 0; packet < records.size(); ++packet) {
 					if (records[packet].time > source.out) {
@@ -320,7 +323,7 @@ std::vector<std::filesystem::path> ReplayExporter::exportMp4(const ExportRequest
 						break;
 					}
 					writer->write(*read, packet, records[packet].time - origin);
-					++packetsDone_;
+					countDone(1);
 				}
 			}
 			writer->finish();
@@ -336,13 +339,14 @@ std::vector<std::filesystem::path> ReplayExporter::exportMp4(const ExportRequest
 	return files;
 }
 
-std::vector<std::filesystem::path> ReplayExporter::exportReplay(const ExportRequest &request, const ReplayIndex &index)
+std::vector<std::filesystem::path> ReplayExporter::exportReplay(const ExportRequest &request, const ReplayIndex &index,
+								GopReader &reader)
 {
 	uint64_t packets = 0;
 	for (const StoredSource &source : index.sources) {
 		packets += source.frameTimes.size();
 	}
-	packets_ = packets;
+	setPacketCount(packets);
 
 	const std::filesystem::path folder = exportFolderOf(request.manifest);
 	std::filesystem::create_directories(folder);
@@ -361,7 +365,7 @@ std::vector<std::filesystem::path> ReplayExporter::exportReplay(const ExportRequ
 	for (size_t s = 0; s < index.sources.size(); ++s) {
 		std::optional<uint32_t> run;
 		for (size_t g = 0; g < index.sources[s].gops.size(); ++g) {
-			const std::shared_ptr<const Gop> gop = readGop(request, index, s, g);
+			const std::shared_ptr<const Gop> gop = readGop(request, index, reader, s, g);
 			StoredGop &stored = copy.sources[s].gops[g];
 			chunks.clear();
 			// As in a segment, a run's description comes before its first GOP, for a
@@ -375,7 +379,7 @@ std::vector<std::filesystem::path> ReplayExporter::exportReplay(const ExportRequ
 			stored = {kOwnFile,   stored.packetCount, offset + place.offset,
 				  place.size, place.headerCrc,    stored.run};
 			offset += chunks.size();
-			packetsDone_ += gop->packets().size();
+			countDone(gop->packets().size());
 		}
 	}
 	file.writeAt(offset, encodeManifestTail(copy, offset));
@@ -388,7 +392,7 @@ std::vector<std::filesystem::path> ReplayExporter::exportReplay(const ExportRequ
 }
 
 std::shared_ptr<const Gop> ReplayExporter::readGop(const ExportRequest &request, const ReplayIndex &index,
-						   size_t source, size_t gop)
+						   GopReader &reader, size_t source, size_t gop)
 {
 	if (stop_) {
 		throw std::runtime_error("stopped, OBS is closing");
@@ -396,12 +400,30 @@ std::shared_ptr<const Gop> ReplayExporter::readGop(const ExportRequest &request,
 	const std::weak_ptr<const Gop> live = source < request.live.size() && gop < request.live[source].size()
 						      ? request.live[source][gop]
 						      : std::weak_ptr<const Gop>();
-	std::shared_ptr<const Gop> read = reader_.read(request.manifest, index.sources[source], gop, live);
+	std::shared_ptr<const Gop> read = reader.read(request.manifest, index.sources[source], gop, live);
 	if (!read) {
 		throw std::runtime_error("cannot read the pictures of " + index.sources[source].name + " from " +
 					 utf8FromPath(request.manifest.parent_path()));
 	}
 	return read;
+}
+
+void ReplayExporter::setProgress(const ExportProgress &progress)
+{
+	const std::lock_guard lock(progressMutex_);
+	progress_ = progress;
+}
+
+void ReplayExporter::setPacketCount(uint64_t packets)
+{
+	const std::lock_guard lock(progressMutex_);
+	progress_.packets = packets;
+}
+
+void ReplayExporter::countDone(uint64_t packets)
+{
+	const std::lock_guard lock(progressMutex_);
+	progress_.packetsDone += packets;
 }
 
 } // namespace tapeloop

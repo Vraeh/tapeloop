@@ -138,14 +138,17 @@ private:
 
 	void run() noexcept;
 	ExportResult execute(const Job &job) noexcept;
-	std::vector<std::filesystem::path> exportMp4(const ExportRequest &request, const ReplayIndex &index);
-	std::vector<std::filesystem::path> exportReplay(const ExportRequest &request, const ReplayIndex &index);
-	std::shared_ptr<const Gop> readGop(const ExportRequest &request, const ReplayIndex &index, size_t source,
-					   size_t gop);
+	std::vector<std::filesystem::path> exportMp4(const ExportRequest &request, const ReplayIndex &index,
+						     GopReader &reader);
+	std::vector<std::filesystem::path> exportReplay(const ExportRequest &request, const ReplayIndex &index,
+							GopReader &reader);
+	std::shared_ptr<const Gop> readGop(const ExportRequest &request, const ReplayIndex &index, GopReader &reader,
+					   size_t source, size_t gop);
+	void setProgress(const ExportProgress &progress);
+	void setPacketCount(uint64_t packets);
+	void countDone(uint64_t packets);
 
 	WriterFactory mp4_;
-	// Touched only by the exporter's thread.
-	GopReader reader_;
 	mutable std::mutex mutex_;
 	std::condition_variable wake_;
 	std::condition_variable idle_;
@@ -155,9 +158,9 @@ private:
 	uint64_t nextTicket_ = 1;
 	bool stopping_ = false;
 	std::atomic<bool> stop_{false};
-	std::atomic<uint64_t> running_{0};
-	std::atomic<uint64_t> packetsDone_{0};
-	std::atomic<uint64_t> packets_{0};
+	// Under a lock of its own, so that progress() reads it whole.
+	mutable std::mutex progressMutex_;
+	ExportProgress progress_;
 	// Last, so that it starts after everything it uses.
 	std::thread worker_;
 };
