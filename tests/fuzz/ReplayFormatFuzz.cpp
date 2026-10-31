@@ -3,10 +3,9 @@
 
 #include "core/ReplayFormat.hpp"
 
-#include "core/Crc32c.hpp"
-
 #include "../core/SyntheticEncoder.hpp"
 #include "FuzzInput.hpp"
+#include "ReplayDamage.hpp"
 
 #include <algorithm>
 #include <cstddef>
@@ -26,63 +25,14 @@ using tapeloop::ReplayIndex;
 using tapeloop::StoredRun;
 using tapeloop::StoredSource;
 using tapeloop::VideoCodec;
+using tapeloop::fuzz::damage;
 using tapeloop::fuzz::FuzzInput;
 using tapeloop::fuzz::require;
+using tapeloop::fuzz::resealChunk;
+using tapeloop::fuzz::resealManifest;
 using tapeloop::test::SyntheticEncoder;
 
 namespace {
-
-// Flips a few bytes the input chooses; the rest of the input is read afterwards.
-void damage(FuzzInput &input, std::vector<uint8_t> &bytes)
-{
-	for (int flips = input.byte() % 4; flips > 0 && !bytes.empty(); --flips) {
-		const size_t at = static_cast<size_t>(input.u64() % bytes.size());
-		bytes[at] ^= static_cast<uint8_t>(input.byte() | 1);
-	}
-}
-
-uint64_t load64(std::span<const uint8_t> bytes, size_t at)
-{
-	uint64_t value = 0;
-	for (size_t i = 0; i < 8; ++i) {
-		value |= uint64_t{bytes[at + i]} << (8 * i);
-	}
-	return value;
-}
-
-void store32(std::span<uint8_t> bytes, size_t at, uint32_t value)
-{
-	for (size_t i = 0; i < 4; ++i) {
-		bytes[at + i] = static_cast<uint8_t>(value >> (8 * i));
-	}
-}
-
-// Computes the CRCs of a chunk again over what its header and payload hold now, so that
-// damage gets past them to the checks behind; returns the new header CRC.
-uint32_t resealChunk(std::span<uint8_t> chunk)
-{
-	if (chunk.size() < tapeloop::kChunkHeaderSize) {
-		return 0;
-	}
-	const uint64_t payloadSize = std::min<uint64_t>(load64(chunk, 8), chunk.size() - tapeloop::kChunkHeaderSize);
-	store32(chunk, 24, tapeloop::crc32c(chunk.subspan(tapeloop::kChunkHeaderSize, payloadSize)));
-	const uint32_t headerCrc = tapeloop::crc32c(chunk.first(28));
-	store32(chunk, 28, headerCrc);
-	return headerCrc;
-}
-
-// The header, index chunk and footer CRCs computed again, for an index at indexOffset.
-void resealManifest(std::vector<uint8_t> &manifest, uint64_t indexOffset)
-{
-	const std::span<uint8_t> bytes(manifest);
-	if (bytes.size() < indexOffset + tapeloop::kManifestFooterSize) {
-		return;
-	}
-	store32(bytes, 60, tapeloop::crc32c(bytes.first(60)));
-	resealChunk(bytes.subspan(indexOffset, bytes.size() - indexOffset - tapeloop::kManifestFooterSize));
-	const std::span<uint8_t> footer = bytes.last(tapeloop::kManifestFooterSize);
-	store32(footer, 60, tapeloop::crc32c(footer.first(60)));
-}
 
 std::vector<std::shared_ptr<const Gop>> readGops(FuzzInput &input, int64_t &frame)
 {
