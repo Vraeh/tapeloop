@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: GPL-2.0-or-later
 // Copyright (C) 2026 Vicente Aedo <ryde1337@gmail.com>
 
+#include "core/Crc32c.hpp"
 #include "core/ReplayFormat.hpp"
 
 #include "SyntheticEncoder.hpp"
@@ -507,6 +508,48 @@ TEST_CASE("a replay is self-contained or uses segments, never both")
 	CHECK_FALSE(tapeloop::decodeManifest(build(index, file.size())));
 	CHECK_THROWS_AS(tapeloop::encodeManifestTail(index, file.size() + 1), std::invalid_argument);
 	CHECK_THROWS_AS(tapeloop::encodeManifestTail(index, 4096), std::invalid_argument);
+}
+
+TEST_CASE("a replay with a header flag this version does not know is refused")
+{
+	// Rewrites the flags and reseals the header, so only the flags are wrong.
+	const auto withFlags = [](std::vector<uint8_t> file, uint32_t flags) {
+		REQUIRE(file.size() >= tapeloop::kManifestIndexOffset);
+		const auto put = [&](size_t at, uint32_t value) {
+			for (size_t i = 0; i < 4; ++i) {
+				file[at + i] = static_cast<uint8_t>(value >> (8 * i));
+			}
+		};
+		put(16, flags);
+		put(60, tapeloop::crc32c(std::span<const uint8_t>(file).first(60)));
+		return file;
+	};
+	const std::vector<uint8_t> manifest = tapeloop::encodeManifest(twoSources(), {});
+	CHECK(tapeloop::decodeManifest(withFlags(manifest, 1)));
+	CHECK_FALSE(tapeloop::decodeManifest(withFlags(manifest, 1 | 2)));
+	CHECK_FALSE(tapeloop::decodeManifest(withFlags(manifest, 1 | 0x8000'0000)));
+
+	const auto config = std::make_shared<const CodecConfig>(CodecConfig{0, 0, 0, 1, 0x67, 0x42});
+	const Gops gops = makeGops(2, VideoCodec::H264, config);
+	std::vector<uint8_t> own(tapeloop::kManifestIndexOffset, 0);
+	std::vector<ChunkPlace> places;
+	for (const auto &gop : gops) {
+		places.push_back(tapeloop::appendGopChunk(own, 0, *gop));
+	}
+	ReplayIndex index;
+	index.sources.push_back(sourceOf("a", gops, places));
+	for (StoredGop &gop : index.sources[0].gops) {
+		gop.segment = tapeloop::kOwnFile;
+	}
+	index.start = index.sources[0].in;
+	index.end = index.sources[0].out;
+	const std::vector<uint8_t> head = tapeloop::encodeManifestHead(index, {});
+	std::copy(head.begin(), head.end(), own.begin());
+	const std::vector<uint8_t> tail = tapeloop::encodeManifestTail(index, own.size());
+	own.insert(own.end(), tail.begin(), tail.end());
+	CHECK(tapeloop::decodeManifest(withFlags(own, 0)));
+	CHECK_FALSE(tapeloop::decodeManifest(withFlags(own, 2)));
+	CHECK_FALSE(tapeloop::decodeManifest(withFlags(own, 0x8000'0000)));
 }
 
 TEST_CASE("a tag edit goes to the older slot, and a torn edit leaves the previous tags")

@@ -705,10 +705,12 @@ std::optional<ReplayIndex> decodeManifest(std::span<const uint8_t> file)
 std::optional<ReplayIndex> decodeManifest(std::span<const uint8_t> head, std::span<const uint8_t> indexChunk,
 					  std::span<const uint8_t> footer, uint64_t fileSize)
 {
+	// A flag this version does not know could change where the GOPs are, as the segments
+	// flag does, so such a file is not read at all.
 	if (head.size() != kManifestIndexOffset || !hasMagic(head, kManifestMagic) ||
 	    get16(head, 8) != kReplayFormatMajor || get32(head, 12) != kManifestHeaderSize ||
-	    get32(head, 20) != kReplayAlignment || get32(head, 56) != kTagSlotSize ||
-	    crc32c(head.first(60)) != get32(head, 60)) {
+	    (get32(head, 16) & ~kFlagSegments) != 0 || get32(head, 20) != kReplayAlignment ||
+	    get32(head, 56) != kTagSlotSize || crc32c(head.first(60)) != get32(head, 60)) {
 		return std::nullopt;
 	}
 	const std::optional<IndexPlace> place = decodeManifestFooter(footer, fileSize);
