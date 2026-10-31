@@ -891,6 +891,36 @@ TEST_CASE_METHOD(ObsFixture, "an MP4 refuses a sequence parameter set cut short"
 	CHECK(errorOf([&] { writer.write(*bare, 0, Nanoseconds{0}); }) == error);
 }
 
+TEST_CASE_METHOD(ObsFixture, "an MP4 starts a sample entry at the first packet of its run with bytes",
+		 "[decode][export]")
+{
+	// The muxer drops a packet without bytes, and a new configuration with it.
+	const RecordedRun first = loadRecordedRun(kHevcPattern);
+	const RecordedRun second = loadRecordedRun(kHevcFullRange601);
+	REQUIRE(first.config != second.config);
+	const std::shared_ptr<const Gop> before = hevcKeyframe(&first.config, first.packets.front().data);
+	GopBuilder builder(kFrameInterval);
+	builder.setCodecConfig(VideoCodec::Hevc, std::make_shared<const CodecConfig>(second.config));
+	builder.append({{}, 0, 0, Nanoseconds{0}, true});
+	builder.append({second.packets.front().data, 1, 1, kFrameInterval, false});
+	const std::shared_ptr<const Gop> after = builder.seal();
+	tapeloop::test::TempDirectory dir;
+	const std::filesystem::path path = dir.path() / "late bytes.mp4";
+	Mp4Writer writer;
+	writer.open(path, *before);
+	writer.write(*before, 0, Nanoseconds{0});
+	writer.write(*after, 0, kFrameInterval);
+	writer.write(*after, 1, 2 * kFrameInterval);
+	writer.finish();
+
+	const Mp4Track track = tapeloop::test::readMp4(readFile(path));
+	REQUIRE(track.entries.size() == 2);
+	CHECK(sorted(annexBUnits(track.entries[1].config)) == sorted(annexBUnits(second.config)));
+	REQUIRE(track.samples.size() == 2);
+	CHECK(track.samples[0].entry == 1);
+	CHECK(track.samples[1].entry == 2);
+}
+
 TEST_CASE_METHOD(ObsFixture, "an MP4 leaves out packets without bytes", "[decode][export]")
 {
 	// A replay file can list packets of no bytes. In a GOP of only those there are no

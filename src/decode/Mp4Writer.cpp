@@ -252,8 +252,9 @@ void Mp4Writer::write(const Gop &gop, size_t packet, Nanoseconds time)
 		throw std::runtime_error("the packets are not in decode order");
 	}
 	lastDts_ = packet_->dts;
-	// A run of another configuration gets a sample entry of its own.
-	if (const CodecConfig *config = gop.codecConfig(); config && *config != config_) {
+	// A run of another configuration gets a sample entry of its own, from its first packet
+	// with bytes: the muxer drops a packet without any, and the configuration with it.
+	if (const CodecConfig *config = gop.codecConfig(); config && *config != config_ && !data.empty()) {
 		uint8_t *side = av_packet_new_side_data(packet_, AV_PKT_DATA_NEW_EXTRADATA, config->size());
 		if (!side) {
 			throw std::bad_alloc();
