@@ -1,7 +1,8 @@
 # Builds the FFmpeg that Tapeloop links statically: the H.264 and HEVC decoders and
-# parsers for playback, and the MP4 muxer and the file protocol for the export of replays,
-# and nothing else, under the LGPL (no --enable-gpl, no --enable-version3), and on Windows
-# the D3D11VA hwaccels. Run in script mode:
+# parsers for playback, the MP4 muxer and the file protocol for the export of replays,
+# with the one parser the muxer needs to compile, and nothing else, under the LGPL (no
+# --enable-gpl, no --enable-version3), and on Windows the D3D11VA hwaccels. Run in
+# script mode:
 #
 #   cmake -DPREFIX=<install dir> -DWORK_DIR=<build dir> -P BuildFFmpeg.cmake
 #
@@ -35,6 +36,12 @@ set(
   --enable-parser=h264,hevc
   --enable-muxer=mp4
   --enable-protocol=file
+  # The mp4 muxer builds libavformat's copy of the coded bitstream code, whose table of
+  # bitstream types holds only the types libavcodec has enabled, and an empty table is
+  # not valid C: MSVC fails on it with an internal compiler error. The APV parser, the
+  # smallest component that enables one, fills it. FFmpeg's master fixes this in
+  # configure (6a59c847b5); 8.1.3 does not have it.
+  --enable-parser=apv
   --enable-static
   --disable-shared
 )
