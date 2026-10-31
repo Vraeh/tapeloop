@@ -7,32 +7,48 @@
 #include "TestPattern.hpp"
 
 #include "core/Clip.hpp"
+#include "core/FrameDecoder.hpp"
 #include "core/GopSource.hpp"
 #include "core/MediaTime.hpp"
 #include "core/Playhead.hpp"
 #include "decode/FFmpegDecoder.hpp"
+#include "decode/Picture.hpp"
+#include "decode/PictureDecoder.hpp"
+#include "obs/GpuPictures.hpp"
 #include "obs/PictureRenderer.hpp"
 #include "obs/ReplayPlayer.hpp"
 
 #include <catch2/catch_test_macros.hpp>
 #include <obs.h>
 
+#include <array>
+#include <atomic>
 #include <chrono>
 #include <cstddef>
 #include <cstdint>
 #include <cstdio>
+#include <cstring>
 #include <memory>
+#include <mutex>
 #include <optional>
+#include <span>
 #include <stdexcept>
+#include <utility>
 #include <vector>
 
 using namespace std::chrono_literals;
 using tapeloop::Clip;
 using tapeloop::ClipGops;
+using tapeloop::DecodedFrame;
+using tapeloop::DecodeStatus;
 using tapeloop::Nanoseconds;
 using tapeloop::ScrubDirection;
+using tapeloop::VideoCodec;
 using tapeloop::decode::FFmpegDecoder;
+using tapeloop::decode::Picture;
 using tapeloop::decode::PictureDecoder;
+using tapeloop::decode::PixelLayout;
+using tapeloop::obs::GpuPictures;
 using tapeloop::obs::PictureRenderer;
 using tapeloop::obs::PlayerState;
 using tapeloop::obs::ReplayPlayer;
@@ -190,6 +206,252 @@ PlayerState checkTick(Screen &screen, ReplayPlayer &player, const std::vector<Ex
 	CHECK(shown.number == expected[state.frame].number);
 	return state;
 }
+
+// Shows the first frame of the clip loaded last. A picture on the GPU of a size the
+// GpuPictures is not prepared for takes one render more: that render prepares it, and
+// the decoder hands the picture over again.
+void showFirst(Screen &screen, ReplayPlayer &player, const std::vector<ExpectedFrame> &expected, bool preparing)
+{
+	player.tick(0ns);
+	Screen::decodeAll(player);
+	if (preparing) {
+		REQUIRE_FALSE(screen.draw(player).drawn);
+		Screen::decodeAll(player);
+	}
+	const Shown shown = screen.draw(player);
+	REQUIRE(shown.drawn);
+	CHECK(shown.number == expected.front().number);
+	CHECK(player.state().drawn == size_t{0});
+}
+
+// Stands in for SharedPictures where there is no Direct3D 11: the decoding side writes
+// two NV12 pictures in memory, and latch() uploads the newest one into a pair of
+// textures. rebuild() does to it what a device rebuild does to SharedPictures.
+class FakeGpuPictures final : public GpuPictures {
+public:
+	FakeGpuPictures() = default;
+
+	~FakeGpuPictures() override
+	{
+		obs_enter_graphics();
+		destroyTextures();
+		obs_leave_graphics();
+	}
+
+	FakeGpuPictures(const FakeGpuPictures &) = delete;
+	FakeGpuPictures &operator=(const FakeGpuPictures &) = delete;
+	FakeGpuPictures(FakeGpuPictures &&) = delete;
+	FakeGpuPictures &operator=(FakeGpuPictures &&) = delete;
+
+	bool prepare(uint32_t width, uint32_t height) noexcept override
+	{
+		++prepares;
+		if (refuse) {
+			return false;
+		}
+		if (luma_ && width == width_ && height == height_) {
+			return true;
+		}
+		destroyTextures();
+		luma_ = gs_texture_create(width, height, GS_R8, 1, nullptr, GS_DYNAMIC);
+		chroma_ = gs_texture_create(width / 2, height / 2, GS_R8G8, 1, nullptr, GS_DYNAMIC);
+		if (!luma_ || !chroma_) {
+			destroyTextures();
+			return false;
+		}
+		const std::lock_guard lock(mutex_);
+		try {
+			for (Slot &slot : slots_) {
+				slot.luma.resize(size_t{width} * height);
+				slot.chroma.resize(size_t{width} * (height / 2));
+			}
+		} catch (...) {
+			return false;
+		}
+		width_ = width;
+		height_ = height;
+		++generation_;
+		return true;
+	}
+
+	bool publish(const Picture &picture, Tag tag) noexcept override
+	{
+		const std::lock_guard lock(mutex_);
+		if (width_ == 0 || picture.width != width_ || picture.height != height_) {
+			return false;
+		}
+		const int target = drawing_ == 0 ? 1 : 0;
+		Slot &slot = slots_[static_cast<size_t>(target)];
+		for (uint32_t row = 0; row < height_; ++row) {
+			std::memcpy(slot.luma.data() + size_t{row} * width_,
+				    picture.planes[0] + size_t{row} * picture.strides[0], width_);
+		}
+		for (uint32_t row = 0; row < height_ / 2; ++row) {
+			uint8_t *to = slot.chroma.data() + size_t{row} * width_;
+			const uint8_t *u = picture.planes[1] + size_t{row} * picture.strides[1];
+			if (picture.layout == PixelLayout::Nv12) {
+				std::memcpy(to, u, width_);
+				continue;
+			}
+			const uint8_t *v = picture.planes[2] + size_t{row} * picture.strides[2];
+			for (uint32_t x = 0; x < width_ / 2; ++x) {
+				to[size_t{x} * 2] = u[x];
+				to[size_t{x} * 2 + 1] = v[x];
+			}
+		}
+		slot.colors = picture;
+		slot.colors.planes = {};
+		slot.colors.strides = {};
+		slot.colors.texture = nullptr;
+		slot.tag = tag;
+		ready_ = target;
+		++publishes;
+		return true;
+	}
+
+	std::optional<Tag> latch() noexcept override
+	{
+		const std::lock_guard lock(mutex_);
+		if (ready_ >= 0) {
+			drawing_ = std::exchange(ready_, -1);
+			const Slot &slot = slots_[static_cast<size_t>(drawing_)];
+			// Rows of interleaved chroma are as long as rows of luma.
+			gs_texture_set_image(luma_, slot.luma.data(), width_, false);
+			gs_texture_set_image(chroma_, slot.chroma.data(), width_, false);
+		}
+		if (drawing_ < 0) {
+			return std::nullopt;
+		}
+		return slots_[static_cast<size_t>(drawing_)].tag;
+	}
+
+	bool draw(PictureRenderer &renderer, uint32_t width, uint32_t height) noexcept override
+	{
+		Picture colors;
+		{
+			const std::lock_guard lock(mutex_);
+			if (drawing_ < 0) {
+				return false;
+			}
+			colors = slots_[static_cast<size_t>(drawing_)].colors;
+		}
+		return renderer.drawNv12(luma_, chroma_, colors, width, height);
+	}
+
+	uint64_t generation() const noexcept override
+	{
+		const std::lock_guard lock(mutex_);
+		return generation_;
+	}
+
+	// The textures are still there, with nothing in them. SharedPictures counts the
+	// release and the rebuild.
+	void rebuild() noexcept
+	{
+		const std::lock_guard lock(mutex_);
+		ready_ = -1;
+		drawing_ = -1;
+		generation_ += 2;
+	}
+
+	// The graphics thread's.
+	bool refuse = false;
+	int prepares = 0;
+	// The decoding thread's.
+	std::atomic<size_t> publishes{0};
+
+private:
+	struct Slot {
+		std::vector<uint8_t> luma;
+		std::vector<uint8_t> chroma;
+		Picture colors;
+		Tag tag;
+	};
+
+	void destroyTextures() noexcept
+	{
+		{
+			const std::lock_guard lock(mutex_);
+			width_ = 0;
+			height_ = 0;
+			ready_ = -1;
+			drawing_ = -1;
+			++generation_;
+		}
+		gs_texture_destroy(luma_);
+		gs_texture_destroy(chroma_);
+		luma_ = nullptr;
+		chroma_ = nullptr;
+	}
+
+	gs_texture_t *luma_ = nullptr;
+	gs_texture_t *chroma_ = nullptr;
+	mutable std::mutex mutex_;
+	std::array<Slot, 2> slots_;
+	uint32_t width_ = 0;
+	uint32_t height_ = 0;
+	int ready_ = -1;
+	int drawing_ = -1;
+	uint64_t generation_ = 0;
+};
+
+// What a picture said to be on the GPU points at, for a decoder that has none.
+int gpuTexture = 0;
+
+// What the decoders of a test's player share with the test: whether their pictures are
+// on the GPU, how much smaller than the clip they say they are, and how many were asked
+// for.
+struct GpuMeter {
+	std::atomic<bool> onGpu{true};
+	std::atomic<uint32_t> crop{0};
+	std::atomic<size_t> pictures{0};
+};
+
+// An FFmpegDecoder whose pictures say they are on the GPU while the meter says so, as a
+// hardware decoder's are, and keep their planes for FakeGpuPictures to read.
+class GpuDecoder final : public PictureDecoder {
+public:
+	explicit GpuDecoder(GpuMeter &meter) : meter_(meter) {}
+
+	DecodeStatus open(VideoCodec codec, std::span<const uint8_t> config) noexcept override
+	{
+		return decoder_.open(codec, config);
+	}
+
+	DecodeStatus send(std::span<const uint8_t> data, int64_t pts, int64_t dts) noexcept override
+	{
+		return decoder_.send(data, pts, dts);
+	}
+
+	DecodeStatus receive(DecodedFrame &frame) noexcept override { return decoder_.receive(frame); }
+	DecodeStatus flush() noexcept override { return decoder_.flush(); }
+	void reset() noexcept override { decoder_.reset(); }
+	void release(const DecodedFrame &frame) noexcept override { decoder_.release(frame); }
+	void close() noexcept override { decoder_.close(); }
+
+	std::optional<Picture> picture(const DecodedFrame &frame) const noexcept override
+	{
+		++meter_.pictures;
+		std::optional<Picture> picture = decoder_.picture(frame);
+		if (picture && meter_.onGpu) {
+			picture->texture = &gpuTexture;
+			picture->width -= meter_.crop;
+			picture->height -= meter_.crop;
+		}
+		return picture;
+	}
+
+	static ReplayPlayer::DecoderFactory factory(GpuMeter &meter)
+	{
+		return [&meter]() -> std::unique_ptr<PictureDecoder> {
+			return std::make_unique<GpuDecoder>(meter);
+		};
+	}
+
+private:
+	GpuMeter &meter_;
+	FFmpegDecoder decoder_;
+};
 
 } // namespace
 
@@ -609,65 +871,73 @@ TEST_CASE_METHOD(ObsFixture, "steady replay playback allocates nothing per frame
 	const std::vector<size_t> starts = gopStarts(clip, expected);
 
 	Screen screen;
-	ReplayPlayer player(makeDecoder);
-	REQUIRE(player.load(gopsOf(clip)));
+	for (const bool onGpu : {false, true}) {
+		CAPTURE(onGpu);
+		FakeGpuPictures gpu;
+		GpuMeter meter;
+		meter.onGpu = onGpu;
+		ReplayPlayer player(GpuDecoder::factory(meter), {}, &gpu);
+		REQUIRE(player.load(gopsOf(clip)));
+		showFirst(screen, player, expected, onGpu);
 
-	// Ticks the way the source does, counting what the player allocates and timing
-	// what it decodes.
-	size_t allocations = 0;
-	std::chrono::steady_clock::duration decoding{};
-	size_t decodes = 0;
-	auto run = [&](int count) {
-		for (int tick = 0; tick < count; ++tick) {
-			{
-				const AllocationCounter counter;
-				player.tick(kTick);
-				const auto started = std::chrono::steady_clock::now();
-				while (player.decodeNext()) {
-					++decodes;
+		// Ticks the way the source does, counting what the player allocates and timing
+		// what it decodes.
+		size_t allocations = 0;
+		std::chrono::steady_clock::duration decoding{};
+		size_t decodes = 0;
+		auto run = [&](int count) {
+			for (int tick = 0; tick < count; ++tick) {
+				{
+					const AllocationCounter counter;
+					player.tick(kTick);
+					const auto started = std::chrono::steady_clock::now();
+					while (player.decodeNext()) {
+						++decodes;
+					}
+					decoding += std::chrono::steady_clock::now() - started;
+					allocations += counter.count();
 				}
-				decoding += std::chrono::steady_clock::now() - started;
-				allocations += counter.count();
+				REQUIRE(screen.draw(player, false, &allocations).drawn);
+				REQUIRE(player.state().drawn == player.state().frame);
 			}
-			REQUIRE(screen.draw(player, false, &allocations).drawn);
-			REQUIRE(player.state().drawn == player.state().frame);
-		}
-	};
-	auto workout = [&] {
-		player.setRate(1000);
-		player.seek(expected.front().time);
-		player.play();
-		run(static_cast<int>(expected.size()) * 2);
-		player.setRate(-1000);
-		player.play();
-		run(static_cast<int>(expected.size()) * 2);
-		player.setRate(2000);
-		player.play();
-		run(static_cast<int>(expected.size()));
-		player.seek(expected[starts[2]].time);
-		player.beginScrub(ScrubDirection::Backward);
-		run(60);
-		player.beginScrub(ScrubDirection::Forward);
-		run(60);
-		player.endScrub();
-		player.pause();
-		for (int step = 0; step < 10; ++step) {
-			player.step(step % 2 == 0 ? -3 : 1);
-			run(1);
-		}
-	};
+		};
+		auto workout = [&] {
+			player.setRate(1000);
+			player.seek(expected.front().time);
+			player.play();
+			run(static_cast<int>(expected.size()) * 2);
+			player.setRate(-1000);
+			player.play();
+			run(static_cast<int>(expected.size()) * 2);
+			player.setRate(2000);
+			player.play();
+			run(static_cast<int>(expected.size()));
+			player.seek(expected[starts[2]].time);
+			player.beginScrub(ScrubDirection::Backward);
+			run(60);
+			player.beginScrub(ScrubDirection::Forward);
+			run(60);
+			player.endScrub();
+			player.pause();
+			for (int step = 0; step < 10; ++step) {
+				player.step(step % 2 == 0 ? -3 : 1);
+				run(1);
+			}
+		};
 
-	// The first pass sizes the planner's and the player's buffers and the textures.
-	workout();
-	allocations = 0;
-	decoding = {};
-	decodes = 0;
-	workout();
-	CHECK(allocations == 0);
-	// A baseline for the CPU path; the planner's cache serves some of these frames.
-	const double milliseconds = std::chrono::duration<double, std::milli>(decoding).count();
-	std::printf("[player] %zu frames of 320x180 H.264 decoded and copied in %.1f ms, %.3f ms each\n", decodes,
-		    milliseconds, milliseconds / static_cast<double>(decodes));
+		// The first pass sizes the planner's and the player's buffers and the textures.
+		workout();
+		allocations = 0;
+		decoding = {};
+		decodes = 0;
+		workout();
+		CHECK(allocations == 0);
+		CHECK(gpu.prepares == (onGpu ? 1 : 0));
+		// A baseline; the planner's cache serves some of these frames.
+		const double milliseconds = std::chrono::duration<double, std::milli>(decoding).count();
+		std::printf("[player] %zu frames of 320x180 H.264 decoded and %s in %.1f ms, %.3f ms each\n", decodes,
+			    onGpu ? "published" : "copied", milliseconds, milliseconds / static_cast<double>(decodes));
+	}
 }
 
 TEST_CASE_METHOD(ObsFixture, "a replay player decodes on its own thread once started", "[obs][player]")
@@ -678,54 +948,298 @@ TEST_CASE_METHOD(ObsFixture, "a replay player decodes on its own thread once sta
 	const std::vector<size_t> starts = gopStarts(clip, expected);
 
 	Screen screen;
-	ReplayPlayer player(makeDecoder);
-	REQUIRE(player.start());
-	REQUIRE(player.start());
-	REQUIRE(player.load(gopsOf(clip)));
+	for (const bool onGpu : {false, true}) {
+		CAPTURE(onGpu);
+		FakeGpuPictures gpu;
+		GpuMeter meter;
+		ReplayPlayer player(onGpu ? GpuDecoder::factory(meter) : ReplayPlayer::DecoderFactory(makeDecoder), {},
+				    onGpu ? &gpu : nullptr);
+		REQUIRE(player.start());
+		REQUIRE(player.start());
+		REQUIRE(player.load(gopsOf(clip)));
 
-	// The picture follows the playhead when it is ready; each tick waits for it here.
-	auto settle = [&](Nanoseconds elapsed) {
-		player.tick(elapsed);
-		REQUIRE(waitFor(
-			[&] {
-				const bool drawn = screen.draw(player, false).drawn;
-				const PlayerState state = player.state();
-				return drawn && state.drawn == state.frame;
-			},
-			10s));
-		const PlayerState state = player.state();
-		CAPTURE(state.frame);
-		CHECK(screen.draw(player).number == expected[state.frame].number);
-		return state;
-	};
-	settle(0ns);
-	player.seek(expected[starts[1] - 3].time);
-	player.play();
-	PlayerState state = settle(kTick);
-	for (int tick = 0; tick < 20; ++tick) {
-		state = settle(kTick);
-	}
-	CHECK(state.frame > starts[1]);
-	player.reverse();
-	for (int tick = 0; tick < 30; ++tick) {
-		state = settle(kTick);
-	}
-	CHECK(state.frame < starts[1]);
+		// The picture follows the playhead when it is ready; each tick waits for it here.
+		auto settle = [&](Nanoseconds elapsed) {
+			player.tick(elapsed);
+			REQUIRE(waitFor(
+				[&] {
+					const bool drawn = screen.draw(player, false).drawn;
+					const PlayerState state = player.state();
+					return drawn && state.drawn == state.frame;
+				},
+				10s));
+			const PlayerState state = player.state();
+			CAPTURE(state.frame);
+			CHECK(screen.draw(player).number == expected[state.frame].number);
+			return state;
+		};
+		settle(0ns);
+		player.seek(expected[starts[1] - 3].time);
+		player.play();
+		PlayerState state = settle(kTick);
+		for (int tick = 0; tick < 20; ++tick) {
+			state = settle(kTick);
+		}
+		CHECK(state.frame > starts[1]);
 
-	// Ticks that do not wait leave the decoder behind; the player keeps up with the
-	// latest frame and stops cleanly in the middle of it.
-	player.setRate(4000);
-	for (int tick = 0; tick < 30; ++tick) {
+		// After a device rebuild the frame comes back with nothing else asking for it.
+		player.pause();
+		state = settle(kTick);
+		gpu.rebuild();
+		CHECK(settle(0ns).frame == state.frame);
+		player.play();
+
+		player.reverse();
+		for (int tick = 0; tick < 30; ++tick) {
+			state = settle(kTick);
+		}
+		CHECK(state.frame < starts[1]);
+
+		// Ticks that do not wait leave the decoder behind; the player keeps up with the
+		// latest frame and stops cleanly in the middle of it.
+		player.setRate(4000);
+		for (int tick = 0; tick < 30; ++tick) {
+			player.tick(kTick);
+			screen.draw(player, false);
+		}
+		player.stop();
+		CHECK_FALSE(player.decodeNext());
+		CHECK_FALSE(player.start());
+		// The playhead still answers, with nothing decoded for it.
+		const size_t at = player.state().frame;
+		REQUIRE(at > 0);
+		player.step(-1);
 		player.tick(kTick);
-		screen.draw(player, false);
+		CHECK(player.state().frame == at - 1);
 	}
-	player.stop();
-	CHECK_FALSE(player.decodeNext());
-	CHECK_FALSE(player.start());
-	// The playhead still answers, with nothing decoded for it.
-	const size_t at = player.state().frame;
-	REQUIRE(at > 0);
-	player.step(-1);
+}
+
+TEST_CASE_METHOD(ObsFixture, "a replay player shows pictures decoded on the GPU where its playhead is", "[obs][player]")
+{
+	const Clip clip = captureClip(4);
+	REQUIRE(clip.gops().size() >= 4);
+	const std::vector<ExpectedFrame> expected = expectedFrames(clip);
+	const std::vector<size_t> starts = gopStarts(clip, expected);
+
+	Screen screen;
+	FakeGpuPictures gpu;
+	GpuMeter meter;
+	ReplayPlayer player(GpuDecoder::factory(meter), {}, &gpu);
+	REQUIRE(player.load(gopsOf(clip)));
+	showFirst(screen, player, expected, true);
+
+	const size_t last = starts[1] + 2;
+	for (size_t frame = 1; frame <= last; ++frame) {
+		player.step(1);
+		CHECK(checkTick(screen, player, expected).frame == frame);
+	}
+	for (size_t frame = last; frame-- > 0;) {
+		player.step(-1);
+		CHECK(checkTick(screen, player, expected).frame == frame);
+	}
+
+	size_t stride = 37;
+	while (expected.size() % stride == 0) {
+		++stride;
+	}
+	for (size_t i = 0; i < expected.size(); ++i) {
+		const size_t frame = i * stride % expected.size();
+		player.seek(expected[frame].time);
+		CHECK(checkTick(screen, player, expected).frame == frame);
+	}
+
+	for (const int32_t rate : {2000, -2000}) {
+		CAPTURE(rate);
+		player.setRate(rate);
+		player.seek(expected[rate > 0 ? starts[1] - 4 : starts[1] + 3].time);
+		player.play();
+		PlayerState state = checkTick(screen, player, expected);
+		bool crossed = false;
+		for (int tick = 0; tick < 60 && state.playing; ++tick) {
+			state = checkTick(screen, player, expected);
+			crossed = crossed || (rate > 0 ? state.frame >= starts[1] : state.frame < starts[1]);
+		}
+		CHECK(crossed);
+	}
+	CHECK(gpu.prepares == 1);
+	CHECK(gpu.publishes >= expected.size());
+
+	// A picture of another size takes one render more, for the GpuPictures to be
+	// prepared for it; the one of the size before is gone with it.
+	player.pause();
+	player.seek(expected[2].time);
+	checkTick(screen, player, expected);
+	meter.crop = 2;
+	player.step(1);
 	player.tick(kTick);
-	CHECK(player.state().frame == at - 1);
+	Screen::decodeAll(player);
+	CHECK_FALSE(screen.draw(player, false).drawn);
+	CHECK_FALSE(player.state().drawn);
+	Screen::decodeAll(player);
+	CHECK(screen.draw(player, false).drawn);
+	const PlayerState state = player.state();
+	CHECK(state.drawn == size_t{3});
+	CHECK(state.width == kClipWidth - 2);
+	CHECK(state.height == kClipHeight - 2);
+	CHECK(gpu.prepares == 2);
+}
+
+TEST_CASE_METHOD(ObsFixture, "a replay player switches between pictures in memory and on the GPU", "[obs][player]")
+{
+	const Clip clip = captureClip(3);
+	REQUIRE(clip.gops().size() >= 3);
+	const std::vector<ExpectedFrame> expected = expectedFrames(clip);
+	const std::vector<size_t> starts = gopStarts(clip, expected);
+
+	Screen screen;
+	FakeGpuPictures gpu;
+	GpuMeter meter;
+	ReplayPlayer player(GpuDecoder::factory(meter), {}, &gpu);
+	REQUIRE(player.load(gopsOf(clip)));
+	showFirst(screen, player, expected, true);
+
+	// Every third picture in memory, the others on the GPU, either way.
+	const size_t last = starts[0] + 4;
+	REQUIRE(last < starts[1]);
+	for (size_t frame = 1; frame <= last; ++frame) {
+		meter.onGpu = frame % 3 != 0;
+		player.step(1);
+		CHECK(checkTick(screen, player, expected).frame == frame);
+	}
+	for (size_t frame = last; frame-- > 0;) {
+		meter.onGpu = frame % 3 != 1;
+		player.step(-1);
+		CHECK(checkTick(screen, player, expected).frame == frame);
+	}
+	CHECK(gpu.prepares == 1);
+
+	// Without GpuPictures, a picture on the GPU is not shown, and the playhead goes on.
+	ReplayPlayer blind(GpuDecoder::factory(meter));
+	meter.onGpu = true;
+	REQUIRE(blind.load(gopsOf(clip)));
+	for (size_t frame = 1; frame <= 3; ++frame) {
+		blind.step(1);
+		CHECK_FALSE(screen.frame(blind).drawn);
+		CHECK_FALSE(blind.state().drawn);
+		CHECK(blind.state().frame == frame);
+	}
+	meter.onGpu = false;
+	blind.step(1);
+	CHECK(checkTick(screen, blind, expected).frame == 4);
+}
+
+TEST_CASE_METHOD(ObsFixture, "a replay player shows no picture on the GPU of the clip before", "[obs][player]")
+{
+	const Clip clip = captureClip(4);
+	REQUIRE(clip.gops().size() >= 4);
+	const std::vector<ExpectedFrame> expected = expectedFrames(clip);
+	const Clip later({clip.gops().begin() + 2, clip.gops().end()}, Nanoseconds::min(), Nanoseconds::max());
+	const std::vector<ExpectedFrame> laterExpected = expectedFrames(later);
+	REQUIRE(laterExpected.front().number != expected.front().number);
+
+	Screen screen;
+	FakeGpuPictures gpu;
+	GpuMeter meter;
+	ReplayPlayer player(GpuDecoder::factory(meter), {}, &gpu);
+	REQUIRE(player.load(gopsOf(clip)));
+	showFirst(screen, player, expected, true);
+	player.step(3);
+	checkTick(screen, player, expected);
+
+	// A picture of the clip before is published and waiting when the next clip loads.
+	player.step(1);
+	player.tick(kTick);
+	Screen::decodeAll(player);
+	REQUIRE(player.load(gopsOf(later)));
+	player.tick(kTick);
+	CHECK_FALSE(player.state().drawn);
+	CHECK_FALSE(screen.draw(player).drawn);
+	CHECK_FALSE(player.state().drawn);
+
+	// The textures are of the right size already, so the new clip shows at once.
+	Screen::decodeAll(player);
+	const Shown shown = screen.draw(player);
+	CHECK(shown.drawn);
+	CHECK(shown.number == laterExpected.front().number);
+	CHECK(player.state().drawn == size_t{0});
+	player.step(2);
+	CHECK(checkTick(screen, player, laterExpected).frame == 2);
+}
+
+TEST_CASE_METHOD(ObsFixture, "a replay player hands its picture over again after a device rebuild", "[obs][player]")
+{
+	const Clip clip = captureClip(2);
+	const std::vector<ExpectedFrame> expected = expectedFrames(clip);
+
+	Screen screen;
+	for (const bool onGpu : {true, false}) {
+		CAPTURE(onGpu);
+		FakeGpuPictures gpu;
+		GpuMeter meter;
+		meter.onGpu = onGpu;
+		ReplayPlayer player(GpuDecoder::factory(meter), {}, &gpu);
+		REQUIRE(player.load(gopsOf(clip)));
+		showFirst(screen, player, expected, onGpu);
+		player.step(3);
+		const PlayerState held = checkTick(screen, player, expected);
+		const size_t pictures = meter.pictures;
+
+		// A picture on the GPU is gone at once. One in memory is still drawn, though in
+		// OBS its texture may have lost what it held.
+		gpu.rebuild();
+		CHECK(screen.draw(player).drawn == !onGpu);
+		CHECK(player.state().drawn.has_value() == !onGpu);
+
+		// One request brings the frame back.
+		REQUIRE(player.decodeNext());
+		CHECK_FALSE(player.decodeNext());
+		CHECK(meter.pictures == pictures + 1);
+		Shown shown = screen.draw(player);
+		CHECK(shown.drawn);
+		CHECK(shown.number == expected[held.frame].number);
+		CHECK(player.state().drawn == held.frame);
+
+		// Nothing more is asked while nothing changes.
+		for (int tick = 0; tick < 3; ++tick) {
+			player.tick(kTick);
+			CHECK_FALSE(player.decodeNext());
+			shown = screen.draw(player);
+			CHECK(shown.number == expected[held.frame].number);
+		}
+		CHECK(meter.pictures == pictures + 1);
+	}
+}
+
+TEST_CASE_METHOD(ObsFixture, "a replay player whose GPU pictures cannot be prepared tries again at the next load",
+		 "[obs][player]")
+{
+	const Clip clip = captureClip(2);
+	const std::vector<ExpectedFrame> expected = expectedFrames(clip);
+
+	Screen screen;
+	FakeGpuPictures gpu;
+	gpu.refuse = true;
+	GpuMeter meter;
+	ReplayPlayer player(GpuDecoder::factory(meter), {}, &gpu);
+	REQUIRE(player.load(gopsOf(clip)));
+	for (size_t frame = 1; frame <= 4; ++frame) {
+		player.step(1);
+		CHECK_FALSE(screen.frame(player).drawn);
+		CHECK_FALSE(player.state().drawn);
+		CHECK(player.state().frame == frame);
+	}
+	CHECK(gpu.prepares == 1);
+	CHECK(gpu.publishes == 0);
+
+	// Not on every frame of the same clip, even once it could be.
+	gpu.refuse = false;
+	player.step(1);
+	CHECK_FALSE(screen.frame(player).drawn);
+	CHECK(gpu.prepares == 1);
+
+	REQUIRE(player.load(gopsOf(clip)));
+	showFirst(screen, player, expected, true);
+	CHECK(gpu.prepares == 2);
+	player.step(1);
+	CHECK(checkTick(screen, player, expected).frame == 1);
 }

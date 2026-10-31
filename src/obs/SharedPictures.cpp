@@ -156,7 +156,7 @@ bool SharedPictures::prepare(uint32_t width, uint32_t height) noexcept
 	return true;
 }
 
-bool SharedPictures::publish(const decode::Picture &picture) noexcept
+bool SharedPictures::publish(const decode::Picture &picture, Tag tag) noexcept
 {
 	if (!opened_ || !picture.texture) {
 		return false;
@@ -233,15 +233,15 @@ bool SharedPictures::publish(const decode::Picture &picture) noexcept
 	if (copied && generation == generation_) {
 		keys_[slot] = kFilled;
 		colors_[slot] = picture;
+		tags_[slot] = tag;
 		ready_ = target;
 	}
 	return copied && generation == generation_;
 }
 
-bool SharedPictures::draw(PictureRenderer &renderer, uint32_t width, uint32_t height) noexcept
+std::optional<GpuPictures::Tag> SharedPictures::latch() noexcept
 {
-	decode::Picture colors;
-	int shown = -1;
+	std::optional<Tag> shown;
 	int taken = 0;
 	int released = 0;
 	{
@@ -257,9 +257,8 @@ bool SharedPictures::draw(PictureRenderer &renderer, uint32_t width, uint32_t he
 				ready_ = -1;
 			}
 		}
-		shown = drawing_;
-		if (shown >= 0) {
-			colors = colors_[static_cast<size_t>(shown)];
+		if (drawing_ >= 0) {
+			shown = tags_[static_cast<size_t>(drawing_)];
 		}
 	}
 	if (taken != 0) {
@@ -268,11 +267,31 @@ bool SharedPictures::draw(PictureRenderer &renderer, uint32_t width, uint32_t he
 	if (released != 0) {
 		sayFailure(giveFailures_, "giving a drawn texture back to the decoder", obsWords(released));
 	}
+	return shown;
+}
+
+bool SharedPictures::draw(PictureRenderer &renderer, uint32_t width, uint32_t height) noexcept
+{
+	decode::Picture colors;
+	int shown = -1;
+	{
+		std::lock_guard lock(mutex_);
+		shown = drawing_;
+		if (shown >= 0) {
+			colors = colors_[static_cast<size_t>(shown)];
+		}
+	}
 	if (shown < 0) {
 		return false;
 	}
 	const auto slot = static_cast<size_t>(shown);
 	return renderer.drawNv12(luma_[slot], chroma_[slot], colors, width, height);
+}
+
+uint64_t SharedPictures::generation() const noexcept
+{
+	std::lock_guard lock(mutex_);
+	return generation_;
 }
 
 void SharedPictures::releaseDevice(void *data) noexcept

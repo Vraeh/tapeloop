@@ -30,9 +30,10 @@ int32_t nextPreset(int32_t rate, bool up) noexcept
 
 } // namespace
 
-ReplayPlayer::ReplayPlayer(DecoderFactory decoders, DecodePlannerConfig planner)
+ReplayPlayer::ReplayPlayer(DecoderFactory decoders, DecodePlannerConfig planner, GpuPictures *gpu)
 	: decoders_(std::move(decoders)),
-	  plannerConfig_(planner)
+	  plannerConfig_(planner),
+	  gpu_(gpu)
 {
 }
 
@@ -241,6 +242,10 @@ void ReplayPlayer::tick(Nanoseconds elapsed) noexcept
 			playhead_.load(std::move(loadingTimes_));
 			clip_ = loaded;
 			onScreen_.reset();
+			// A size the GpuPictures could not be prepared for is tried again for the
+			// next clip, not on every frame.
+			preparedWidth_ = 0;
+			preparedHeight_ = 0;
 		}
 		if (i < count) {
 			apply(applying_[i]);
@@ -282,6 +287,8 @@ void ReplayPlayer::tick(Nanoseconds elapsed) noexcept
 bool ReplayPlayer::render(PictureRenderer &renderer, uint32_t width, uint32_t height) noexcept
 {
 	bool took = false;
+	uint32_t gpuWidth = 0;
+	uint32_t gpuHeight = 0;
 	{
 		const std::lock_guard lock(picturesMutex_);
 		if (fresh_) {
@@ -289,16 +296,46 @@ bool ReplayPlayer::render(PictureRenderer &renderer, uint32_t width, uint32_t he
 			fresh_ = false;
 			took = true;
 		}
+		gpuWidth = gpuWidth_;
+		gpuHeight = gpuHeight_;
 	}
-	if (took && copies_[front_].clip == clip_) {
-		const Copy &copy = copies_[front_];
+	if (gpu_) {
+		// A picture of a size the GpuPictures is not prepared for could not be published.
+		// Preparing it changes the generation, which brings that picture back.
+		if (gpuWidth != 0 && (gpuWidth != preparedWidth_ || gpuHeight != preparedHeight_)) {
+			preparedWidth_ = gpuWidth;
+			preparedHeight_ = gpuHeight;
+			gpu_->prepare(gpuWidth, gpuHeight);
+		}
+		const uint64_t generation = gpu_->generation();
+		if (generation != gpuGeneration_) {
+			gpuGeneration_ = generation;
+			republish();
+		}
+	}
+
+	const Copy &copy = copies_[front_];
+	const bool current = took && copy.clip == clip_;
+	if (current && !copy.onGpu) {
 		if (renderer.upload(copy.picture)) {
-			onScreen_ = Shown{copy.frame, copy.picture.width, copy.picture.height};
+			onScreen_ = Shown{copy.frame, copy.picture.width, copy.picture.height, false};
+		} else {
+			onScreen_.reset();
+		}
+	} else if (gpu_ && (current || (onScreen_ && onScreen_->onGpu))) {
+		// The picture published last may be newer than the copy that said one was, but
+		// it is of the same clip or of one after it, never of one before.
+		const std::optional<GpuPictures::Tag> tag = gpu_->latch();
+		if (tag && tag->clip == clip_) {
+			onScreen_ = Shown{tag->frame, tag->width, tag->height, true};
 		} else {
 			onScreen_.reset();
 		}
 	}
-	const bool drawn = onScreen_ && renderer.draw(width, height);
+	bool drawn = false;
+	if (onScreen_) {
+		drawn = onScreen_->onGpu ? gpu_->draw(renderer, width, height) : renderer.draw(width, height);
+	}
 
 	const std::lock_guard lock(mutex_);
 	if (drawn) {
@@ -333,6 +370,7 @@ bool ReplayPlayer::takeRequest(Request &request, bool wait) noexcept
 	// Whatever happens to it, a request is handled once, so that one that fails is not
 	// tried again on every pass.
 	handled_ = requests_;
+	request.republish = std::exchange(republish_, false);
 	request.newClip = std::exchange(gopsPending_, false);
 	if (request.newClip) {
 		request.clip = loads_;
@@ -344,6 +382,10 @@ bool ReplayPlayer::takeRequest(Request &request, bool wait) noexcept
 
 void ReplayPlayer::decode(Request &request) noexcept
 {
+	if (request.republish) {
+		decoded_.reset();
+		handedOff_.reset();
+	}
 	bool loading = request.newClip;
 	try {
 		if (loading) {
@@ -392,8 +434,11 @@ void ReplayPlayer::decode(Request &request) noexcept
 
 bool ReplayPlayer::handOff(const decode::Picture &picture, const Wanted &wanted)
 {
-	if (picture.texture || picture.width == 0 || picture.height == 0) {
+	if (picture.width == 0 || picture.height == 0) {
 		return false;
+	}
+	if (picture.texture) {
+		return handOffGpu(picture, wanted);
 	}
 	const bool nv12 = picture.layout == decode::PixelLayout::Nv12;
 	const uint32_t chromaWidth = (picture.width + 1) / 2;
@@ -428,11 +473,46 @@ bool ReplayPlayer::handOff(const decode::Picture &picture, const Wanted &wanted)
 	}
 	copy.clip = wanted.clip;
 	copy.frame = wanted.frame;
+	copy.onGpu = false;
 
 	const std::lock_guard lock(picturesMutex_);
 	std::swap(back_, ready_);
 	fresh_ = true;
 	return true;
+}
+
+bool ReplayPlayer::handOffGpu(const decode::Picture &picture, const Wanted &wanted) noexcept
+{
+	if (!gpu_) {
+		return false;
+	}
+	{
+		const std::lock_guard lock(picturesMutex_);
+		gpuWidth_ = picture.width;
+		gpuHeight_ = picture.height;
+	}
+	if (!gpu_->publish(picture, {wanted.clip, wanted.frame, picture.width, picture.height})) {
+		return false;
+	}
+	Copy &copy = copies_[back_];
+	copy.clip = wanted.clip;
+	copy.frame = wanted.frame;
+	copy.onGpu = true;
+
+	const std::lock_guard lock(picturesMutex_);
+	std::swap(back_, ready_);
+	fresh_ = true;
+	return true;
+}
+
+void ReplayPlayer::republish() noexcept
+{
+	{
+		const std::lock_guard lock(mutex_);
+		republish_ = true;
+		++requests_;
+	}
+	wake_.notify_one();
 }
 
 void ReplayPlayer::decodeLoop() noexcept
