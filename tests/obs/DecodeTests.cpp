@@ -921,11 +921,11 @@ TEST_CASE_METHOD(ObsFixture, "an MP4 starts a sample entry at the first packet o
 	CHECK(track.samples[1].entry == 2);
 }
 
-TEST_CASE_METHOD(ObsFixture, "an MP4 leaves out packets without bytes", "[decode][export]")
+TEST_CASE_METHOD(ObsFixture, "an MP4 export of packets without bytes fails", "[decode][export]")
 {
-	// A replay file can list packets of no bytes. In a GOP of only those there are no
-	// bytes to copy from at all, and the size of the pictures comes from a configuration
-	// that holds a whole keyframe after the parameter sets.
+	// A replay file can list packets of no bytes. In a GOP of only those, the size of the
+	// pictures comes from a configuration that holds a whole keyframe after the parameter
+	// sets, and the muxer leaves every packet out: the file would have no track.
 	const RecordedRun run = loadRecordedRun(kHevcPattern);
 	CodecConfig config = run.config;
 	config.insert(config.end(), run.packets.front().data.begin(), run.packets.front().data.end());
@@ -934,18 +934,29 @@ TEST_CASE_METHOD(ObsFixture, "an MP4 leaves out packets without bytes", "[decode
 	builder.append({{}, 0, 0, Nanoseconds{0}, true});
 	builder.append({{}, 1, 1, kFrameInterval, false});
 	const std::shared_ptr<const Gop> gop = builder.seal();
+	const std::string error = "no packet of the MP4 file holds any bytes";
 	tapeloop::test::TempDirectory dir;
+	{
+		Mp4Writer writer;
+		writer.open(dir.path() / "empty.mp4", *gop);
+		writer.write(*gop, 0, Nanoseconds{0});
+		writer.write(*gop, 1, kFrameInterval);
+		CHECK(errorOf([&] { writer.finish(); }) == error);
+	}
 
-	const std::filesystem::path path = dir.path() / "empty.mp4";
-	Mp4Writer writer;
-	writer.open(path, *gop);
-	writer.write(*gop, 0, Nanoseconds{0});
-	writer.write(*gop, 1, kFrameInterval);
-	writer.finish();
-	// FFmpeg leaves out the track of a stream that got no samples.
-	const std::vector<uint8_t> file = readFile(path);
-	CHECK_FALSE(file.empty());
-	CHECK_THROWS(tapeloop::test::readMp4(file));
+	// The export publishes no file, and leaves none behind.
+	const tapeloop::WrittenReplay written = tapeloop::ReplayWriter().write(
+		tapeloop::test::captureOf(dir.path(), {tapeloop::test::sourceOf("a", {gop})}));
+	tapeloop::ReplayExporter exporter([] { return std::make_unique<Mp4Writer>(); });
+	tapeloop::ExportRequest request;
+	request.manifest = written.manifest;
+	exporter.exportReplay(request);
+	exporter.waitUntilIdle();
+	const std::vector<tapeloop::ExportResult> results = exporter.poll();
+	REQUIRE(results.size() == 1);
+	CHECK(results[0].error == error);
+	CHECK(results[0].files.empty());
+	CHECK(std::filesystem::is_empty(tapeloop::exportFolderOf(written.manifest)));
 }
 
 TEST_CASE_METHOD(ObsFixture, "an MP4 is written to a new file, never over one already there", "[decode][export]")

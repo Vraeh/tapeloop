@@ -130,6 +130,7 @@ void Mp4Writer::open(const std::filesystem::path &path, const Gop &first)
 	config_ = first.codecConfig() ? *first.codecConfig() : CodecConfig{};
 	checkParameterSets(first.codec(), config_);
 	configFromPacket_ = config_.empty();
+	bytesWritten_ = false;
 	frameTicks_ = std::max<int64_t>(ticksOf(first.frameDuration()), 1);
 	lastDts_ = std::numeric_limits<int64_t>::min();
 	const auto [width, height] = pictureSize(first);
@@ -265,12 +266,16 @@ void Mp4Writer::write(const Gop &gop, size_t packet, Nanoseconds time)
 	if (const int error = av_write_frame(context_, packet_); error < 0) {
 		fail("cannot write to the MP4 file", error);
 	}
+	bytesWritten_ = bytesWritten_ || !data.empty();
 }
 
 void Mp4Writer::finish()
 {
 	if (!context_) {
 		throw std::logic_error("no MP4 file is open");
+	}
+	if (!bytesWritten_) {
+		throw std::runtime_error("no packet of the MP4 file holds any bytes");
 	}
 	if (const int error = av_write_trailer(context_); error < 0) {
 		fail("cannot finish the MP4 file", error);
