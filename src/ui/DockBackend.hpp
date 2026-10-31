@@ -5,6 +5,7 @@
 
 #include "core/BufferSettings.hpp"
 #include "core/EncoderPolicy.hpp"
+#include "core/ReplayExport.hpp"
 #include "core/ReplayState.hpp"
 
 #include <chrono>
@@ -60,6 +61,22 @@ struct DockReplay {
 	std::string fileName;
 };
 
+// An export as the dock shows it.
+struct DockExport {
+	enum class State { Waiting, Running, Done, Failed };
+
+	uint64_t replay = 0;
+	ExportFormat format = ExportFormat::Mp4;
+	State state = State::Waiting;
+	// The name of the replay's file without the extension.
+	std::string name;
+	// From 0 to 1 while it runs.
+	double progress = 0.0;
+	// Where its files went, once done.
+	std::string folder;
+	std::string error;
+};
+
 // An encoder a user may choose for replays.
 struct EncoderChoice {
 	std::string id;
@@ -109,6 +126,12 @@ public:
 	// The replay captured last, from the dock or by the hotkey; zero before the first.
 	virtual uint64_t lastCapture() const = 0;
 	virtual void pickReplay(uint64_t id) = 0;
+
+	virtual bool canExport(ExportFormat format) const = 0;
+	// Exports a stored replay in the background. False when refused.
+	virtual bool exportReplay(uint64_t id, ExportFormat format) = 0;
+	// Oldest first.
+	virtual std::vector<DockExport> exports() const = 0;
 };
 
 } // namespace tapeloop::ui

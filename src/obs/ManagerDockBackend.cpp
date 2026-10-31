@@ -80,6 +80,38 @@ void ManagerDockBackend::setSettings(const BufferSettings &settings)
 	manager_.setSettings(settings);
 }
 
+std::vector<ui::DockExport> ManagerDockBackend::exports() const
+{
+	std::vector<ui::DockExport> exports;
+	for (const ExportStatus &status : manager_.exports()) {
+		ui::DockExport shown;
+		shown.replay = status.replay;
+		shown.format = status.format;
+		shown.name = status.name;
+		shown.progress = status.progress;
+		shown.error = status.error;
+		switch (status.state) {
+		case ExportStatus::State::Waiting:
+			shown.state = ui::DockExport::State::Waiting;
+			break;
+		case ExportStatus::State::Running:
+			shown.state = ui::DockExport::State::Running;
+			break;
+		case ExportStatus::State::Done:
+			shown.state = ui::DockExport::State::Done;
+			break;
+		case ExportStatus::State::Failed:
+			shown.state = ui::DockExport::State::Failed;
+			break;
+		}
+		if (!status.files.empty()) {
+			shown.folder = utf8FromPath(status.files.front().parent_path());
+		}
+		exports.push_back(std::move(shown));
+	}
+	return exports;
+}
+
 std::vector<ui::DockReplay> ManagerDockBackend::replays(const std::string &tag) const
 {
 	const ReplayLibrary &library = manager_.library();

@@ -9,9 +9,31 @@
 #include <array>
 #include <cstdint>
 #include <exception>
+#include <span>
 #include <utility>
 
 namespace tapeloop {
+namespace {
+
+// The index times and cuts the replay by its frame times, so a GOP whose own times differ
+// is not the one it lists, whatever its CRCs say.
+bool matchesIndex(const Gop &gop, const StoredSource &source, size_t index) noexcept
+{
+	const std::span<const PacketRecord> packets = gop.packets();
+	const size_t first = firstFrameOf(source, index);
+	if (packets.size() != source.gops[index].packetCount || first > source.frameTimes.size() ||
+	    packets.size() > source.frameTimes.size() - first) {
+		return false;
+	}
+	for (size_t i = 0; i < packets.size(); ++i) {
+		if (packets[i].time != source.frameTimes[first + i]) {
+			return false;
+		}
+	}
+	return true;
+}
+
+} // namespace
 
 GopReader::GopReader(size_t cacheBytes) : limit_(cacheBytes) {}
 
@@ -37,11 +59,16 @@ std::shared_ptr<const Gop> GopReader::read(const std::filesystem::path &manifest
 
 	if (const auto found = byKey_.find(key); found != byKey_.end()) {
 		entries_.splice(entries_.begin(), entries_, found->second);
+		// Another replay's index may have listed the same chunk.
+		if (!matchesIndex(*found->second->gop, source, gop)) {
+			++stats_.failed;
+			return nullptr;
+		}
 		++stats_.cached;
 		return found->second->gop;
 	}
 	std::shared_ptr<const Gop> read = readSegment(segment, stored, source.runs[stored.run]);
-	if (!read) {
+	if (!read || !matchesIndex(*read, source, gop)) {
 		++stats_.failed;
 		return nullptr;
 	}

@@ -5,6 +5,10 @@
 
 #include "obs/ProfileHotkeys.hpp"
 
+#ifdef TAPELOOP_FFMPEG
+#include "decode/Mp4Writer.hpp"
+#endif
+
 #include <obs-module.h>
 #include <util/base.h>
 
@@ -14,6 +18,18 @@
 
 namespace tapeloop::obs {
 namespace {
+
+// MP4 needs the plugin's FFmpeg, which macOS does not have yet.
+ReplayExporter::WriterFactory mp4Writers()
+{
+#ifdef TAPELOOP_FFMPEG
+	return [] {
+		return std::make_unique<decode::Mp4Writer>();
+	};
+#else
+	return {};
+#endif
+}
 
 void runTask(void *param) noexcept
 {
@@ -30,7 +46,8 @@ constexpr const char *kCaptureHotkeyName = "tapeloop.capture_replay";
 
 } // namespace
 
-FrontendBridge::FrontendBridge() : manager_(std::make_unique<CaptureManager>(static_cast<CaptureHost &>(*this)))
+FrontendBridge::FrontendBridge()
+	: manager_(std::make_unique<CaptureManager>(static_cast<CaptureHost &>(*this), mp4Writers()))
 {
 	obs_frontend_add_event_callback(handleEvent, this);
 	obs_frontend_add_save_callback(handleSave, this);

@@ -448,12 +448,24 @@ TEST_CASE("a scan deletes half written manifests and lists damaged ones")
 	const WrittenReplay cut = writer.write(captureOf(folder, {sourceOf("b", makeGops(2))}, "cut"));
 	const WrittenReplay orphan = writer.write(captureOf(folder, {sourceOf("c", makeGops(2))}, "orphan"));
 	File(folder / "torn.tplp.part", File::Mode::CreateNew).writeAt(0, std::vector<uint8_t>(5000, 7));
+	fs::create_directory(folder / "Export");
+	File(folder / "Export" / "kept - Camera a.mp4.tapeloop-part", File::Mode::CreateNew).flush();
+	File(folder / "Export" / "kept - Camera a.mp4", File::Mode::CreateNew).flush();
+	File(folder / "Export" / "kept.tplp.tapeloop-part", File::Mode::CreateNew).flush();
+	// Only what an export writes is deleted, not a browser's download in progress.
+	File(folder / "Export" / "notes.part", File::Mode::CreateNew).flush();
+	File(folder / "Export" / "download.mp4.part", File::Mode::CreateNew).flush();
 	fs::resize_file(cut.manifest, fs::file_size(cut.manifest) - 1);
 	fs::remove(folder / "data" / "c-000001.tpls");
 
 	const tapeloop::ReplayScan scan = tapeloop::scanReplays(dir.path());
-	CHECK(scan.removed == std::vector<fs::path>{folder / "torn.tplp.part"});
+	CHECK(scan.removed == std::vector<fs::path>{folder / "torn.tplp.part",
+						    folder / "Export" / "kept - Camera a.mp4.tapeloop-part",
+						    folder / "Export" / "kept.tplp.tapeloop-part"});
 	CHECK_FALSE(fs::exists(folder / "torn.tplp.part"));
+	CHECK(fs::exists(folder / "Export" / "kept - Camera a.mp4"));
+	CHECK(fs::exists(folder / "Export" / "notes.part"));
+	CHECK(fs::exists(folder / "Export" / "download.mp4.part"));
 	REQUIRE(scan.replays.size() == 3);
 	CHECK(scan.replays[0].manifest == cut.manifest);
 	CHECK_FALSE(scan.replays[0].intact);
@@ -464,6 +476,53 @@ TEST_CASE("a scan deletes half written manifests and lists damaged ones")
 	CHECK(scan.replays[2].manifest == orphan.manifest);
 	CHECK_FALSE(scan.replays[2].intact);
 	CHECK(scan.replays[2].sources.empty());
+	CHECK(scan.errors.empty());
+}
+
+TEST_CASE("a scan lists but deletes nothing through a link in place of a broadcast folder")
+{
+	TempDirectory dir;
+	const fs::path elsewhere = dir.path() / "elsewhere";
+	const WrittenReplay written = ReplayWriter().write(captureOf(elsewhere, {sourceOf("a", makeGops(1))}));
+	File(elsewhere / "notes.tplp.part", File::Mode::CreateNew).flush();
+	fs::create_directory(elsewhere / "Export");
+	File(elsewhere / "Export" / "stale.mp4.tapeloop-part", File::Mode::CreateNew).flush();
+	fs::create_directory(dir.path() / "base");
+	const fs::path folder = dir.path() / "base" / "Liga 2026-10-09 21-00";
+	std::error_code error;
+	fs::create_directory_symlink(elsewhere, folder, error);
+	if (error) {
+		SKIP("links to a directory cannot be made here: " << error.message());
+	}
+
+	const tapeloop::ReplayScan scan = tapeloop::scanReplays(dir.path() / "base");
+	CHECK(scan.removed.empty());
+	CHECK(fs::exists(elsewhere / "notes.tplp.part"));
+	CHECK(fs::exists(elsewhere / "Export" / "stale.mp4.tapeloop-part"));
+	REQUIRE(scan.replays.size() == 1);
+	CHECK(scan.replays[0].manifest == folder / written.manifest.filename());
+	CHECK(scan.replays[0].broadcast == "Liga 2026-10-09 21-00");
+	CHECK(scan.errors.empty());
+}
+
+TEST_CASE("a scan leaves alone what a link in place of the Export folder leads to")
+{
+	TempDirectory dir;
+	const fs::path folder = dir.path() / "base" / "Liga 2026-10-09 21-00";
+	ReplayWriter().write(captureOf(folder, {sourceOf("a", makeGops(1))}));
+	const fs::path elsewhere = dir.path() / "elsewhere";
+	fs::create_directory(elsewhere);
+	File(elsewhere / "stale.mp4.tapeloop-part", File::Mode::CreateNew).flush();
+	std::error_code error;
+	fs::create_directory_symlink(elsewhere, folder / "Export", error);
+	if (error) {
+		SKIP("links to a directory cannot be made here: " << error.message());
+	}
+
+	const tapeloop::ReplayScan scan = tapeloop::scanReplays(dir.path() / "base");
+	CHECK(scan.removed.empty());
+	CHECK(fs::exists(elsewhere / "stale.mp4.tapeloop-part"));
+	CHECK(scan.replays.size() == 1);
 	CHECK(scan.errors.empty());
 }
 

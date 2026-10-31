@@ -23,6 +23,7 @@
 #include <sys/stat.h>
 #include <unistd.h>
 #if defined(__linux__)
+#include <cstdio>
 #include <sys/syscall.h>
 #elif defined(__APPLE__)
 #include <sys/resource.h>
@@ -244,6 +245,18 @@ void renameFile(const std::filesystem::path &from, const std::filesystem::path &
 	}
 }
 
+bool renameIfFree(const std::filesystem::path &from, const std::filesystem::path &to)
+{
+	if (MoveFileExW(from.c_str(), to.c_str(), MOVEFILE_WRITE_THROUGH)) {
+		return true;
+	}
+	const DWORD code = GetLastError();
+	if (code == ERROR_ALREADY_EXISTS || code == ERROR_FILE_EXISTS) {
+		return false;
+	}
+	throw std::system_error(static_cast<int>(code), std::system_category(), describe("cannot rename", from));
+}
+
 bool lowerThreadIoPriority() noexcept
 {
 	// Lowers the thread's CPU priority as well, which suits a thread that only writes.
@@ -370,6 +383,45 @@ void renameFile(const std::filesystem::path &from, const std::filesystem::path &
 		throwErrno("cannot rename", &from);
 	}
 	syncDirectory(to.parent_path());
+}
+
+bool renameIfFree(const std::filesystem::path &from, const std::filesystem::path &to)
+{
+#if defined(__linux__)
+	if (::renameat2(AT_FDCWD, from.c_str(), AT_FDCWD, to.c_str(), RENAME_NOREPLACE) == 0) {
+		syncDirectory(to.parent_path());
+		return true;
+	}
+	if (errno == EEXIST) {
+		return false;
+	}
+	// Older kernels and some file systems cannot rename exclusively.
+	if (errno != EINVAL && errno != ENOSYS && errno != EOPNOTSUPP) {
+		throwErrno("cannot rename", &from);
+	}
+#endif
+	// A hard link cannot land on a name that is taken, so it claims the name; the old one
+	// goes after.
+	if (::link(from.c_str(), to.c_str()) == 0) {
+		if (::unlink(from.c_str()) != 0) {
+			throwErrno("cannot remove", &from);
+		}
+		syncDirectory(to.parent_path());
+		return true;
+	}
+	if (errno == EEXIST) {
+		return false;
+	}
+	if (errno != EPERM && errno != ENOTSUP && errno != EOPNOTSUPP) {
+		throwErrno("cannot link", &from);
+	}
+	// Without hard links, as on FAT, all that is left is to look first.
+	std::error_code error;
+	if (std::filesystem::exists(to, error) || error) {
+		return false;
+	}
+	renameFile(from, to);
+	return true;
 }
 
 bool lowerThreadIoPriority() noexcept

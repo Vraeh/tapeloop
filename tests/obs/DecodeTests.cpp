@@ -1,16 +1,23 @@
 // SPDX-License-Identifier: GPL-2.0-or-later
 // Copyright (C) 2026 Vicente Aedo <ryde1337@gmail.com>
 
+#include "../core/StoredReplays.hpp"
+#include "../core/TempDirectory.hpp"
 #include "AllocationCounter.hpp"
 #include "ClipDecoder.hpp"
+#include "Mp4Reader.hpp"
 #include "ObsFixture.hpp"
 #include "TestPattern.hpp"
 
 #include "core/DecodePlanner.hpp"
+#include "core/FileIo.hpp"
+#include "core/ReplayExport.hpp"
+#include "core/ReplayWriter.hpp"
 #include "core/SourceBuffer.hpp"
 #include "decode/FFmpegDecoder.hpp"
 #include "decode/FFmpegHeaders.hpp"
 #include "decode/FFmpegVersion.hpp"
+#include "decode/Mp4Writer.hpp"
 #include "obs/SourceCapture.hpp"
 
 #include <catch2/catch_test_macros.hpp>
@@ -19,17 +26,23 @@
 extern "C" {
 #include <libavcodec/avcodec.h>
 #include <libavutil/avutil.h>
+#include <libavutil/mathematics.h>
 }
 
+#include <algorithm>
 #include <chrono>
 #include <cstddef>
 #include <cstdint>
 #include <cstdio>
+#include <filesystem>
 #include <fstream>
+#include <functional>
 #include <initializer_list>
 #include <iterator>
+#include <memory>
 #include <optional>
 #include <span>
+#include <stdexcept>
 #include <string>
 #include <utility>
 #include <vector>
@@ -41,16 +54,23 @@ using tapeloop::DecodedFrame;
 using tapeloop::DecodePlanner;
 using tapeloop::DecodeStatus;
 using tapeloop::EncodedPacket;
+using tapeloop::Gop;
+using tapeloop::GopBuilder;
 using tapeloop::Nanoseconds;
 using tapeloop::PlayDirection;
 using tapeloop::SourceBuffer;
 using tapeloop::VideoCodec;
 using tapeloop::decode::FFmpegDecoder;
+using tapeloop::decode::Mp4Writer;
 using tapeloop::decode::ColorMatrix;
 using tapeloop::decode::Picture;
 using tapeloop::obs::SourceCapture;
 using tapeloop::obs::StartResult;
+using tapeloop::test::annexBUnits;
 using tapeloop::test::createTestPattern;
+using tapeloop::test::Mp4Edit;
+using tapeloop::test::Mp4Sample;
+using tapeloop::test::Mp4Track;
 using tapeloop::test::ObsFixture;
 using tapeloop::test::waitFor;
 
@@ -571,4 +591,376 @@ TEST_CASE("a damaged configuration fails the frames that need it, not the decode
 	pushRecorded(intact, hevc, 1s, 0, false, expected);
 	planner.load(intact.clip(Nanoseconds::min(), Nanoseconds::max()));
 	checkFrame(planner, decoder, expected.back());
+}
+
+namespace {
+
+std::vector<uint8_t> readFile(const std::filesystem::path &path)
+{
+	std::ifstream file(path, std::ios::binary);
+	REQUIRE(file);
+	return {std::istreambuf_iterator<char>(file), std::istreambuf_iterator<char>()};
+}
+
+// What the call throws, empty when it throws nothing.
+std::string errorOf(const std::function<void()> &call)
+{
+	try {
+		call();
+	} catch (const std::exception &e) {
+		return e.what();
+	}
+	return {};
+}
+
+int64_t mp4Ticks(Nanoseconds time)
+{
+	return av_rescale_q_rnd(time.count(), {1, 1'000'000'000}, {1, 120'000}, AV_ROUND_NEAR_INF);
+}
+
+// Writes every packet of the clip, at its time from origin.
+void writeMp4(const std::filesystem::path &path, const Clip &clip, Nanoseconds origin)
+{
+	Mp4Writer writer;
+	writer.open(path, *clip.gops().front());
+	for (const auto &gop : clip.gops()) {
+		for (size_t i = 0; i < gop->packets().size(); ++i) {
+			writer.write(*gop, i, gop->packets()[i].time - origin);
+		}
+	}
+	writer.finish();
+}
+
+// The samples of the MP4 as GOPs again, each run with the configuration of its sample
+// entry, as a player reading the file has them.
+std::vector<std::shared_ptr<const Gop>> gopsOf(const Mp4Track &track, VideoCodec codec)
+{
+	GopBuilder builder(kFrameInterval);
+	std::vector<std::shared_ptr<const Gop>> gops;
+	uint32_t entry = 0;
+	for (const Mp4Sample &sample : track.samples) {
+		if (sample.sync && !builder.empty()) {
+			gops.push_back(builder.seal());
+		}
+		if (sample.entry != entry) {
+			REQUIRE(builder.empty());
+			builder.setCodecConfig(
+				codec, std::make_shared<const CodecConfig>(track.entries.at(sample.entry - 1).config));
+			entry = sample.entry;
+		}
+		EncodedPacket packet;
+		packet.data = sample.data;
+		packet.pts = sample.pts;
+		packet.dts = sample.dts;
+		packet.time = Nanoseconds{av_rescale(sample.pts, 1'000'000'000, track.timescale)};
+		packet.keyframe = sample.sync;
+		builder.append(packet);
+	}
+	gops.push_back(builder.seal());
+	return gops;
+}
+
+std::vector<uint32_t> numbersOf(std::span<const std::shared_ptr<const Gop>> gops)
+{
+	std::vector<uint32_t> numbers;
+	const Clip clip({gops.begin(), gops.end()}, gops.front()->startTime(), gops.back()->lastTime());
+	for (const auto &frames : tapeloop::test::decodeGops(clip)) {
+		for (const tapeloop::test::DecodedFrame &frame : frames) {
+			REQUIRE(frame.frameNumber);
+			numbers.push_back(*frame.frameNumber);
+		}
+	}
+	return numbers;
+}
+
+std::vector<std::vector<uint8_t>> sorted(std::vector<std::vector<uint8_t>> units)
+{
+	std::sort(units.begin(), units.end());
+	return units;
+}
+
+bool isHevcParameterSet(const std::vector<uint8_t> &unit)
+{
+	const int type = (unit.at(0) >> 1) & 0x3F;
+	return type >= 32 && type <= 34;
+}
+
+} // namespace
+
+TEST_CASE_METHOD(ObsFixture, "an MP4 holds the packets of an H.264 capture as encoded and plays from the in point",
+		 "[decode][export]")
+{
+	const Clip clip = captureClip(3);
+	const auto &gops = clip.gops();
+	const Nanoseconds start = gops.front()->startTime();
+	const Nanoseconds in = gops.front()->packets()[2].time;
+	tapeloop::test::TempDirectory dir;
+	// A name that is not ASCII reaches the file as UTF-8.
+	const std::filesystem::path path = dir.path() / tapeloop::pathFromUtf8("C\xC3\xA1mara 1.mp4");
+	writeMp4(path, clip, in);
+
+	const Mp4Track track = tapeloop::test::readMp4(readFile(path));
+	CHECK(track.timescale == 120'000);
+	REQUIRE(track.entries.size() == 1);
+	CHECK(track.entries[0].type == "avc1");
+	CHECK(track.entries[0].width == 640);
+	CHECK(track.entries[0].height == 360);
+	CHECK(annexBUnits(track.entries[0].config) == annexBUnits(*gops.front()->codecConfig()));
+	size_t sample = 0;
+	for (const auto &gop : gops) {
+		for (size_t i = 0; i < gop->packets().size(); ++i, ++sample) {
+			CAPTURE(sample);
+			REQUIRE(sample < track.samples.size());
+			const Mp4Sample &read = track.samples[sample];
+			CHECK(annexBUnits(read.data) == annexBUnits(gop->packetData(i)));
+			CHECK(read.sync == (i == 0));
+			CHECK(read.entry == 1);
+			const Nanoseconds time = gop->packets()[i].time;
+			CHECK(read.dts == mp4Ticks(time - in) - mp4Ticks(start - in));
+			CHECK(read.pts == read.dts);
+		}
+	}
+	CHECK(sample == track.samples.size());
+	// The two frames before the in point are decoded but not shown.
+	REQUIRE_FALSE(track.edits.empty());
+	CHECK(track.edits.back().mediaTime == mp4Ticks(in - start));
+	CHECK(numbersOf(gopsOf(track, VideoCodec::H264)) == numbersOf(gops));
+}
+
+TEST_CASE_METHOD(ObsFixture, "an MP4 of HEVC is hvc1, its parameter sets in the sample entry", "[decode][export]")
+{
+	const RecordedRun run = loadRecordedRun(kHevcPattern);
+	SourceBuffer buffer = makeBuffer();
+	buffer.setCodecConfig(VideoCodec::Hevc, run.config);
+	std::vector<Expected> expected;
+	pushRecorded(buffer, run, 1s, 0, true, expected);
+	const Clip clip = buffer.clip(Nanoseconds::min(), Nanoseconds::max());
+	tapeloop::test::TempDirectory dir;
+	const std::filesystem::path path = dir.path() / "hevc.mp4";
+	writeMp4(path, clip, clip.gops().front()->startTime());
+
+	const Mp4Track track = tapeloop::test::readMp4(readFile(path));
+	REQUIRE(track.entries.size() == 1);
+	CHECK(track.entries[0].type == "hvc1");
+	CHECK(sorted(annexBUnits(track.entries[0].config)) == sorted(annexBUnits(run.config)));
+	REQUIRE(track.samples.size() == run.packets.size());
+	for (size_t i = 0; i < run.packets.size(); ++i) {
+		CAPTURE(i);
+		// hvc1 keeps the parameter sets in the sample entry only.
+		std::vector<std::vector<uint8_t>> units = annexBUnits(run.packets[i].data);
+		units.erase(std::remove_if(units.begin(), units.end(), isHevcParameterSet), units.end());
+		CHECK(annexBUnits(track.samples[i].data) == units);
+		CHECK(track.samples[i].sync == run.packets[i].keyframe);
+	}
+	for (const Mp4Edit &edit : track.edits) {
+		CHECK(edit.mediaTime == 0);
+	}
+	std::vector<uint32_t> numbers;
+	for (const Expected &frame : expected) {
+		numbers.push_back(frame.number);
+	}
+	CHECK(numbersOf(gopsOf(track, VideoCodec::Hevc)) == numbers);
+}
+
+TEST_CASE_METHOD(ObsFixture, "an MP4 gives each configuration of its codec a sample entry of its own",
+		 "[decode][export]")
+{
+	const RecordedRun first = loadRecordedRun(kHevcPattern);
+	const RecordedRun second = loadRecordedRun(kHevcFullRange601);
+	REQUIRE(first.config != second.config);
+	SourceBuffer buffer = makeBuffer();
+	std::vector<Expected> expected;
+	buffer.setCodecConfig(VideoCodec::Hevc, first.config);
+	pushRecorded(buffer, first, 1s, 0, true, expected);
+	// The encoder restarted: a gap, and its pts from zero again.
+	const Nanoseconds restart = 1s + kFrameInterval * static_cast<int64_t>(first.packets.size()) + 100ms;
+	buffer.setCodecConfig(VideoCodec::Hevc, second.config);
+	pushRecorded(buffer, second, restart, 0, true, expected);
+	const Clip clip = buffer.clip(Nanoseconds::min(), Nanoseconds::max());
+	tapeloop::test::TempDirectory dir;
+	const std::filesystem::path path = dir.path() / "two runs.mp4";
+	writeMp4(path, clip, 1s);
+
+	const Mp4Track track = tapeloop::test::readMp4(readFile(path));
+	REQUIRE(track.entries.size() == 2);
+	CHECK(sorted(annexBUnits(track.entries[1].config)) == sorted(annexBUnits(second.config)));
+	REQUIRE(track.samples.size() == first.packets.size() + second.packets.size());
+	const size_t split = first.packets.size();
+	CHECK(track.samples[split - 1].entry == 1);
+	CHECK(track.samples[split].entry == 2);
+	CHECK(track.samples[split].dts - track.samples[split - 1].dts == mp4Ticks(kFrameInterval + 100ms));
+	std::vector<uint32_t> numbers;
+	for (const Expected &frame : expected) {
+		numbers.push_back(frame.number);
+	}
+	CHECK(numbersOf(gopsOf(track, VideoCodec::Hevc)) == numbers);
+}
+
+TEST_CASE_METHOD(ObsFixture, "an MP4 that cannot be written says why", "[decode][export]")
+{
+	const RecordedRun run = loadRecordedRun(kHevcPattern);
+	SourceBuffer buffer = makeBuffer();
+	buffer.setCodecConfig(VideoCodec::Hevc, run.config);
+	std::vector<Expected> expected;
+	pushRecorded(buffer, run, 1s, 0, true, expected);
+	const auto gop = buffer.clip(Nanoseconds::min(), Nanoseconds::max()).gops().front();
+	tapeloop::test::TempDirectory dir;
+
+	Mp4Writer writer;
+	CHECK_THROWS_AS(writer.write(*gop, 0, Nanoseconds{0}), std::logic_error);
+	const std::filesystem::path missing = dir.path() / "missing" / "x.mp4";
+	try {
+		writer.open(missing, *gop);
+		FAIL("a file in a folder that does not exist was opened");
+	} catch (const std::runtime_error &e) {
+		CHECK(std::string(e.what()).find(tapeloop::utf8FromPath(missing)) != std::string::npos);
+	}
+
+	// Packets out of decode order, or two decoded at once, are refused before they reach
+	// the file.
+	writer.open(dir.path() / "order.mp4", *gop);
+	writer.write(*gop, 1, kFrameInterval);
+	CHECK(errorOf([&] { writer.write(*gop, 2, Nanoseconds{0}); }) == "the packets are not in decode order");
+	CHECK(errorOf([&] { writer.write(*gop, 2, kFrameInterval); }) == "the packets are not in decode order");
+
+	// Pictures whose size cannot be read.
+	GopBuilder builder(kFrameInterval);
+	builder.setCodecConfig(VideoCodec::H264, nullptr);
+	const std::vector<uint8_t> garbage(64, 0x55);
+	builder.append({garbage, 0, 0, Nanoseconds{0}, true});
+	CHECK_THROWS_AS(writer.open(dir.path() / "garbage.mp4", *builder.seal()), std::runtime_error);
+}
+
+TEST_CASE_METHOD(ObsFixture, "an MP4 is written to a new file, never over one already there", "[decode][export]")
+{
+	const RecordedRun run = loadRecordedRun(kHevcPattern);
+	SourceBuffer buffer = makeBuffer();
+	buffer.setCodecConfig(VideoCodec::Hevc, run.config);
+	std::vector<Expected> expected;
+	pushRecorded(buffer, run, 1s, 0, true, expected);
+	const auto gop = buffer.clip(Nanoseconds::min(), Nanoseconds::max()).gops().front();
+	tapeloop::test::TempDirectory dir;
+	const std::vector<uint8_t> kept{'k', 'e', 'p', 't'};
+
+	const std::filesystem::path taken = dir.path() / "taken.mp4.part";
+	tapeloop::File(taken, tapeloop::File::Mode::CreateNew).writeAt(0, kept);
+	Mp4Writer writer;
+	CHECK_THROWS_AS(writer.open(taken, *gop), std::runtime_error);
+	CHECK(readFile(taken) == kept);
+
+#ifndef _WIN32
+	// Nor through a link to a file elsewhere.
+	const std::filesystem::path elsewhere = dir.path() / "elsewhere";
+	tapeloop::File(elsewhere, tapeloop::File::Mode::CreateNew).writeAt(0, kept);
+	const std::filesystem::path link = dir.path() / "link.mp4.part";
+	std::filesystem::create_symlink(elsewhere, link);
+	CHECK_THROWS_AS(writer.open(link, *gop), std::runtime_error);
+	CHECK(readFile(elsewhere) == kept);
+#endif
+
+	// The writer still writes a whole file after a refusal.
+	const std::filesystem::path path = dir.path() / "new.mp4";
+	writeMp4(path, buffer.clip(Nanoseconds::min(), Nanoseconds::max()), 1s);
+	CHECK(tapeloop::test::readMp4(readFile(path)).samples.size() == run.packets.size());
+}
+
+TEST_CASE_METHOD(ObsFixture, "an MP4 keeps the frames a packet is decoded before it shows", "[decode][export]")
+{
+	const RecordedRun run = loadRecordedRun(kHevcPattern);
+	SourceBuffer buffer = makeBuffer();
+	buffer.setCodecConfig(VideoCodec::Hevc, run.config);
+	for (size_t i = 0; i < run.packets.size(); ++i) {
+		EncodedPacket packet;
+		packet.data = run.packets[i].data;
+		packet.pts = static_cast<int64_t>(i) + 1;
+		packet.dts = static_cast<int64_t>(i);
+		packet.time = 1s + kFrameInterval * static_cast<int64_t>(i);
+		packet.keyframe = run.packets[i].keyframe;
+		buffer.push(packet);
+	}
+	tapeloop::test::TempDirectory dir;
+	const std::filesystem::path path = dir.path() / "offset.mp4";
+	writeMp4(path, buffer.clip(Nanoseconds::min(), Nanoseconds::max()), 1s);
+
+	const Mp4Track track = tapeloop::test::readMp4(readFile(path));
+	REQUIRE(track.samples.size() == run.packets.size());
+	for (size_t i = 0; i < track.samples.size(); ++i) {
+		CAPTURE(i);
+		CHECK(track.samples[i].pts - track.samples[i].dts == mp4Ticks(kFrameInterval));
+		if (i > 0) {
+			CHECK(track.samples[i].dts - track.samples[i - 1].dts == mp4Ticks(kFrameInterval));
+		}
+	}
+}
+
+TEST_CASE_METHOD(ObsFixture, "an MP4 export starts a new file where the picture size changes", "[decode][export]")
+{
+	const Clip large = captureClip(2, 640, 360);
+	const Clip small = captureClip(2, 320, 180);
+	const auto packetsOf = [](const Clip &clip) {
+		size_t packets = 0;
+		for (const auto &gop : clip.gops()) {
+			packets += gop->packets().size();
+		}
+		return packets;
+	};
+	// With no configuration, as from an encoder that puts its parameter sets only in the
+	// stream and restarts at another size, the keyframes tell the sizes apart.
+	for (const bool inStream : {false, true}) {
+		CAPTURE(inStream);
+		std::vector<std::shared_ptr<const Gop>> gops;
+		if (inStream) {
+			SourceBuffer buffer = makeBuffer();
+			std::vector<Expected> expected;
+			buffer.setCodecConfig(VideoCodec::H264, {});
+			pushClip(buffer, large, 1s, 0, true, expected);
+			buffer.setCodecConfig(VideoCodec::H264, {});
+			pushClip(buffer, small, expected.back().time + 1s, 0, true, expected);
+			const Clip both = buffer.clip(Nanoseconds::min(), Nanoseconds::max());
+			gops.assign(both.gops().begin(), both.gops().end());
+			REQUIRE(gops.size() == large.gops().size() + small.gops().size());
+			REQUIRE_FALSE(gops.front()->codecConfig());
+			REQUIRE_FALSE(gops.back()->codecConfig());
+		} else {
+			gops.assign(large.gops().begin(), large.gops().end());
+			gops.insert(gops.end(), small.gops().begin(), small.gops().end());
+		}
+		const size_t split = large.gops().size();
+		tapeloop::test::TempDirectory dir;
+		{
+			Mp4Writer writer;
+			writer.open(dir.path() / "probe.mp4", *gops.front());
+			CHECK(writer.fits(*gops[1]));
+			CHECK_FALSE(writer.fits(*gops[split]));
+			// A keyframe without parameter sets decodes with those before it.
+			GopBuilder bare(kFrameInterval);
+			bare.setCodecConfig(VideoCodec::H264, nullptr);
+			const std::vector<uint8_t> keyframe =
+				tapeloop::test::withoutParameterSets(gops[split]->packetData(0), VideoCodec::H264);
+			bare.append({keyframe, 0, 0, Nanoseconds{0}, true});
+			CHECK(writer.fits(*bare.seal()));
+		}
+
+		const tapeloop::WrittenReplay written = tapeloop::ReplayWriter().write(
+			tapeloop::test::captureOf(dir.path(), {tapeloop::test::sourceOf("a", gops)}));
+		tapeloop::ReplayExporter exporter([] { return std::make_unique<Mp4Writer>(); });
+		tapeloop::ExportRequest request;
+		request.manifest = written.manifest;
+		exporter.exportReplay(request);
+		exporter.waitUntilIdle();
+		const std::vector<tapeloop::ExportResult> results = exporter.poll();
+		REQUIRE(results.size() == 1);
+		REQUIRE(results[0].error.empty());
+		REQUIRE(results[0].files.size() == 2);
+		const Mp4Track first = tapeloop::test::readMp4(readFile(results[0].files[0]));
+		REQUIRE(first.entries.size() == 1);
+		CHECK(first.entries[0].width == 640);
+		CHECK(first.entries[0].height == 360);
+		CHECK(first.samples.size() == packetsOf(large));
+		const Mp4Track second = tapeloop::test::readMp4(readFile(results[0].files[1]));
+		REQUIRE(second.entries.size() == 1);
+		CHECK(second.entries[0].width == 320);
+		CHECK(second.entries[0].height == 180);
+		CHECK(second.samples.size() == packetsOf(small));
+	}
 }

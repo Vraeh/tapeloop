@@ -45,6 +45,8 @@ target_sources(
     ParameterSets.hpp
     Playhead.cpp
     Playhead.hpp
+    ReplayExport.cpp
+    ReplayExport.hpp
     ReplayFormat.cpp
     ReplayFormat.hpp
     ReplayLibrary.cpp

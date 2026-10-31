@@ -7,6 +7,7 @@
 
 #include <algorithm>
 #include <string>
+#include <utility>
 #include <vector>
 
 namespace tapeloop::test {
@@ -32,6 +33,10 @@ public:
 	uint64_t budget = uint64_t{4} << 30;
 	std::vector<tapeloop::ui::EncoderChoice> choices = {{"obs_nvenc_hevc_tex", "NVIDIA NVENC HEVC"},
 							    {"obs_x264", "x264"}};
+	bool mp4 = true;
+	// What the dock asked to export, and what it is shown of the exports.
+	std::vector<std::pair<uint64_t, ExportFormat>> exported;
+	std::vector<tapeloop::ui::DockExport> exportList;
 
 	std::vector<tapeloop::ui::DockSource> sources() const override
 	{
@@ -123,6 +128,13 @@ public:
 	uint64_t currentReplay() const override { return picked; }
 	uint64_t lastCapture() const override { return captures; }
 	// As the library does, a damaged replay is never picked.
+	bool canExport(ExportFormat format) const override { return format == ExportFormat::Replay || mp4; }
+	bool exportReplay(uint64_t id, ExportFormat format) override
+	{
+		exported.emplace_back(id, format);
+		return true;
+	}
+	std::vector<tapeloop::ui::DockExport> exports() const override { return exportList; }
 	void pickReplay(uint64_t id) override
 	{
 		++picks;

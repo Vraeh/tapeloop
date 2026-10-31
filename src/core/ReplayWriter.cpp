@@ -3,6 +3,7 @@
 
 #include "core/ReplayWriter.hpp"
 
+#include "core/ReplayExport.hpp"
 #include "core/ReplayNames.hpp"
 
 #include <algorithm>
@@ -21,9 +22,8 @@ constexpr std::string_view kPartExtension = ".tplp.part";
 constexpr std::string_view kDataFolder = "data";
 // How many numbered names a manifest tries before the capture fails.
 constexpr int kMaxNameTries = 1000;
-// Larger files named as manifests are not read: a manifest of eight sources over ten
-// minutes is a few MiB.
-constexpr uint64_t kMaxManifestBytes = uint64_t{256} << 20;
+// Larger indexes are not read: the index of eight sources over ten minutes is a few MiB.
+constexpr uint64_t kMaxIndexBytes = uint64_t{256} << 20;
 // Long enough for any name OBS shows, short enough that the segment header always fits.
 constexpr size_t kMaxSourceNameBytes = 1024;
 
@@ -65,16 +65,48 @@ std::vector<std::filesystem::path> listDirectory(const std::filesystem::path &di
 	return paths;
 }
 
-std::vector<uint8_t> readWhole(const std::filesystem::path &path)
+void removeHalfWritten(const std::filesystem::path &path, ReplayScan &scan)
 {
-	File file(path, File::Mode::ReadOnly);
-	const uint64_t size = file.size();
-	if (size > kMaxManifestBytes) {
-		return {};
+	std::error_code error;
+	if (std::filesystem::remove(path, error)) {
+		scan.removed.push_back(path);
+	} else if (error) {
+		scan.errors.push_back(describe("cannot delete", path, error));
 	}
-	std::vector<uint8_t> bytes(static_cast<size_t>(size));
-	bytes.resize(file.readAt(0, bytes));
+}
+
+// What a manifest or a self-contained replay holds besides GOPs: its head, its index
+// chunk and its footer. The head is empty when the footer is not intact.
+struct ManifestBytes {
+	std::vector<uint8_t> head;
+	std::vector<uint8_t> index;
+	std::vector<uint8_t> footer;
+	uint64_t size = 0;
+};
+
+ManifestBytes readManifestBytes(File &file)
+{
+	ManifestBytes bytes;
+	bytes.size = file.size();
+	if (bytes.size < kManifestIndexOffset + kManifestFooterSize) {
+		return bytes;
+	}
+	bytes.footer.resize(kManifestFooterSize);
+	bytes.footer.resize(file.readAt(bytes.size - kManifestFooterSize, bytes.footer));
+	const std::optional<IndexPlace> place = decodeManifestFooter(bytes.footer, bytes.size);
+	if (!place || place->size > kMaxIndexBytes) {
+		return bytes;
+	}
+	bytes.index.resize(static_cast<size_t>(place->size));
+	bytes.index.resize(file.readAt(place->offset, bytes.index));
+	bytes.head.resize(kManifestIndexOffset);
+	bytes.head.resize(file.readAt(0, bytes.head));
 	return bytes;
+}
+
+std::optional<ReplayIndex> decodeManifestBytes(const ManifestBytes &bytes)
+{
+	return decodeManifest(bytes.head, bytes.index, bytes.footer, bytes.size);
 }
 
 bool segmentsExist(const std::filesystem::path &manifest, const ReplayIndex &index)
@@ -102,15 +134,16 @@ FoundReplay readReplay(const std::filesystem::path &manifest, const std::string 
 	found.manifest = manifest;
 	found.broadcast = broadcast;
 	try {
-		const std::vector<uint8_t> bytes = readWhole(manifest);
-		const std::optional<ReplayIndex> index = decodeManifest(bytes);
+		File file(manifest, File::Mode::ReadOnly);
+		const ManifestBytes bytes = readManifestBytes(file);
+		const std::optional<ReplayIndex> index = decodeManifestBytes(bytes);
 		if (!index || !segmentsExist(manifest, *index)) {
 			return found;
 		}
 		for (const StoredSource &source : index->sources) {
 			found.sources.push_back({source.key, source.name});
 		}
-		found.tags = decodeTags(bytes);
+		found.tags = decodeTags(bytes.head);
 		found.id = index->id;
 		found.capturedAtUtc = index->capturedAtUtc;
 		found.intact = true;
@@ -243,12 +276,11 @@ WrittenReplay ReplayWriter::write(const ReplayCapture &capture)
 void ReplayWriter::writeTags(const std::filesystem::path &manifest, std::span<const std::string> tags)
 {
 	File file(manifest, File::Mode::ReadWrite);
-	std::vector<uint8_t> bytes(static_cast<size_t>(std::min(file.size(), kMaxManifestBytes)));
-	bytes.resize(file.readAt(0, bytes));
-	if (!decodeManifest(bytes)) {
+	const ManifestBytes bytes = readManifestBytes(file);
+	if (!decodeManifestBytes(bytes)) {
 		throw std::invalid_argument("not an intact replay manifest: " + utf8FromPath(manifest));
 	}
-	const TagWrite next = nextTagWrite(bytes);
+	const TagWrite next = nextTagWrite(bytes.head);
 	file.writeAt(next.offset, encodeTagSlot(tags, next.generation));
 	file.flush();
 }
@@ -439,18 +471,32 @@ ReplayScan scanReplays(const std::filesystem::path &base)
 		if (!std::filesystem::is_directory(folder, error)) {
 			continue;
 		}
+		// A link or junction in place of a broadcast folder is listed, but nothing is
+		// deleted through it, since it can lead to anyone's files.
+		const bool linked = !std::filesystem::is_directory(std::filesystem::symlink_status(folder, error));
 		const std::string broadcast = utf8FromPath(folder.filename());
 		for (const std::filesystem::path &path : listDirectory(folder, scan.errors)) {
 			const std::string name = utf8FromPath(path.filename());
 			if (name.ends_with(kPartExtension)) {
-				if (std::filesystem::remove(path, error)) {
-					scan.removed.push_back(path);
-				} else if (error) {
-					scan.errors.push_back(describe("cannot delete", path, error));
+				if (!linked) {
+					removeHalfWritten(path, scan);
 				}
 			} else if (name.ends_with(kManifestExtension) &&
 				   std::filesystem::is_regular_file(path, error)) {
 				scan.replays.push_back(readReplay(path, broadcast, scan.errors));
+			}
+		}
+		// An export a crash stopped left its file under a temporary name. A link in place
+		// of the Export folder is not followed either.
+		const std::filesystem::path exports = folder / pathFromUtf8(kExportFolderName);
+		if (!linked && std::filesystem::is_directory(std::filesystem::symlink_status(exports, error))) {
+			for (const std::filesystem::path &path : listDirectory(exports, scan.errors)) {
+				std::error_code removeError;
+				if (removeStaleExportPart(path, removeError)) {
+					scan.removed.push_back(path);
+				} else if (removeError) {
+					scan.errors.push_back(describe("cannot delete", path, removeError));
+				}
 			}
 		}
 	}
@@ -460,7 +506,8 @@ ReplayScan scanReplays(const std::filesystem::path &base)
 std::optional<ReplayIndex> readReplayIndex(const std::filesystem::path &manifest)
 {
 	try {
-		return decodeManifest(readWhole(manifest));
+		File file(manifest, File::Mode::ReadOnly);
+		return decodeManifestBytes(readManifestBytes(file));
 	} catch (const std::exception &) {
 		return std::nullopt;
 	}
@@ -468,6 +515,9 @@ std::optional<ReplayIndex> readReplayIndex(const std::filesystem::path &manifest
 
 std::filesystem::path segmentPath(const std::filesystem::path &manifest, const StoredSource &source, uint32_t segment)
 {
+	if (segment == kOwnFile) {
+		return manifest;
+	}
 	return manifest.parent_path() / pathFromUtf8(kDataFolder) / pathFromUtf8(segmentFileName(source.key, segment));
 }
 

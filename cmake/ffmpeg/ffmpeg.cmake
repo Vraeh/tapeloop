@@ -1,10 +1,10 @@
-# The FFmpeg Tapeloop decodes with, linked statically: built once by BuildFFmpeg.cmake
-# into .deps at the top of the repository, in a directory keyed on that script's hash
-# and the compiler, so a new version, configure line or compiler builds again and
-# anything else reuses it.
-# tapeloop_add_ffmpeg() defines the imported targets FFmpeg::avcodec and FFmpeg::avutil,
-# and the global property TAPELOOP_FFMPEG_NOTICES: the notice and license files a
-# package that links them carries.
+# The FFmpeg Tapeloop decodes and exports with, linked statically: built once by
+# BuildFFmpeg.cmake into .deps at the top of the repository, in a directory keyed on that
+# script's hash and the compiler, so a new version, configure line or compiler builds
+# again and anything else reuses it.
+# tapeloop_add_ffmpeg() defines the imported targets FFmpeg::avformat, FFmpeg::avcodec and
+# FFmpeg::avutil, and the global property TAPELOOP_FFMPEG_NOTICES: the notice and license
+# files a package that links them carries.
 include_guard(GLOBAL)
 
 set(_tapeloop_ffmpeg_dir "${CMAKE_CURRENT_LIST_DIR}")
@@ -87,11 +87,13 @@ function(tapeloop_add_ffmpeg)
   string(STRIP "${configure_line}" configure_line)
   message(STATUS "FFmpeg from ${prefix}: ${configure_line}")
 
-  foreach(library IN ITEMS avutil avcodec)
+  foreach(library IN ITEMS avutil avcodec avformat)
     add_library(FFmpeg::${library} STATIC IMPORTED GLOBAL)
     _tapeloop_ffmpeg_link_libraries("${prefix}/lib/pkgconfig/lib${library}.pc" ${library} libraries)
     if(library STREQUAL "avcodec")
       list(PREPEND libraries FFmpeg::avutil)
+    elseif(library STREQUAL "avformat")
+      list(PREPEND libraries FFmpeg::avcodec FFmpeg::avutil)
     endif()
     # MSVC builds name their static libraries avcodec.lib, the others libavcodec.a.
     set(location "${prefix}/lib/lib${library}.a")

@@ -121,6 +121,8 @@ target_sources(
     DockBackendTests.cpp
     LogCounter.hpp
     ManagerTests.cpp
+    Mp4Reader.cpp
+    Mp4Reader.hpp
     ObsFixture.cpp
     ObsFixture.hpp
     PictureTests.cpp
@@ -156,7 +158,7 @@ target_include_directories(tapeloop-obs-tests SYSTEM BEFORE PRIVATE ${_ffmpeg_in
 # FFmpeg's archives: Clang links the sanitizer runtimes as archives that must stay
 # exported. A Windows executable exports nothing unless asked to.
 if(CMAKE_SYSTEM_NAME STREQUAL "Linux")
-  target_link_options(tapeloop-obs-tests PRIVATE "LINKER:--exclude-libs=libavcodec.a:libavutil.a")
+  target_link_options(tapeloop-obs-tests PRIVATE "LINKER:--exclude-libs=libavformat.a:libavcodec.a:libavutil.a")
 endif()
 set_target_properties(tapeloop-obs-tests PROPERTIES BUILD_RPATH "${TAPELOOP_LIBOBS_PREFIX}/lib")
 tapeloop_core_warnings(tapeloop-obs-tests)

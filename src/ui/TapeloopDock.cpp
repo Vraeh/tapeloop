@@ -129,7 +129,10 @@ TapeloopDock::TapeloopDock(DockBackend &backend, TextLookup text, QWidget *paren
 	  replays_(new ReplayList(this)),
 	  tagName_(new QLineEdit(this)),
 	  addTag_(new QPushButton(text_("Dock.AddTag"), this)),
-	  removeTag_(new QPushButton(text_("Dock.RemoveTag"), this))
+	  removeTag_(new QPushButton(text_("Dock.RemoveTag"), this)),
+	  exportMp4_(new QPushButton(text_("Dock.ExportMp4"), this)),
+	  exportReplay_(new QPushButton(text_("Dock.ExportReplay"), this)),
+	  exportStatus_(new QLabel(this))
 {
 	sources_->setObjectName("sources");
 	sources_->setHorizontalHeaderLabels({text_("Dock.Source"), text_("Dock.Status")});
@@ -200,6 +203,15 @@ TapeloopDock::TapeloopDock(DockBackend &backend, TextLookup text, QWidget *paren
 	removeTag_->setToolTip(text_("Dock.RemoveTag.Tooltip"));
 	deleteTag_->setObjectName("deleteTag");
 	deleteTag_->setToolTip(text_("Dock.DeleteTag.Tooltip"));
+	exportMp4_->setObjectName("exportMp4");
+	exportMp4_->setToolTip(text_("Dock.ExportMp4.Tooltip"));
+	exportReplay_->setObjectName("exportReplay");
+	exportReplay_->setToolTip(text_("Dock.ExportReplay.Tooltip"));
+	exportStatus_->setObjectName("exportStatus");
+	exportStatus_->setWordWrap(true);
+	// Names and errors come from files and the system, and are shown as they are.
+	exportStatus_->setTextFormat(Qt::PlainText);
+	exportStatus_->hide();
 	followsOutputs_->setObjectName("followsOutputs");
 	followsOutputs_->setWordWrap(true);
 	followsOutputs_->hide();
@@ -240,6 +252,11 @@ TapeloopDock::TapeloopDock(DockBackend &backend, TextLookup text, QWidget *paren
 	tagging->addWidget(addTag_);
 	tagging->addWidget(removeTag_);
 	layout->addLayout(tagging);
+	auto *exporting = new QHBoxLayout;
+	exporting->addWidget(exportMp4_);
+	exporting->addWidget(exportReplay_);
+	layout->addLayout(exporting);
+	layout->addWidget(exportStatus_);
 
 	connect(sources_, &QTableWidget::itemChanged, this, [this](QTableWidgetItem *item) {
 		if (item->column() != kSourceColumn) {
@@ -331,6 +348,12 @@ TapeloopDock::TapeloopDock(DockBackend &backend, TextLookup text, QWidget *paren
 		refresh();
 	};
 	connect(addTag_, &QPushButton::clicked, this, addTag);
+	const auto exportCurrent = [this](ExportFormat format) {
+		guarded([&] { backend_.exportReplay(backend_.currentReplay(), format); });
+		refresh();
+	};
+	connect(exportMp4_, &QPushButton::clicked, this, [exportCurrent] { exportCurrent(ExportFormat::Mp4); });
+	connect(exportReplay_, &QPushButton::clicked, this, [exportCurrent] { exportCurrent(ExportFormat::Replay); });
 	connect(tagName_, &QLineEdit::returnPressed, this, addTag);
 	connect(removeTag_, &QPushButton::clicked, this, [this] {
 		const std::string tag = tagName_->text().toStdString();
@@ -353,6 +376,7 @@ TapeloopDock::TapeloopDock(DockBackend &backend, TextLookup text, QWidget *paren
 						 text_("Dock.DeleteTag.Question").arg(tag),
 						 QMessageBox::Yes | QMessageBox::No, this);
 		question->setObjectName("deleteTagQuestion");
+		question->setTextFormat(Qt::PlainText);
 		question->setDefaultButton(QMessageBox::No);
 		question->setAttribute(Qt::WA_DeleteOnClose);
 		connect(question, &QMessageBox::finished, this, [this, tag](int answer) {
@@ -461,6 +485,7 @@ void TapeloopDock::refresh()
 		}
 
 		updateReplays();
+		updateExports();
 
 		startStop_->setText(backend_.running() ? text_("Dock.Stop") : text_("Dock.Start"));
 		const bool enabled = backend_.manualControlEnabled();
@@ -671,8 +696,12 @@ void TapeloopDock::updateReplays()
 	std::vector<QString> texts;
 	std::vector<QString> tips;
 	std::vector<bool> damaged;
+	std::vector<uint64_t> storedReplays;
 	for (size_t i = 0; i < replays.size(); ++i) {
 		const DockReplay &replay = replays[i];
+		if (replay.state == ReplayState::Stored) {
+			storedReplays.push_back(replay.id);
+		}
 		if (!replay.broadcast.empty() && (i == 0 || replays[i - 1].broadcast != replay.broadcast)) {
 			ids.push_back(0);
 			texts.push_back(QString::fromStdString(replay.broadcast));
@@ -683,18 +712,18 @@ void TapeloopDock::updateReplays()
 			std::chrono::duration_cast<std::chrono::milliseconds>(replay.capturedAt.time_since_epoch())
 				.count());
 		const QString time = captured.toString(QStringLiteral("HH:mm:ss"));
-		const auto sources = static_cast<qulonglong>(replay.sources);
+		const QString sources = QString::number(static_cast<qulonglong>(replay.sources));
 		QString text;
 		QString tip;
 		switch (replay.state) {
 		case ReplayState::Writing:
-			text = text_("Dock.Replay.Saving").arg(time).arg(sources);
+			text = text_("Dock.Replay.Saving").arg(time, sources);
 			break;
 		case ReplayState::Stored:
-			text = text_("Dock.Replay").arg(time).arg(sources);
+			text = text_("Dock.Replay").arg(time, sources);
 			break;
 		case ReplayState::NotSaved:
-			text = text_("Dock.Replay.NotSaved").arg(time).arg(sources);
+			text = text_("Dock.Replay.NotSaved").arg(time, sources);
 			tip = text_("Dock.Replay.NotSaved.Tooltip");
 			break;
 		case ReplayState::Damaged:
@@ -752,6 +781,12 @@ void TapeloopDock::updateReplays()
 	addTag_->setEnabled(listed);
 	removeTag_->setEnabled(listed);
 	tagName_->setEnabled(listed);
+	// Only what is on disk exports.
+	const bool stored = listed &&
+			    std::find(storedReplays.begin(), storedReplays.end(), current) != storedReplays.end();
+	exportMp4_->setVisible(backend_.canExport(ExportFormat::Mp4));
+	exportMp4_->setEnabled(stored);
+	exportReplay_->setEnabled(stored);
 	deleteTag_->setEnabled(!tagFilter_->currentData().toString().isEmpty());
 }
 
@@ -787,6 +822,48 @@ void TapeloopDock::updateMemory(int64_t settingMiB)
 		memoryShort_->setText(text_("Dock.MemoryShort")
 					      .arg(QString::number((needed + (uint64_t{1} << 20) - 1) >> 20))
 					      .arg(QString::number(budget >> 20)));
+	}
+}
+
+void TapeloopDock::updateExports()
+{
+	const std::vector<DockExport> exports = backend_.exports();
+	const DockExport *active = nullptr;
+	size_t waiting = 0;
+	for (const DockExport &export_ : exports) {
+		if (export_.state == DockExport::State::Running) {
+			active = &export_;
+		} else if (export_.state == DockExport::State::Waiting) {
+			++waiting;
+		}
+	}
+	// Between two exports the next one has not started yet.
+	for (auto it = exports.begin(); !active && it != exports.end(); ++it) {
+		if (it->state == DockExport::State::Waiting) {
+			active = &*it;
+			--waiting;
+		}
+	}
+	QString text;
+	if (active) {
+		const QString name = QString::fromStdString(active->name);
+		const QString percent =
+			QString::number(static_cast<int>(std::clamp(active->progress, 0.0, 1.0) * 100.0));
+		// In one call each, so that a name with %2 in it is not taken for a placeholder.
+		text = waiting == 0 ? text_("Dock.Export.Running").arg(name, percent)
+				    : text_("Dock.Export.Waiting")
+					      .arg(name, percent, QString::number(static_cast<qulonglong>(waiting)));
+	} else if (!exports.empty()) {
+		// None runs or waits, so the one asked for last is the one that finished last.
+		const DockExport &last = exports.back();
+		const QString name = QString::fromStdString(last.name);
+		text = last.state == DockExport::State::Done
+			       ? text_("Dock.Export.Done").arg(name, QString::fromStdString(last.folder))
+			       : text_("Dock.Export.Failed").arg(name, QString::fromStdString(last.error));
+	}
+	exportStatus_->setVisible(!text.isEmpty());
+	if (exportStatus_->text() != text) {
+		exportStatus_->setText(text);
 	}
 }
 
