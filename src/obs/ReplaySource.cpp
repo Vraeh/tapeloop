@@ -3,7 +3,11 @@
 
 #include "obs/ReplaySource.hpp"
 
+#include "obs/GpuPictures.hpp"
 #include "obs/PictureRenderer.hpp"
+#ifdef _WIN32
+#include "obs/SharedPictures.hpp"
+#endif
 
 #include <obs-module.h>
 
@@ -15,13 +19,36 @@
 namespace tapeloop::obs {
 namespace {
 
-struct ReplaySource {
-	explicit ReplaySource(ReplayPlayer::DecoderFactory decoders) : player(std::move(decoders)) {}
+std::unique_ptr<GpuPictures> makeGpuPictures()
+{
+#ifdef _WIN32
+	return std::make_unique<SharedPictures>();
+#else
+	return nullptr;
+#endif
+}
 
+// Lives and dies inside the graphics context, for the renderer and the GPU pictures.
+struct ReplaySource {
+	explicit ReplaySource(ReplayPlayer::DecoderFactory decoders)
+		: gpu(makeGpuPictures()),
+		  player(std::move(decoders), {}, gpu.get())
+	{
+	}
+
+	std::unique_ptr<GpuPictures> gpu;
 	ReplayPlayer player;
-	// Lives and dies inside the graphics context.
 	PictureRenderer renderer;
 };
+
+std::unique_ptr<ReplaySource> makeSource(const ReplayPlayer::DecoderFactory &decoders) noexcept
+{
+	try {
+		return std::make_unique<ReplaySource>(decoders);
+	} catch (...) {
+		return nullptr;
+	}
+}
 
 const char *name(void *) noexcept
 {
@@ -34,14 +61,16 @@ void *create(obs_data_t *, obs_source_t *source) noexcept
 	if (!decoders) {
 		return nullptr;
 	}
-	std::unique_ptr<ReplaySource> replay;
-	try {
-		replay = std::make_unique<ReplaySource>(*decoders);
-	} catch (...) {
+	obs_enter_graphics();
+	std::unique_ptr<ReplaySource> replay = makeSource(*decoders);
+	obs_leave_graphics();
+	if (!replay) {
 		return nullptr;
 	}
-	// The renderer holds nothing yet, so it may go outside the graphics context here.
 	if (!replay->player.start()) {
+		obs_enter_graphics();
+		replay.reset();
+		obs_leave_graphics();
 		return nullptr;
 	}
 	return replay.release();
