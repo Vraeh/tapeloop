@@ -2,11 +2,13 @@
 // Copyright (C) 2026 Vicente Aedo <ryde1337@gmail.com>
 
 #ifdef TAPELOOP_FFMPEG
+#include "decode/FFmpegDecoder.hpp"
 #include "decode/FFmpegVersion.hpp"
 #endif
 #include "obs/CaptureOutput.hpp"
 #include "obs/FrontendBridge.hpp"
 #include "obs/ManagerDockBackend.hpp"
+#include "obs/ReplaySource.hpp"
 #include "ui/TapeloopDock.hpp"
 
 #include <obs-frontend-api.h>
@@ -37,6 +39,18 @@ void addDock()
 	}
 }
 
+// Without FFmpeg there is no decoder yet, and the replay sources draw nothing.
+tapeloop::obs::ReplayPlayer::DecoderFactory replayDecoders()
+{
+#ifdef TAPELOOP_FFMPEG
+	return [] {
+		return std::make_unique<tapeloop::decode::FFmpegDecoder>();
+	};
+#else
+	return {};
+#endif
+}
+
 } // namespace
 
 const char *obs_module_name()
@@ -53,6 +67,7 @@ bool obs_module_load()
 {
 	try {
 		tapeloop::obs::registerCaptureOutput();
+		tapeloop::obs::registerReplaySource(replayDecoders());
 		bridge = std::make_unique<tapeloop::obs::FrontendBridge>();
 		addDock();
 	} catch (...) {
