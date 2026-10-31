@@ -5,6 +5,7 @@
 
 #include "core/FrameDecoder.hpp"
 #include "decode/Picture.hpp"
+#include "decode/PictureDecoder.hpp"
 
 #include <cstddef>
 #include <cstdint>
@@ -38,7 +39,7 @@ struct FFmpegDecoderConfig {
 // Pictures on the CPU stay in FFmpeg's buffers until released. Pictures decoded on the
 // GPU are copied out of FFmpeg's fixed pool of surfaces into textures of the decoder's
 // own, one per frame held, so the planner's budget decides how many there are.
-class FFmpegDecoder final : public FrameDecoder {
+class FFmpegDecoder final : public PictureDecoder {
 public:
 	explicit FFmpegDecoder(FFmpegDecoderConfig config = {});
 	~FFmpegDecoder() override;
@@ -65,9 +66,7 @@ public:
 	void release(const DecodedFrame &frame) noexcept override;
 	void close() noexcept override;
 
-	// The picture of a frame this decoder returned and has not taken back; empty for
-	// any other frame.
-	std::optional<Picture> picture(const DecodedFrame &frame) const noexcept;
+	std::optional<Picture> picture(const DecodedFrame &frame) const noexcept override;
 	// Whether a D3D11 device was created for the adapter of the configuration.
 	bool hasDevice() const noexcept;
 	size_t heldFrames() const noexcept;

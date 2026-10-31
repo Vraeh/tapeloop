@@ -15,6 +15,7 @@ target_sources(
     Mp4Writer.cpp
     Mp4Writer.hpp
     Picture.hpp
+    PictureDecoder.hpp
 )
 
 target_include_directories(tapeloop-decode PUBLIC "${CMAKE_CURRENT_SOURCE_DIR}/..")
