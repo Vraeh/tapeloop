@@ -436,6 +436,78 @@ TEST_CASE_METHOD(ObsFixture, "the replay player steps, seeks, scrubs, reverses a
 	}
 }
 
+TEST_CASE_METHOD(ObsFixture, "the replay player's speed presets keep the direction and the play state", "[obs][player]")
+{
+	const Clip clip = captureClip(3);
+	REQUIRE(clip.gops().size() >= 3);
+	const std::vector<Expected> expected = expectedFrames(clip);
+
+	Screen screen;
+	ReplayPlayer player(makeDecoder);
+	REQUIRE(player.load(gopsOf(clip)));
+	checkTick(screen, player, expected, 0ns);
+
+	// Each control on its own tick, while playing forward from the start.
+	player.play();
+	auto rateAfter = [&](void (ReplayPlayer::*control)()) {
+		(player.*control)();
+		const PlayerState state = checkTick(screen, player, expected);
+		CHECK(state.playing);
+		return state.rate;
+	};
+	CHECK(rateAfter(&ReplayPlayer::faster) == 2000);
+	CHECK(rateAfter(&ReplayPlayer::faster) == 2000);
+	player.seek(expected.front().time);
+	for (const int32_t rate : {1000, 750, 500, 250, 250}) {
+		CHECK(rateAfter(&ReplayPlayer::slower) == rate);
+	}
+	CHECK(rateAfter(&ReplayPlayer::normalSpeed) == 1000);
+
+	// Backwards from the end, the same ladder with the sign kept.
+	player.seek(expected.back().time);
+	player.reverse();
+	for (const int32_t rate : {-2000, -2000}) {
+		CHECK(rateAfter(&ReplayPlayer::faster) == rate);
+	}
+	player.seek(expected.back().time);
+	for (const int32_t rate : {-1000, -750, -500, -250, -250}) {
+		CHECK(rateAfter(&ReplayPlayer::slower) == rate);
+	}
+	CHECK(rateAfter(&ReplayPlayer::normalSpeed) == -1000);
+
+	// Paused, the speed changes and the frame stays.
+	player.pause();
+	const PlayerState held = checkTick(screen, player, expected);
+	player.faster();
+	PlayerState state = checkTick(screen, player, expected);
+	CHECK_FALSE(state.playing);
+	CHECK(state.rate == -2000);
+	CHECK(state.position == held.position);
+
+	// From speeds set off the ladder, and several controls in one tick, in order.
+	struct Case {
+		int32_t from;
+		void (ReplayPlayer::*control)();
+		int32_t to;
+	};
+	for (const Case &step :
+	     {Case{600, &ReplayPlayer::faster, 750}, Case{600, &ReplayPlayer::slower, 500},
+	      Case{-600, &ReplayPlayer::faster, -750}, Case{4000, &ReplayPlayer::faster, 4000},
+	      Case{4000, &ReplayPlayer::slower, 2000}, Case{100, &ReplayPlayer::slower, 100},
+	      Case{100, &ReplayPlayer::faster, 250}, Case{-3000, &ReplayPlayer::normalSpeed, -1000}}) {
+		CAPTURE(step.from);
+		player.setRate(step.from);
+		(player.*step.control)();
+		CHECK(checkTick(screen, player, expected).rate == step.to);
+	}
+	player.setRate(250);
+	player.faster();
+	player.faster();
+	player.slower();
+	player.faster();
+	CHECK(checkTick(screen, player, expected).rate == 750);
+}
+
 TEST_CASE_METHOD(ObsFixture, "a replay player shows nothing of the clip before at the speed it had", "[obs][player]")
 {
 	const Clip clip = captureClip(4);

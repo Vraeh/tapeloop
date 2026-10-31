@@ -8,6 +8,27 @@
 #include <utility>
 
 namespace tapeloop::obs {
+namespace {
+
+int32_t nextPreset(int32_t rate, bool up) noexcept
+{
+	const int32_t speed = rate < 0 ? -rate : rate;
+	int32_t next = speed;
+	if (up) {
+		const auto above = std::upper_bound(kSpeedPresets.begin(), kSpeedPresets.end(), speed);
+		if (above != kSpeedPresets.end()) {
+			next = *above;
+		}
+	} else {
+		const auto below = std::lower_bound(kSpeedPresets.begin(), kSpeedPresets.end(), speed);
+		if (below != kSpeedPresets.begin()) {
+			next = *(below - 1);
+		}
+	}
+	return rate < 0 ? -next : next;
+}
+
+} // namespace
 
 ReplayPlayer::ReplayPlayer(DecoderFactory decoders, DecodePlannerConfig planner)
 	: decoders_(std::move(decoders)),
@@ -101,6 +122,21 @@ void ReplayPlayer::setRate(int32_t rate) noexcept
 	command(Control::Rate, rate);
 }
 
+void ReplayPlayer::faster() noexcept
+{
+	command(Control::Faster, 0);
+}
+
+void ReplayPlayer::slower() noexcept
+{
+	command(Control::Slower, 0);
+}
+
+void ReplayPlayer::normalSpeed() noexcept
+{
+	command(Control::NormalSpeed, 0);
+}
+
 void ReplayPlayer::reverse() noexcept
 {
 	command(Control::Reverse, 0);
@@ -148,6 +184,15 @@ void ReplayPlayer::apply(const Command &command) noexcept
 		break;
 	case Control::Rate:
 		playhead_.setRate(static_cast<int32_t>(command.value));
+		break;
+	case Control::Faster:
+		playhead_.setRate(nextPreset(playhead_.rate(), true));
+		break;
+	case Control::Slower:
+		playhead_.setRate(nextPreset(playhead_.rate(), false));
+		break;
+	case Control::NormalSpeed:
+		playhead_.setRate(playhead_.rate() < 0 ? -1000 : 1000);
 		break;
 	case Control::Reverse:
 		playhead_.reverse();

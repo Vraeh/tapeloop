@@ -24,6 +24,9 @@
 
 namespace tapeloop::obs {
 
+// The speeds faster() and slower() move between, in thousandths of real time.
+inline constexpr std::array<int32_t, 5> kSpeedPresets{250, 500, 750, 1000, 2000};
+
 // What a player shows, for the source, the dock and tests.
 struct PlayerState {
 	bool loaded = false;
@@ -91,6 +94,12 @@ public:
 	void togglePause() noexcept;
 	// Thousandths of real time; negative plays backwards. Zero pauses.
 	void setRate(int32_t rate) noexcept;
+	// To the next speed of kSpeedPresets up or down, or to real time, keeping the
+	// direction and the play state. From between two presets the next one is the
+	// nearest that way; past the last one that way the speed stays.
+	void faster() noexcept;
+	void slower() noexcept;
+	void normalSpeed() noexcept;
 	void reverse() noexcept;
 	// Pauses and moves by whole frames.
 	void step(int frames) noexcept;
@@ -109,7 +118,20 @@ public:
 	PlayerState state() const noexcept;
 
 private:
-	enum class Control { Play, Pause, TogglePause, Rate, Reverse, Step, Seek, BeginScrub, EndScrub };
+	enum class Control {
+		Play,
+		Pause,
+		TogglePause,
+		Rate,
+		Faster,
+		Slower,
+		NormalSpeed,
+		Reverse,
+		Step,
+		Seek,
+		BeginScrub,
+		EndScrub
+	};
 	struct Command {
 		Control control = Control::Play;
 		int64_t value = 0;
