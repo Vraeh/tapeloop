@@ -2155,7 +2155,7 @@ TEST_CASE_METHOD(ObsFixture, "a stored replay exports to MP4 and as a replay fil
 	const tapeloop::StoredSource source = replay->index->sources.front();
 
 	CHECK(manager.canExport(ExportFormat::Mp4));
-	LogCounter exported("[tapeloop] Exported '%s' to %zu files in '%s'");
+	LogCounter exported("[tapeloop] Exported '%s' to 1 file in '%s'");
 	REQUIRE(manager.exportReplay(id, ExportFormat::Mp4));
 	REQUIRE(manager.exportReplay(id, ExportFormat::Replay));
 	CHECK_FALSE(manager.exportReplay(id + 100, ExportFormat::Mp4));
@@ -2196,6 +2196,46 @@ TEST_CASE_METHOD(ObsFixture, "a stored replay exports to MP4 and as a replay fil
 	CHECK(tapeloop::selfContained(*copy));
 	CHECK(copy->sources.front().frameTimes == source.frameTimes);
 	manager.manualStop();
+}
+
+TEST_CASE_METHOD(ObsFixture, "every export asked for says what became of it when OBS closes",
+		 "[obs][manager][replay][export]")
+{
+	OBSSourceAutoRelease pattern = createTestPattern(320, 180, "Pattern");
+	const std::string uuid = uuidOf(pattern);
+	FakeHost host;
+	CaptureManager manager(host, [] { return std::make_unique<tapeloop::decode::Mp4Writer>(); });
+	BufferSettings settings = selecting(uuid);
+	settings.startWithOutputs = false;
+	manager.setSettings(settings);
+	REQUIRE(manager.manualStart());
+	REQUIRE(waitFor([&] { return hasGops(manager, uuid, 3); }, 60s));
+	const uint64_t id = manager.captureReplay();
+	manager.finishWrites();
+	const Replay *replay = manager.library().find(id);
+	REQUIRE(replay->state == ReplayState::Stored);
+	const fs::path folder = replay->manifest.parent_path() / "Export";
+
+	// Each is done, stopped or not started, which one depending on how far the exports
+	// got when OBS closed.
+	LogCounter exported("[tapeloop] Exported '%s' to 1 file in '%s'");
+	LogCounter stopped("[tapeloop] The export of '%s' failed: %s");
+	LogCounter dropped("[tapeloop] The export of '%s' was not started, OBS is closing");
+	constexpr int kExports = 20;
+	for (int i = 0; i < kExports; ++i) {
+		REQUIRE(manager.exportReplay(id, i % 2 == 0 ? ExportFormat::Mp4 : ExportFormat::Replay));
+	}
+	manager.onExit();
+	CHECK(exported.lines + stopped.lines + dropped.lines == kExports);
+	CHECK_FALSE(manager.exportReplay(id, ExportFormat::Replay));
+	// Only the exports that were done left a file.
+	size_t files = 0;
+	std::error_code error;
+	for (const fs::directory_entry &entry : fs::directory_iterator(folder, error)) {
+		CHECK(entry.path().extension() != ".part");
+		++files;
+	}
+	CHECK(files == static_cast<size_t>(exported.lines));
 }
 
 TEST_CASE_METHOD(ObsFixture, "an export that fails says why", "[obs][manager][replay][export]")

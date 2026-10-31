@@ -584,6 +584,35 @@ TEST_CASE("an exporter that goes during an export stops it and leaves no file")
 	CHECK(namesIn(dir.path() / "Export").empty());
 }
 
+TEST_CASE("a stopped exporter reports the export it stopped, and drops the others")
+{
+	TempDirectory dir;
+	const WrittenReplay written = ReplayWriter().write(captureOf(dir.path(), {sourceOf("a", makeGops(20))}));
+	std::vector<WrittenFile> files;
+	Pause pause(0);
+	ReplayExporter exporter(recording(files, -1, &pause));
+	const uint64_t running = exporter.exportReplay(requestFor(written, ExportFormat::Mp4));
+	exporter.exportReplay(requestFor(written, ExportFormat::Replay));
+	pause.waitUntilReached();
+	std::thread stopping([&exporter] { exporter.stop(); });
+	// Time for the exporter to ask the export to stop before the export goes on.
+	std::this_thread::sleep_for(std::chrono::milliseconds(200));
+	pause.release();
+	stopping.join();
+	const std::vector<ExportResult> results = exporter.poll();
+	REQUIRE(results.size() == 1);
+	CHECK(results.front().ticket == running);
+	CHECK(results.front().error == "stopped, OBS is closing");
+	CHECK(results.front().files.empty());
+	// One asked for later is dropped too, rather than waited for.
+	exporter.exportReplay(requestFor(written, ExportFormat::Replay));
+	CHECK(exporter.pending() == 0);
+	exporter.waitUntilIdle();
+	CHECK(exporter.poll().empty());
+	CHECK(namesIn(dir.path() / "Export").empty());
+	exporter.stop();
+}
+
 TEST_CASE("an MP4 export without an MP4 writer fails, and so does one of a replay that is gone")
 {
 	TempDirectory dir;

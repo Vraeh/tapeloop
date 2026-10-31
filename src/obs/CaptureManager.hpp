@@ -147,7 +147,8 @@ public:
 	bool deleteReplayTag(std::string_view tag);
 	bool pickReplay(uint64_t id) { return library_.pick(id); }
 	// Exports a stored replay into the Export folder of its broadcast folder, in the
-	// background. False for a replay that is not stored, or a format not available here.
+	// background. False for a replay that is not stored, a format not available here, or
+	// once OBS is closing.
 	bool exportReplay(uint64_t id, ExportFormat format);
 	bool canExport(ExportFormat format) const noexcept { return exporter_.canExport(format); }
 	// The exports asked for since OBS started, oldest first; only the last ones finished

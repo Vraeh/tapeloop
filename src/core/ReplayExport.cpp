@@ -214,13 +214,7 @@ ReplayExporter::ReplayExporter(WriterFactory mp4) : mp4_(std::move(mp4)), worker
 
 ReplayExporter::~ReplayExporter()
 {
-	{
-		const std::lock_guard lock(mutex_);
-		stopping_ = true;
-	}
-	stop_ = true;
-	wake_.notify_all();
-	worker_.join();
+	stop();
 }
 
 bool ReplayExporter::canExport(ExportFormat format) const noexcept
@@ -234,6 +228,10 @@ uint64_t ReplayExporter::exportReplay(ExportRequest request)
 	{
 		const std::lock_guard lock(mutex_);
 		ticket = nextTicket_++;
+		// The worker would never take it, and waitUntilIdle() would wait for it forever.
+		if (stopping_) {
+			return ticket;
+		}
 		jobs_.push_back({ticket, std::move(request)});
 	}
 	wake_.notify_one();
@@ -271,6 +269,20 @@ void ReplayExporter::waitUntilIdle()
 {
 	std::unique_lock lock(mutex_);
 	idle_.wait(lock, [this] { return jobs_.empty(); });
+}
+
+void ReplayExporter::stop()
+{
+	{
+		const std::lock_guard lock(mutex_);
+		stopping_ = true;
+	}
+	stop_ = true;
+	wake_.notify_all();
+	const std::lock_guard lock(joinMutex_);
+	if (worker_.joinable()) {
+		worker_.join();
+	}
 }
 
 void ReplayExporter::run() noexcept

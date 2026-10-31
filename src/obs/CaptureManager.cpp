@@ -168,6 +168,15 @@ void CaptureManager::onExit()
 {
 	exiting_ = true;
 	releaseAll();
+	// An export running stops rather than hold OBS's exit, and the others do not start.
+	exporter_.stop();
+	takeExportResults();
+	for (const auto &[ticket, export_] : exports_) {
+		if (export_.state == ExportStatus::State::Waiting) {
+			blog(LOG_WARNING, "[tapeloop] The export of '%s' was not started, OBS is closing",
+			     export_.name.c_str());
+		}
+	}
 	// The store would finish them anyway when it goes; waiting here logs what became of
 	// them.
 	finishWrites();
@@ -483,7 +492,7 @@ void CaptureManager::placeBroadcast()
 bool CaptureManager::exportReplay(uint64_t id, ExportFormat format)
 {
 	const Replay *replay = library_.find(id);
-	if (!replay || replay->state != ReplayState::Stored || !exporter_.canExport(format)) {
+	if (exiting_ || !replay || replay->state != ReplayState::Stored || !exporter_.canExport(format)) {
 		return false;
 	}
 	ExportStatus status;
@@ -537,9 +546,15 @@ void CaptureManager::takeExportResults()
 		if (result.error.empty()) {
 			status.state = ExportStatus::State::Done;
 			status.files = std::move(result.files);
-			blog(LOG_INFO, "[tapeloop] Exported '%s' to %zu files in '%s'", status.name.c_str(),
-			     status.files.size(),
-			     status.files.empty() ? "" : utf8FromPath(status.files.front().parent_path()).c_str());
+			const std::string folder =
+				status.files.empty() ? std::string{} : utf8FromPath(status.files.front().parent_path());
+			if (status.files.size() == 1) {
+				blog(LOG_INFO, "[tapeloop] Exported '%s' to 1 file in '%s'", status.name.c_str(),
+				     folder.c_str());
+			} else {
+				blog(LOG_INFO, "[tapeloop] Exported '%s' to %zu files in '%s'", status.name.c_str(),
+				     status.files.size(), folder.c_str());
+			}
 		} else {
 			status.state = ExportStatus::State::Failed;
 			status.error = std::move(result.error);

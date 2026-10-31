@@ -120,7 +120,7 @@ public:
 
 	// Without a factory, MP4 exports fail.
 	explicit ReplayExporter(WriterFactory mp4 = {});
-	// Stops the export running, which then leaves no file, and drops the others.
+	// Stops, as stop() does.
 	~ReplayExporter();
 
 	ReplayExporter(const ReplayExporter &) = delete;
@@ -129,7 +129,8 @@ public:
 	ReplayExporter &operator=(ReplayExporter &&) = delete;
 
 	bool canExport(ExportFormat format) const noexcept;
-	// Returns the ticket its result will carry, from 1 up.
+	// Returns the ticket its result will carry, from 1 up. Once stopped, the export is
+	// dropped and no result carries it.
 	uint64_t exportReplay(ExportRequest request);
 	// The results of the exports finished since the last call, in the order they finished.
 	std::vector<ExportResult> poll();
@@ -139,6 +140,9 @@ public:
 	size_t pending() const;
 	// Returns once every export asked for so far has finished.
 	void waitUntilIdle();
+	// Stops the export running, which then leaves no file and reports why, and drops the
+	// others, which report nothing. Returns once the export running has stopped.
+	void stop();
 
 private:
 	struct Job {
@@ -171,6 +175,8 @@ private:
 	// Under a lock of its own, so that progress() reads it whole.
 	mutable std::mutex progressMutex_;
 	ExportProgress progress_;
+	// So that only one stop() joins the worker.
+	std::mutex joinMutex_;
 	// Last, so that it starts after everything it uses.
 	std::thread worker_;
 };
