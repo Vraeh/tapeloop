@@ -214,7 +214,11 @@ void Mp4Writer::write(const Gop &gop, size_t packet, Nanoseconds time)
 	if (av_new_packet(packet_, ffmpegSize(data.size())) < 0) {
 		throw std::bad_alloc();
 	}
-	std::memcpy(packet_->data, data.data(), data.size());
+	// A GOP of empty packets has no bytes at all, and memcpy takes no null pointer even
+	// for nothing.
+	if (!data.empty()) {
+		std::memcpy(packet_->data, data.data(), data.size());
+	}
 	packet_->stream_index = 0;
 	packet_->pts = ticksOf(time);
 	// Whatever the encoder put between decoding and showing a frame, in frames, stays.

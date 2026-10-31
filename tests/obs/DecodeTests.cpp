@@ -831,6 +831,33 @@ TEST_CASE_METHOD(ObsFixture, "an MP4 that cannot be written says why", "[decode]
 	CHECK_THROWS_AS(writer.open(dir.path() / "garbage.mp4", *builder.seal()), std::runtime_error);
 }
 
+TEST_CASE_METHOD(ObsFixture, "an MP4 leaves out packets without bytes", "[decode][export]")
+{
+	// A replay file can list packets of no bytes. In a GOP of only those there are no
+	// bytes to copy from at all, and the size of the pictures comes from a configuration
+	// that holds a whole keyframe after the parameter sets.
+	const RecordedRun run = loadRecordedRun(kHevcPattern);
+	CodecConfig config = run.config;
+	config.insert(config.end(), run.packets.front().data.begin(), run.packets.front().data.end());
+	GopBuilder builder(kFrameInterval);
+	builder.setCodecConfig(VideoCodec::Hevc, std::make_shared<const CodecConfig>(std::move(config)));
+	builder.append({{}, 0, 0, Nanoseconds{0}, true});
+	builder.append({{}, 1, 1, kFrameInterval, false});
+	const std::shared_ptr<const Gop> gop = builder.seal();
+	tapeloop::test::TempDirectory dir;
+
+	const std::filesystem::path path = dir.path() / "empty.mp4";
+	Mp4Writer writer;
+	writer.open(path, *gop);
+	writer.write(*gop, 0, Nanoseconds{0});
+	writer.write(*gop, 1, kFrameInterval);
+	writer.finish();
+	// FFmpeg leaves out the track of a stream that got no samples.
+	const std::vector<uint8_t> file = readFile(path);
+	CHECK_FALSE(file.empty());
+	CHECK_THROWS(tapeloop::test::readMp4(file));
+}
+
 TEST_CASE_METHOD(ObsFixture, "an MP4 is written to a new file, never over one already there", "[decode][export]")
 {
 	const RecordedRun run = loadRecordedRun(kHevcPattern);
