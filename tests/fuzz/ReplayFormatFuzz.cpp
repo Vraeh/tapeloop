@@ -90,7 +90,8 @@ std::vector<std::shared_ptr<const Gop>> readGops(FuzzInput &input, int64_t &fram
 	config.gopLength = 1 + input.byte() % 6;
 	config.keyframeSize = 1 + input.byte() % 64;
 	config.frameSize = input.byte() % 32;
-	config.firstFrame = frame;
+	// The run starts on a keyframe of its own GOP length, whatever the run before it had.
+	config.firstFrame = (frame + config.gopLength - 1) / config.gopLength * config.gopLength;
 	SyntheticEncoder encoder(config);
 	GopBuilder builder(encoder.frameDuration());
 	const std::span<const uint8_t> bytes = input.bytes(input.byte() % 6);
