@@ -477,6 +477,32 @@ TEST_CASE("a scan deletes half written manifests and lists damaged ones")
 	CHECK(scan.errors.empty());
 }
 
+TEST_CASE("a scan lists but deletes nothing through a link in place of a broadcast folder")
+{
+	TempDirectory dir;
+	const fs::path elsewhere = dir.path() / "elsewhere";
+	const WrittenReplay written = ReplayWriter().write(captureOf(elsewhere, {sourceOf("a", makeGops(1))}));
+	File(elsewhere / "notes.tplp.part", File::Mode::CreateNew).flush();
+	fs::create_directory(elsewhere / "Export");
+	File(elsewhere / "Export" / "download.mp4.part", File::Mode::CreateNew).flush();
+	fs::create_directory(dir.path() / "base");
+	const fs::path folder = dir.path() / "base" / "Liga 2026-10-09 21-00";
+	std::error_code error;
+	fs::create_directory_symlink(elsewhere, folder, error);
+	if (error) {
+		SKIP("links to a directory cannot be made here: " << error.message());
+	}
+
+	const tapeloop::ReplayScan scan = tapeloop::scanReplays(dir.path() / "base");
+	CHECK(scan.removed.empty());
+	CHECK(fs::exists(elsewhere / "notes.tplp.part"));
+	CHECK(fs::exists(elsewhere / "Export" / "download.mp4.part"));
+	REQUIRE(scan.replays.size() == 1);
+	CHECK(scan.replays[0].manifest == folder / written.manifest.filename());
+	CHECK(scan.replays[0].broadcast == "Liga 2026-10-09 21-00");
+	CHECK(scan.errors.empty());
+}
+
 TEST_CASE("a scan leaves alone what a link in place of the Export folder leads to")
 {
 	TempDirectory dir;

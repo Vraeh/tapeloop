@@ -471,20 +471,25 @@ ReplayScan scanReplays(const std::filesystem::path &base)
 		if (!std::filesystem::is_directory(folder, error)) {
 			continue;
 		}
+		// A link or junction in place of a broadcast folder is listed, but nothing is
+		// deleted through it, since it can lead to anyone's files.
+		const bool linked = !std::filesystem::is_directory(std::filesystem::symlink_status(folder, error));
 		const std::string broadcast = utf8FromPath(folder.filename());
 		for (const std::filesystem::path &path : listDirectory(folder, scan.errors)) {
 			const std::string name = utf8FromPath(path.filename());
 			if (name.ends_with(kPartExtension)) {
-				removeHalfWritten(path, scan);
+				if (!linked) {
+					removeHalfWritten(path, scan);
+				}
 			} else if (name.ends_with(kManifestExtension) &&
 				   std::filesystem::is_regular_file(path, error)) {
 				scan.replays.push_back(readReplay(path, broadcast, scan.errors));
 			}
 		}
 		// An export a crash stopped left its file under a .part name. A link in place of
-		// the folder is not followed, since it can lead to anyone's files.
+		// the Export folder is not followed either.
 		const std::filesystem::path exports = folder / pathFromUtf8(kExportFolderName);
-		if (std::filesystem::is_directory(std::filesystem::symlink_status(exports, error))) {
+		if (!linked && std::filesystem::is_directory(std::filesystem::symlink_status(exports, error))) {
 			for (const std::filesystem::path &path : listDirectory(exports, scan.errors)) {
 				std::error_code removeError;
 				if (removeStaleExportPart(path, removeError)) {
