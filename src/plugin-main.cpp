@@ -8,6 +8,7 @@
 #include "obs/CaptureOutput.hpp"
 #include "obs/FrontendBridge.hpp"
 #include "obs/ManagerDockBackend.hpp"
+#include "obs/RenderAdapter.hpp"
 #include "obs/ReplaySource.hpp"
 #include "ui/TapeloopDock.hpp"
 
@@ -15,7 +16,9 @@
 #include <obs-module.h>
 #include <plugin-support.h>
 
+#include <cstdint>
 #include <memory>
+#include <optional>
 
 OBS_DECLARE_MODULE()
 OBS_MODULE_USE_DEFAULT_LOCALE(PLUGIN_NAME, "en-US")
@@ -39,12 +42,24 @@ void addDock()
 	}
 }
 
-// Without FFmpeg there is no decoder yet, and the replay sources draw nothing.
+// Without FFmpeg there is no decoder yet, and the replay sources draw nothing. Decoders
+// whose pictures may stay on the GPU decode on the adapter OBS renders with; OBS made its
+// graphics before it loads modules, and keeps them while it runs.
 tapeloop::obs::ReplayPlayer::DecoderFactory replayDecoders()
 {
 #ifdef TAPELOOP_FFMPEG
-	return [](bool) {
-		return std::make_unique<tapeloop::decode::FFmpegDecoder>();
+	std::optional<uint64_t> adapter;
+#ifdef _WIN32
+	obs_enter_graphics();
+	adapter = tapeloop::obs::renderAdapterLuid();
+	obs_leave_graphics();
+#endif
+	return [adapter](bool onGpu) {
+		tapeloop::decode::FFmpegDecoderConfig config;
+		if (onGpu) {
+			config.adapterLuid = adapter;
+		}
+		return std::make_unique<tapeloop::decode::FFmpegDecoder>(config);
 	};
 #else
 	return {};
