@@ -831,6 +831,66 @@ TEST_CASE_METHOD(ObsFixture, "an MP4 that cannot be written says why", "[decode]
 	CHECK_THROWS_AS(writer.open(dir.path() / "garbage.mp4", *builder.seal()), std::runtime_error);
 }
 
+namespace {
+
+// The configuration with its SPS cut after the profile, tier and level, well before the
+// reference picture sets.
+CodecConfig withSpsCut(const CodecConfig &config)
+{
+	CodecConfig cut;
+	for (std::vector<uint8_t> unit : annexBUnits(config)) {
+		if (((unit.at(0) >> 1) & 0x3F) == 33) {
+			unit.resize(16);
+		}
+		cut.insert(cut.end(), {0, 0, 0, 1});
+		cut.insert(cut.end(), unit.begin(), unit.end());
+	}
+	return cut;
+}
+
+std::shared_ptr<const Gop> hevcKeyframe(const CodecConfig *config, std::span<const uint8_t> data)
+{
+	GopBuilder builder(kFrameInterval);
+	builder.setCodecConfig(VideoCodec::Hevc, config ? std::make_shared<const CodecConfig>(*config) : nullptr);
+	builder.append({data, 0, 0, Nanoseconds{0}, true});
+	return builder.seal();
+}
+
+} // namespace
+
+TEST_CASE_METHOD(ObsFixture, "an MP4 refuses a sequence parameter set cut short", "[decode][export]")
+{
+	// FFmpeg's muxer reads the sets as it finishes the file. In one cut short it reads
+	// counts past the end and can step through billions of values.
+	const RecordedRun run = loadRecordedRun(kHevcPattern);
+	const std::vector<uint8_t> &keyframe = run.packets.front().data;
+	const CodecConfig cut = withSpsCut(run.config);
+	REQUIRE(cut.size() < run.config.size());
+	const std::string error = "a sequence parameter set is cut short";
+	tapeloop::test::TempDirectory dir;
+	Mp4Writer writer;
+
+	// In the configuration of the first GOP, before the file is made.
+	const std::filesystem::path first = dir.path() / "first.mp4";
+	CHECK(errorOf([&] { writer.open(first, *hevcKeyframe(&cut, keyframe)); }) == error);
+	CHECK_FALSE(std::filesystem::exists(first));
+
+	// In the configuration of a later GOP.
+	const std::shared_ptr<const Gop> whole = hevcKeyframe(&run.config, keyframe);
+	writer.open(dir.path() / "later.mp4", *whole);
+	writer.write(*whole, 0, Nanoseconds{0});
+	CHECK(errorOf([&] { writer.write(*hevcKeyframe(&cut, keyframe), 0, kFrameInterval); }) == error);
+
+	// In the first packet with bytes when the first GOP has no configuration: the muxer
+	// takes that packet for one. The whole sets after the cut one give the size.
+	std::vector<uint8_t> packet = cut;
+	packet.insert(packet.end(), run.config.begin(), run.config.end());
+	packet.insert(packet.end(), keyframe.begin(), keyframe.end());
+	const std::shared_ptr<const Gop> bare = hevcKeyframe(nullptr, packet);
+	writer.open(dir.path() / "bare.mp4", *bare);
+	CHECK(errorOf([&] { writer.write(*bare, 0, Nanoseconds{0}); }) == error);
+}
+
 TEST_CASE_METHOD(ObsFixture, "an MP4 leaves out packets without bytes", "[decode][export]")
 {
 	// A replay file can list packets of no bytes. In a GOP of only those there are no

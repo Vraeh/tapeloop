@@ -5,6 +5,7 @@
 #include "decode/FFmpegHeaders.hpp"
 
 #include "core/FileIo.hpp"
+#include "core/ParameterSets.hpp"
 
 extern "C" {
 #include <libavcodec/avcodec.h>
@@ -107,6 +108,15 @@ std::pair<int, int> pictureSize(const Gop &gop)
 	return *size;
 }
 
+// The muxer reads the sequence parameter sets of each configuration as it finishes the
+// file. One cut short holds it up there for minutes, so it is refused before it gets in.
+void checkParameterSets(VideoCodec codec, std::span<const uint8_t> data)
+{
+	if (!sequenceParameterSetsAreWhole(codec, data)) {
+		throw std::runtime_error("a sequence parameter set is cut short");
+	}
+}
+
 } // namespace
 
 Mp4Writer::~Mp4Writer()
@@ -118,6 +128,8 @@ void Mp4Writer::open(const std::filesystem::path &path, const Gop &first)
 {
 	close();
 	config_ = first.codecConfig() ? *first.codecConfig() : CodecConfig{};
+	checkParameterSets(first.codec(), config_);
+	configFromPacket_ = config_.empty();
 	frameTicks_ = std::max<int64_t>(ticksOf(first.frameDuration()), 1);
 	lastDts_ = std::numeric_limits<int64_t>::min();
 	const auto [width, height] = pictureSize(first);
@@ -210,6 +222,15 @@ void Mp4Writer::write(const Gop &gop, size_t packet, Nanoseconds time)
 	}
 	const PacketRecord &record = gop.packets()[packet];
 	const std::span<const uint8_t> data = gop.packetData(packet);
+	if (const CodecConfig *config = gop.codecConfig(); config && *config != config_) {
+		checkParameterSets(gop.codec(), *config);
+	}
+	// Without a configuration in the first GOP, the muxer takes the first packet with
+	// bytes for one.
+	if (configFromPacket_ && !data.empty()) {
+		checkParameterSets(gop.codec(), data);
+		configFromPacket_ = false;
+	}
 	av_packet_unref(packet_);
 	if (av_new_packet(packet_, ffmpegSize(data.size())) < 0) {
 		throw std::bad_alloc();
