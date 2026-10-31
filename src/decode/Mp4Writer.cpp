@@ -9,6 +9,7 @@
 extern "C" {
 #include <libavcodec/avcodec.h>
 #include <libavformat/avformat.h>
+#include <libavformat/avio.h>
 #include <libavutil/error.h>
 #include <libavutil/mathematics.h>
 #include <libavutil/mem.h>
@@ -22,6 +23,7 @@ extern "C" {
 #include <span>
 #include <stdexcept>
 #include <string>
+#include <system_error>
 #include <utility>
 #include <vector>
 
@@ -32,12 +34,22 @@ namespace {
 // them, at 50 fps 2400.
 constexpr AVRational kTimeBase{1, 120'000};
 constexpr AVRational kNanoseconds{1, 1'000'000'000};
+constexpr int kIoBufferSize = 256 * 1024;
 
 std::runtime_error ffmpegError(const std::string &what, int code)
 {
 	char text[AV_ERROR_MAX_STRING_SIZE] = {};
 	av_strerror(code, text, sizeof(text));
 	return std::runtime_error(what + ": " + text);
+}
+
+// FFmpeg counts the bytes of a buffer in an int and reads past its end by the padding.
+int ffmpegSize(size_t size)
+{
+	if (size > static_cast<size_t>(std::numeric_limits<int>::max() - AV_INPUT_BUFFER_PADDING_SIZE)) {
+		throw std::runtime_error("a packet or its parameter sets are too large to write");
+	}
+	return static_cast<int>(size);
 }
 
 int64_t ticksOf(Nanoseconds time)
@@ -62,8 +74,8 @@ std::pair<int, int> pictureSize(const Gop &first)
 		frame = *config;
 	}
 	frame.insert(frame.end(), keyframe.begin(), keyframe.end());
-	const size_t size = frame.size();
-	frame.resize(size + AV_INPUT_BUFFER_PADDING_SIZE, 0);
+	const int size = ffmpegSize(frame.size());
+	frame.resize(frame.size() + AV_INPUT_BUFFER_PADDING_SIZE, 0);
 
 	AVCodecParserContext *parser = av_parser_init(codecIdOf(first.codec()));
 	AVCodecContext *context = avcodec_alloc_context3(nullptr);
@@ -72,8 +84,8 @@ std::pair<int, int> pictureSize(const Gop &first)
 		parser->flags |= PARSER_FLAG_COMPLETE_FRAMES;
 		uint8_t *out = nullptr;
 		int outSize = 0;
-		av_parser_parse2(parser, context, &out, &outSize, frame.data(), static_cast<int>(size), AV_NOPTS_VALUE,
-				 AV_NOPTS_VALUE, 0);
+		av_parser_parse2(parser, context, &out, &outSize, frame.data(), size, AV_NOPTS_VALUE, AV_NOPTS_VALUE,
+				 0);
 		found = {parser->width, parser->height};
 	}
 	avcodec_free_context(&context);
@@ -99,9 +111,7 @@ void Mp4Writer::open(const std::filesystem::path &path, const Gop &first)
 	lastDts_ = std::numeric_limits<int64_t>::min();
 	const auto [width, height] = pictureSize(first);
 
-	// The file protocol named outright, so that no part of a path reads as another one.
-	const std::string url = "file:" + utf8FromPath(path);
-	int error = avformat_alloc_output_context2(&context_, nullptr, "mp4", url.c_str());
+	int error = avformat_alloc_output_context2(&context_, nullptr, "mp4", nullptr);
 	if (error < 0 || !context_) {
 		context_ = nullptr;
 		throw ffmpegError("cannot start the MP4 file", error < 0 ? error : AVERROR(ENOMEM));
@@ -122,22 +132,35 @@ void Mp4Writer::open(const std::filesystem::path &path, const Gop &first)
 	parameters->height = height;
 	// Annex B, as the encoders give it; the muxer writes avcC or hvcC from it.
 	if (!config_.empty()) {
+		const int size = ffmpegSize(config_.size());
 		parameters->extradata =
 			static_cast<uint8_t *>(av_mallocz(config_.size() + AV_INPUT_BUFFER_PADDING_SIZE));
 		if (!parameters->extradata) {
 			throw std::bad_alloc();
 		}
 		std::memcpy(parameters->extradata, config_.data(), config_.size());
-		parameters->extradata_size = static_cast<int>(config_.size());
+		parameters->extradata_size = size;
 	}
 
-	error = avio_open(&context_->pb, url.c_str(), AVIO_FLAG_WRITE);
-	if (error < 0) {
-		throw ffmpegError("cannot create " + utf8FromPath(path), error);
+	// Through a file of our own, which is created only where none is: FFmpeg's file
+	// protocol would empty a file already there, or one a link there points to.
+	file_ = File(path, File::Mode::CreateNew);
+	position_ = 0;
+	ioError_.clear();
+	auto *buffer = static_cast<uint8_t *>(av_malloc(kIoBufferSize));
+	if (!buffer) {
+		throw std::bad_alloc();
 	}
+	io_ = avio_alloc_context(buffer, kIoBufferSize, 1, this, nullptr, &Mp4Writer::writeIo, &Mp4Writer::seekIo);
+	if (!io_) {
+		av_free(buffer);
+		throw std::bad_alloc();
+	}
+	context_->pb = io_;
+	context_->flags |= AVFMT_FLAG_CUSTOM_IO;
 	error = avformat_write_header(context_, nullptr);
 	if (error < 0) {
-		throw ffmpegError("cannot write the start of " + utf8FromPath(path), error);
+		fail("cannot write the start of " + utf8FromPath(path), error);
 	}
 }
 
@@ -149,7 +172,7 @@ void Mp4Writer::write(const Gop &gop, size_t packet, Nanoseconds time)
 	const PacketRecord &record = gop.packets()[packet];
 	const std::span<const uint8_t> data = gop.packetData(packet);
 	av_packet_unref(packet_);
-	if (av_new_packet(packet_, static_cast<int>(data.size())) < 0) {
+	if (av_new_packet(packet_, ffmpegSize(data.size())) < 0) {
 		throw std::bad_alloc();
 	}
 	std::memcpy(packet_->data, data.data(), data.size());
@@ -175,7 +198,7 @@ void Mp4Writer::write(const Gop &gop, size_t packet, Nanoseconds time)
 		config_ = *config;
 	}
 	if (const int error = av_write_frame(context_, packet_); error < 0) {
-		throw ffmpegError("cannot write to the MP4 file", error);
+		fail("cannot write to the MP4 file", error);
 	}
 }
 
@@ -185,24 +208,83 @@ void Mp4Writer::finish()
 		throw std::logic_error("no MP4 file is open");
 	}
 	if (const int error = av_write_trailer(context_); error < 0) {
-		throw ffmpegError("cannot finish the MP4 file", error);
+		fail("cannot finish the MP4 file", error);
 	}
-	if (const int error = avio_closep(&context_->pb); error < 0) {
-		throw ffmpegError("cannot finish the MP4 file", error);
+	avio_flush(io_);
+	if (io_->error < 0) {
+		fail("cannot finish the MP4 file", io_->error);
 	}
 	close();
 }
 
 void Mp4Writer::close() noexcept
 {
-	if (context_) {
-		if (context_->pb) {
-			avio_closep(&context_->pb);
-		}
-		avformat_free_context(context_);
-		context_ = nullptr;
+	avformat_free_context(context_);
+	context_ = nullptr;
+	if (io_) {
+		// Not avio_close(), which would take the context for one of FFmpeg's protocols.
+		av_freep(&io_->buffer);
+		avio_context_free(&io_);
 	}
+	file_.close();
 	av_packet_free(&packet_);
+}
+
+void Mp4Writer::fail(const std::string &what, int code) const
+{
+	if (ioError_) {
+		throw std::system_error(ioError_, what);
+	}
+	throw ffmpegError(what, code);
+}
+
+int Mp4Writer::writeIo(void *opaque, const uint8_t *data, int size) noexcept
+{
+	auto *writer = static_cast<Mp4Writer *>(opaque);
+	try {
+		writer->file_.writeAt(writer->position_, {data, static_cast<size_t>(size)});
+	} catch (const std::system_error &e) {
+		writer->ioError_ = e.code();
+		return AVERROR(EIO);
+	} catch (...) {
+		writer->ioError_ = std::make_error_code(std::errc::io_error);
+		return AVERROR(EIO);
+	}
+	writer->position_ += static_cast<uint64_t>(size);
+	return size;
+}
+
+int64_t Mp4Writer::seekIo(void *opaque, int64_t offset, int whence) noexcept
+{
+	auto *writer = static_cast<Mp4Writer *>(opaque);
+	try {
+		int64_t base = 0;
+		switch (whence & ~AVSEEK_FORCE) {
+		case AVSEEK_SIZE:
+			return static_cast<int64_t>(writer->file_.size());
+		case SEEK_SET:
+			break;
+		case SEEK_CUR:
+			base = static_cast<int64_t>(writer->position_);
+			break;
+		case SEEK_END:
+			base = static_cast<int64_t>(writer->file_.size());
+			break;
+		default:
+			return AVERROR(EINVAL);
+		}
+		if (offset < -base || offset > std::numeric_limits<int64_t>::max() - base) {
+			return AVERROR(EINVAL);
+		}
+		writer->position_ = static_cast<uint64_t>(base + offset);
+		return static_cast<int64_t>(writer->position_);
+	} catch (const std::system_error &e) {
+		writer->ioError_ = e.code();
+		return AVERROR(EIO);
+	} catch (...) {
+		writer->ioError_ = std::make_error_code(std::errc::io_error);
+		return AVERROR(EIO);
+	}
 }
 
 } // namespace tapeloop::decode

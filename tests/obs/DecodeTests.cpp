@@ -33,6 +33,7 @@ extern "C" {
 #include <cstdio>
 #include <filesystem>
 #include <fstream>
+#include <functional>
 #include <initializer_list>
 #include <iterator>
 #include <memory>
@@ -598,6 +599,17 @@ std::vector<uint8_t> readFile(const std::filesystem::path &path)
 	return {std::istreambuf_iterator<char>(file), std::istreambuf_iterator<char>()};
 }
 
+// What the call throws, empty when it throws nothing.
+std::string errorOf(const std::function<void()> &call)
+{
+	try {
+		call();
+	} catch (const std::exception &e) {
+		return e.what();
+	}
+	return {};
+}
+
 int64_t mp4Ticks(Nanoseconds time)
 {
 	return av_rescale_q_rnd(time.count(), {1, 1'000'000'000}, {1, 120'000}, AV_ROUND_NEAR_INF);
@@ -801,10 +813,12 @@ TEST_CASE_METHOD(ObsFixture, "an MP4 that cannot be written says why", "[decode]
 		CHECK(std::string(e.what()).find(tapeloop::utf8FromPath(missing)) != std::string::npos);
 	}
 
-	// Packets out of decode order are refused before they reach the file.
+	// Packets out of decode order, or two decoded at once, are refused before they reach
+	// the file.
 	writer.open(dir.path() / "order.mp4", *gop);
 	writer.write(*gop, 1, kFrameInterval);
-	CHECK_THROWS_AS(writer.write(*gop, 2, Nanoseconds{0}), std::runtime_error);
+	CHECK(errorOf([&] { writer.write(*gop, 2, Nanoseconds{0}); }) == "the packets are not in decode order");
+	CHECK(errorOf([&] { writer.write(*gop, 2, kFrameInterval); }) == "the packets are not in decode order");
 
 	// Pictures whose size cannot be read.
 	GopBuilder builder(kFrameInterval);
@@ -812,4 +826,66 @@ TEST_CASE_METHOD(ObsFixture, "an MP4 that cannot be written says why", "[decode]
 	const std::vector<uint8_t> garbage(64, 0x55);
 	builder.append({garbage, 0, 0, Nanoseconds{0}, true});
 	CHECK_THROWS_AS(writer.open(dir.path() / "garbage.mp4", *builder.seal()), std::runtime_error);
+}
+
+TEST_CASE_METHOD(ObsFixture, "an MP4 is written to a new file, never over one already there", "[decode][export]")
+{
+	const RecordedRun run = loadRecordedRun(kHevcPattern);
+	SourceBuffer buffer = makeBuffer();
+	buffer.setCodecConfig(VideoCodec::Hevc, run.config);
+	std::vector<Expected> expected;
+	pushRecorded(buffer, run, 1s, 0, true, expected);
+	const auto gop = buffer.clip(Nanoseconds::min(), Nanoseconds::max()).gops().front();
+	tapeloop::test::TempDirectory dir;
+	const std::vector<uint8_t> kept{'k', 'e', 'p', 't'};
+
+	const std::filesystem::path taken = dir.path() / "taken.mp4.part";
+	tapeloop::File(taken, tapeloop::File::Mode::CreateNew).writeAt(0, kept);
+	Mp4Writer writer;
+	CHECK_THROWS_AS(writer.open(taken, *gop), std::runtime_error);
+	CHECK(readFile(taken) == kept);
+
+#ifndef _WIN32
+	// Nor through a link to a file elsewhere.
+	const std::filesystem::path elsewhere = dir.path() / "elsewhere";
+	tapeloop::File(elsewhere, tapeloop::File::Mode::CreateNew).writeAt(0, kept);
+	const std::filesystem::path link = dir.path() / "link.mp4.part";
+	std::filesystem::create_symlink(elsewhere, link);
+	CHECK_THROWS_AS(writer.open(link, *gop), std::runtime_error);
+	CHECK(readFile(elsewhere) == kept);
+#endif
+
+	// The writer still writes a whole file after a refusal.
+	const std::filesystem::path path = dir.path() / "new.mp4";
+	writeMp4(path, buffer.clip(Nanoseconds::min(), Nanoseconds::max()), 1s);
+	CHECK(tapeloop::test::readMp4(readFile(path)).samples.size() == run.packets.size());
+}
+
+TEST_CASE_METHOD(ObsFixture, "an MP4 keeps the frames a packet is decoded before it shows", "[decode][export]")
+{
+	const RecordedRun run = loadRecordedRun(kHevcPattern);
+	SourceBuffer buffer = makeBuffer();
+	buffer.setCodecConfig(VideoCodec::Hevc, run.config);
+	for (size_t i = 0; i < run.packets.size(); ++i) {
+		EncodedPacket packet;
+		packet.data = run.packets[i].data;
+		packet.pts = static_cast<int64_t>(i) + 1;
+		packet.dts = static_cast<int64_t>(i);
+		packet.time = 1s + kFrameInterval * static_cast<int64_t>(i);
+		packet.keyframe = run.packets[i].keyframe;
+		buffer.push(packet);
+	}
+	tapeloop::test::TempDirectory dir;
+	const std::filesystem::path path = dir.path() / "offset.mp4";
+	writeMp4(path, buffer.clip(Nanoseconds::min(), Nanoseconds::max()), 1s);
+
+	const Mp4Track track = tapeloop::test::readMp4(readFile(path));
+	REQUIRE(track.samples.size() == run.packets.size());
+	for (size_t i = 0; i < track.samples.size(); ++i) {
+		CAPTURE(i);
+		CHECK(track.samples[i].pts - track.samples[i].dts == mp4Ticks(kFrameInterval));
+		if (i > 0) {
+			CHECK(track.samples[i].dts - track.samples[i - 1].dts == mp4Ticks(kFrameInterval));
+		}
+	}
 }
