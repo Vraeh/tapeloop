@@ -135,7 +135,8 @@
         "replay-player-fuzz",
         "replay-format-fuzz",
         "parameter-sets-fuzz",
-        "replay-decode-fuzz"
+        "replay-decode-fuzz",
+        "replay-export-fuzz"
       ]
     },
     {

@@ -115,6 +115,12 @@ jobs:
           ../build_tests/linux-clang-fuzz/fuzz/replay-decode-fuzz -max_total_time=60 -timeout=10 \
             -artifact_prefix="$RUNNER_TEMP/crashes/" "$RUNNER_TEMP/corpus/replay-decode" fuzz/corpus/replay-decode
 
+      - name: Fuzz exporting stored replays
+        run: |
+          mkdir -p "$RUNNER_TEMP/corpus/replay-export" "$RUNNER_TEMP/crashes"
+          ../build_tests/linux-clang-fuzz/fuzz/replay-export-fuzz -max_total_time=60 -timeout=10 \
+            -artifact_prefix="$RUNNER_TEMP/crashes/" "$RUNNER_TEMP/corpus/replay-export" fuzz/corpus/replay-export
+
       - name: Keep the crashing inputs
         if: failure()
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
