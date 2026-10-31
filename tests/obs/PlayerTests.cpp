@@ -2,8 +2,8 @@
 // Copyright (C) 2026 Vicente Aedo <ryde1337@gmail.com>
 
 #include "AllocationCounter.hpp"
-#include "ClipDecoder.hpp"
 #include "ObsFixture.hpp"
+#include "PlayerClips.hpp"
 #include "TestPattern.hpp"
 
 #include "core/Clip.hpp"
@@ -13,21 +13,17 @@
 #include "decode/FFmpegDecoder.hpp"
 #include "obs/PictureRenderer.hpp"
 #include "obs/ReplayPlayer.hpp"
-#include "obs/SourceCapture.hpp"
 
 #include <catch2/catch_test_macros.hpp>
-#include <obs.hpp>
+#include <obs.h>
 
-#include <algorithm>
 #include <chrono>
 #include <cstddef>
 #include <cstdint>
 #include <cstdio>
-#include <cstring>
 #include <memory>
 #include <optional>
 #include <stdexcept>
-#include <utility>
 #include <vector>
 
 using namespace std::chrono_literals;
@@ -40,68 +36,21 @@ using tapeloop::decode::PictureDecoder;
 using tapeloop::obs::PictureRenderer;
 using tapeloop::obs::PlayerState;
 using tapeloop::obs::ReplayPlayer;
-using tapeloop::obs::SourceCapture;
-using tapeloop::obs::StartResult;
 using tapeloop::test::AllocationCounter;
 using tapeloop::test::AllocationFailure;
+using tapeloop::test::captureClip;
+using tapeloop::test::expectedFrames;
+using tapeloop::test::ExpectedFrame;
+using tapeloop::test::gopStarts;
+using tapeloop::test::kClipHeight;
+using tapeloop::test::kClipWidth;
 using tapeloop::test::ObsFixture;
 using tapeloop::test::waitFor;
 
 namespace {
 
-constexpr uint32_t kWidth = 320;
-constexpr uint32_t kHeight = 180;
 // One frame of a 60 Hz canvas.
 constexpr Nanoseconds kTick{16'666'667};
-
-// A frame of a clip: when it shows, and the number the test pattern drew into it.
-struct Expected {
-	Nanoseconds time{0};
-	uint32_t number = 0;
-};
-
-Clip captureClip(size_t gops)
-{
-	OBSSourceAutoRelease pattern = tapeloop::test::createTestPattern(kWidth, kHeight);
-	SourceCapture capture;
-	REQUIRE(capture.start(pattern, {}) == StartResult::Started);
-	REQUIRE(waitFor([&] { return capture.buffer() && capture.buffer()->stats().gopCount >= gops; }, 60s));
-	capture.stop();
-	return capture.buffer()->clip(Nanoseconds::min(), Nanoseconds::max());
-}
-
-// What an independent decode of every GOP reads in each frame, in time order, which is
-// the order of the player's frame indexes.
-std::vector<Expected> expectedFrames(const Clip &clip)
-{
-	const auto decoded = tapeloop::test::decodeGops(clip);
-	REQUIRE(decoded.size() == clip.gops().size());
-	std::vector<Expected> frames;
-	for (size_t gop = 0; gop < decoded.size(); ++gop) {
-		const auto packets = clip.gops()[gop]->packets();
-		REQUIRE(decoded[gop].size() == packets.size());
-		for (size_t i = 0; i < packets.size(); ++i) {
-			REQUIRE(decoded[gop][i].frameNumber);
-			frames.push_back({packets[i].time, *decoded[gop][i].frameNumber});
-		}
-	}
-	std::sort(frames.begin(), frames.end(), [](const Expected &a, const Expected &b) { return a.time < b.time; });
-	REQUIRE(frames.size() == clip.frameTimes().size());
-	return frames;
-}
-
-// The first frame of each GOP after the first, as frame indexes.
-std::vector<size_t> gopStarts(const Clip &clip, const std::vector<Expected> &expected)
-{
-	std::vector<size_t> starts;
-	for (size_t gop = 1; gop < clip.gops().size(); ++gop) {
-		const Nanoseconds first = clip.gops()[gop]->packets().front().time;
-		const auto at = std::lower_bound(expected.begin(), expected.end(), first,
-						 [](const Expected &frame, Nanoseconds t) { return frame.time < t; });
-		starts.push_back(static_cast<size_t>(at - expected.begin()));
-	}
-	return starts;
-}
 
 std::unique_ptr<PictureDecoder> makeDecoder()
 {
@@ -127,7 +76,7 @@ public:
 		obs_enter_graphics();
 		renderer_.emplace();
 		target_ = gs_texrender_create(GS_RGBA, GS_ZS_NONE);
-		stage_ = gs_stagesurface_create(kWidth, kHeight, GS_RGBA);
+		stage_ = gs_stagesurface_create(kClipWidth, kClipHeight, GS_RGBA);
 		obs_leave_graphics();
 		REQUIRE(target_);
 		REQUIRE(stage_);
@@ -152,21 +101,22 @@ public:
 		Shown shown;
 		obs_enter_graphics();
 		gs_texrender_reset(target_);
-		const bool began = gs_texrender_begin(target_, kWidth, kHeight);
+		const bool began = gs_texrender_begin(target_, kClipWidth, kClipHeight);
 		if (began) {
 			vec4 clear;
 			vec4_zero(&clear);
 			gs_clear(GS_CLEAR_COLOR, &clear, 0.0f, 0);
-			gs_ortho(0.0f, static_cast<float>(kWidth), 0.0f, static_cast<float>(kHeight), -100.0f, 100.0f);
+			gs_ortho(0.0f, static_cast<float>(kClipWidth), 0.0f, static_cast<float>(kClipHeight), -100.0f,
+				 100.0f);
 			// The device culls back faces until OBS's video thread first renders.
 			gs_set_cull_mode(GS_NEITHER);
 			gs_enable_depth_test(false);
 			if (allocations) {
 				const AllocationCounter counter;
-				shown.drawn = player.render(*renderer_, kWidth, kHeight);
+				shown.drawn = player.render(*renderer_, kClipWidth, kClipHeight);
 				*allocations += counter.count();
 			} else {
-				shown.drawn = player.render(*renderer_, kWidth, kHeight);
+				shown.drawn = player.render(*renderer_, kClipWidth, kClipHeight);
 			}
 			gs_texrender_end(target_);
 		}
@@ -178,7 +128,7 @@ public:
 			mapped = gs_stagesurface_map(stage_, &data, &stride);
 			if (mapped) {
 				for (size_t i = 0; i < reds_.size(); ++i) {
-					reds_[i] = data[(i / kWidth) * stride + (i % kWidth) * 4];
+					reds_[i] = data[(i / kClipWidth) * stride + (i % kClipWidth) * 4];
 				}
 				gs_stagesurface_unmap(stage_);
 			}
@@ -187,8 +137,8 @@ public:
 		REQUIRE(began);
 		if (shown.drawn && read) {
 			REQUIRE(mapped);
-			shown.number = tapeloop::test::readFrameNumber(reds_.data(), kWidth, static_cast<int>(kWidth),
-								       static_cast<int>(kHeight));
+			shown.number = tapeloop::test::readFrameNumber(
+				reds_.data(), kClipWidth, static_cast<int>(kClipWidth), static_cast<int>(kClipHeight));
 		}
 		return shown;
 	}
@@ -215,11 +165,11 @@ private:
 	std::optional<PictureRenderer> renderer_;
 	gs_texrender_t *target_ = nullptr;
 	gs_stagesurf_t *stage_ = nullptr;
-	std::vector<uint8_t> reds_ = std::vector<uint8_t>(size_t{kWidth} * kHeight);
+	std::vector<uint8_t> reds_ = std::vector<uint8_t>(size_t{kClipWidth} * kClipHeight);
 };
 
 // A tick, then the frame on screen must be the one the playhead is on.
-PlayerState checkTick(Screen &screen, ReplayPlayer &player, const std::vector<Expected> &expected,
+PlayerState checkTick(Screen &screen, ReplayPlayer &player, const std::vector<ExpectedFrame> &expected,
 		      Nanoseconds elapsed = kTick)
 {
 	const Shown shown = screen.frame(player, elapsed);
@@ -235,8 +185,8 @@ PlayerState checkTick(Screen &screen, ReplayPlayer &player, const std::vector<Ex
 	}
 	REQUIRE(shown.drawn);
 	REQUIRE(state.drawn == state.frame);
-	CHECK(state.width == kWidth);
-	CHECK(state.height == kHeight);
+	CHECK(state.width == kClipWidth);
+	CHECK(state.height == kClipHeight);
 	CHECK(shown.number == expected[state.frame].number);
 	return state;
 }
@@ -248,7 +198,7 @@ TEST_CASE_METHOD(ObsFixture, "the replay player shows the frame its playhead is 
 {
 	const Clip clip = captureClip(4);
 	REQUIRE(clip.gops().size() >= 4);
-	const std::vector<Expected> expected = expectedFrames(clip);
+	const std::vector<ExpectedFrame> expected = expectedFrames(clip);
 	const std::vector<size_t> starts = gopStarts(clip, expected);
 	// A boundary with a GOP on each side, which every run crosses.
 	const size_t boundary = starts[1];
@@ -289,7 +239,7 @@ TEST_CASE_METHOD(ObsFixture, "the replay player steps, seeks, scrubs, reverses a
 	// The last GOP may have just begun when the capture stops.
 	const Clip clip = captureClip(5);
 	REQUIRE(clip.gops().size() >= 5);
-	const std::vector<Expected> expected = expectedFrames(clip);
+	const std::vector<ExpectedFrame> expected = expectedFrames(clip);
 	const std::vector<size_t> starts = gopStarts(clip, expected);
 
 	Screen screen;
@@ -440,7 +390,7 @@ TEST_CASE_METHOD(ObsFixture, "the replay player's speed presets keep the directi
 {
 	const Clip clip = captureClip(3);
 	REQUIRE(clip.gops().size() >= 3);
-	const std::vector<Expected> expected = expectedFrames(clip);
+	const std::vector<ExpectedFrame> expected = expectedFrames(clip);
 
 	Screen screen;
 	ReplayPlayer player(makeDecoder);
@@ -512,9 +462,9 @@ TEST_CASE_METHOD(ObsFixture, "a replay player shows nothing of the clip before a
 {
 	const Clip clip = captureClip(4);
 	REQUIRE(clip.gops().size() >= 4);
-	const std::vector<Expected> expected = expectedFrames(clip);
+	const std::vector<ExpectedFrame> expected = expectedFrames(clip);
 	const Clip later({clip.gops().begin() + 2, clip.gops().end()}, Nanoseconds::min(), Nanoseconds::max());
-	const std::vector<Expected> laterExpected = expectedFrames(later);
+	const std::vector<ExpectedFrame> laterExpected = expectedFrames(later);
 	REQUIRE(laterExpected.front().number != expected.front().number);
 
 	Screen screen;
@@ -572,7 +522,7 @@ TEST_CASE_METHOD(ObsFixture, "a replay player without a decoder keeps its playhe
 		 "[obs][player]")
 {
 	const Clip clip = captureClip(2);
-	const std::vector<Expected> expected = expectedFrames(clip);
+	const std::vector<ExpectedFrame> expected = expectedFrames(clip);
 
 	Screen screen;
 	for (const bool throws : {false, true}) {
@@ -616,7 +566,7 @@ TEST_CASE_METHOD(ObsFixture, "a replay player out of memory shows nothing wrong 
 		SKIP("allocations cannot be made to fail in this build");
 	}
 	const Clip clip = captureClip(2);
-	const std::vector<Expected> expected = expectedFrames(clip);
+	const std::vector<ExpectedFrame> expected = expectedFrames(clip);
 	Screen screen;
 
 	for (size_t skip = 0;; ++skip) {
@@ -655,7 +605,7 @@ TEST_CASE_METHOD(ObsFixture, "steady replay playback allocates nothing per frame
 	}
 	const Clip clip = captureClip(4);
 	REQUIRE(clip.gops().size() >= 4);
-	const std::vector<Expected> expected = expectedFrames(clip);
+	const std::vector<ExpectedFrame> expected = expectedFrames(clip);
 	const std::vector<size_t> starts = gopStarts(clip, expected);
 
 	Screen screen;
@@ -724,7 +674,7 @@ TEST_CASE_METHOD(ObsFixture, "a replay player decodes on its own thread once sta
 {
 	const Clip clip = captureClip(4);
 	REQUIRE(clip.gops().size() >= 4);
-	const std::vector<Expected> expected = expectedFrames(clip);
+	const std::vector<ExpectedFrame> expected = expectedFrames(clip);
 	const std::vector<size_t> starts = gopStarts(clip, expected);
 
 	Screen screen;

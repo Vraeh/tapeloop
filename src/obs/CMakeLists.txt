@@ -23,6 +23,8 @@ target_sources(
     RenderAdapter.hpp
     ReplayPlayer.cpp
     ReplayPlayer.hpp
+    ReplaySource.cpp
+    ReplaySource.hpp
     SettingsData.cpp
     SettingsData.hpp
     SourceCapture.cpp
