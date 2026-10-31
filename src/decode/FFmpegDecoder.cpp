@@ -46,6 +46,10 @@ struct FFmpegDecoder::Slot {
 
 namespace {
 
+// The most pixels a picture may have, those of 8192x4320, the largest 8K format. A replay
+// file can claim any size, and at FFmpeg's own ceiling one picture takes over 600 MB.
+constexpr int64_t kMaxPixels = int64_t{8192} * 4320;
+
 ColorMatrix matrixOf(AVColorSpace space) noexcept
 {
 	switch (space) {
@@ -219,6 +223,7 @@ DecodeStatus FFmpegDecoder::open(VideoCodec codec, std::span<const uint8_t> conf
 	context->thread_type = FF_THREAD_SLICE;
 	context->thread_count = config_.threads;
 	context->flags |= AV_CODEC_FLAG_LOW_DELAY;
+	context->max_pixels = kMaxPixels;
 	if (!config.empty()) {
 		// libavcodec frees the extradata with the context and may read past its end.
 		context->extradata = static_cast<uint8_t *>(av_mallocz(config.size() + AV_INPUT_BUFFER_PADDING_SIZE));

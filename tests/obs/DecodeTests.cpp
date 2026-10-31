@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: GPL-2.0-or-later
 // Copyright (C) 2026 Vicente Aedo <ryde1337@gmail.com>
 
+#include "../core/NalUnitWriter.hpp"
 #include "../core/StoredReplays.hpp"
 #include "../core/TempDirectory.hpp"
 #include "AllocationCounter.hpp"
@@ -548,6 +549,95 @@ TEST_CASE("the FFmpeg decoder refuses pictures of another format and keeps nothi
 		CHECK(decoder.receive(frame) == DecodeStatus::NeedMore);
 		CHECK(decoder.heldFrames() == 0);
 	}
+}
+
+namespace {
+
+// One H.264 picture of mbWidth by mbHeight macroblocks, as cheap to decode as a picture
+// can be: every macroblock predicts its DC and codes nothing else.
+struct H264Picture {
+	CodecConfig config;
+	std::vector<uint8_t> keyframe;
+};
+
+void appendUnit(std::vector<uint8_t> &out, const tapeloop::test::NalUnit &unit)
+{
+	out.insert(out.end(), {0, 0, 0, 1});
+	out.insert(out.end(), unit.bytes.begin(), unit.bytes.end());
+}
+
+H264Picture flatH264Picture(uint32_t mbWidth, uint32_t mbHeight)
+{
+	tapeloop::test::NalUnitWriter sps({0x67});
+	sps.bits(66, 8);
+	sps.bits(0, 8);
+	sps.bits(51, 8);
+	sps.ue(0);
+	sps.ue(0);
+	sps.ue(2);
+	sps.ue(1);
+	sps.bit(false);
+	sps.ue(mbWidth - 1);
+	sps.ue(mbHeight - 1);
+	sps.bits(0b1100, 4);
+	tapeloop::test::NalUnitWriter pps({0x68});
+	pps.ue(0);
+	pps.ue(0);
+	pps.bits(0, 2);
+	pps.ue(0);
+	pps.ue(0);
+	pps.ue(0);
+	pps.bits(0, 3);
+	pps.se(0);
+	pps.se(0);
+	pps.se(0);
+	pps.bits(0, 3);
+	tapeloop::test::NalUnitWriter slice({0x65});
+	slice.ue(0);
+	slice.ue(7);
+	slice.ue(0);
+	slice.bits(0, 4);
+	slice.ue(0);
+	slice.bits(0, 2);
+	slice.se(0);
+	for (uint64_t mb = 0; mb < uint64_t{mbWidth} * mbHeight; ++mb) {
+		// Intra 16x16 with DC prediction and no coded blocks, DC chroma, no change of
+		// quantizer, and no luma DC coefficients.
+		slice.ue(3);
+		slice.ue(0);
+		slice.se(0);
+		slice.bit(true);
+	}
+	H264Picture picture;
+	appendUnit(picture.config, sps.finish());
+	appendUnit(picture.config, pps.finish());
+	appendUnit(picture.keyframe, slice.finish());
+	return picture;
+}
+
+} // namespace
+
+TEST_CASE("the FFmpeg decoder takes pictures up to 8K and refuses larger ones", "[decode]")
+{
+	// A replay file can claim any picture size, and the decoder would allocate for it.
+	FFmpegDecoder decoder;
+	DecodedFrame frame;
+	const H264Picture largest = flatH264Picture(512, 270);
+	REQUIRE(decoder.open(VideoCodec::H264, largest.config) == DecodeStatus::Ok);
+	REQUIRE(decoder.send(largest.keyframe, 0, 0) == DecodeStatus::Ok);
+	REQUIRE(decoder.receive(frame) == DecodeStatus::Ok);
+	const std::optional<Picture> picture = decoder.picture(frame);
+	REQUIRE(picture);
+	CHECK(picture->width == 8192);
+	CHECK(picture->height == 4320);
+	decoder.release(frame);
+
+	// One row of macroblocks more.
+	const H264Picture taller = flatH264Picture(512, 271);
+	REQUIRE(decoder.open(VideoCodec::H264, taller.config) == DecodeStatus::Ok);
+	CHECK(decoder.send(taller.keyframe, 0, 0) != DecodeStatus::Ok);
+	CHECK(decoder.receive(frame) != DecodeStatus::Ok);
+	CHECK(decoder.heldFrames() == 0);
 }
 
 TEST_CASE("a damaged configuration fails the frames that need it, not the decoder", "[decode]")
