@@ -292,6 +292,45 @@ TEST_CASE("an export reads the buffers' own GOPs while they last")
 	CHECK(tapeloop::readReplayIndex(result.files.front()));
 }
 
+TEST_CASE("an MP4 export refuses a GOP whose times are not the ones its index gives")
+{
+	TempDirectory dir;
+	const Gops gops = makeGops(1);
+	const WrittenReplay written = ReplayWriter().write(captureOf(dir.path(), {sourceOf("a", gops)}));
+	// A self-contained file whose CRCs all hold, with its frames near the end of time in
+	// its index and near the start in its GOP: farther apart than a count can hold.
+	const Gop &original = *gops.front();
+	tapeloop::GopBuilder builder(original.frameDuration());
+	builder.setCodecConfig(original.codec(), tapeloop::test::h264Config());
+	ReplayIndex index = written.index;
+	StoredSource &source = index.sources.front();
+	for (size_t i = 0; i < original.packets().size(); ++i) {
+		const tapeloop::PacketRecord &packet = original.packets()[i];
+		const Nanoseconds step = original.frameDuration() * static_cast<int64_t>(i);
+		builder.append({original.packetData(i), packet.pts, packet.dts,
+				Nanoseconds{-6'000'000'000'000'000'000} + step, packet.keyframe});
+		source.frameTimes[i] = Nanoseconds{4'000'000'000'000'000'000} + step;
+	}
+	source.in = source.frameTimes.front();
+	source.out = source.frameTimes.back();
+	const std::shared_ptr<const Gop> crafted = builder.seal();
+	ExportRequest request = requestFor(written, ExportFormat::Replay);
+	request.index = std::make_shared<const ReplayIndex>(index);
+	request.live = {{crafted}};
+	std::vector<WrittenFile> files;
+	ReplayExporter exporter(recording(files));
+	const ExportResult copy = exportOnce(exporter, request);
+	REQUIRE(copy.error.empty());
+	REQUIRE(tapeloop::readReplayIndex(copy.files.front()));
+
+	ExportRequest mp4;
+	mp4.format = ExportFormat::Mp4;
+	mp4.manifest = copy.files.front();
+	CHECK_FALSE(exportOnce(exporter, mp4).error.empty());
+	CHECK(files.empty());
+	CHECK(namesIn(dir.path() / "Export" / "Export").empty());
+}
+
 TEST_CASE("an MP4 export without an MP4 writer fails, and so does one of a replay that is gone")
 {
 	TempDirectory dir;

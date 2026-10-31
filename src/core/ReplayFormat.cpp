@@ -6,6 +6,7 @@
 #include "core/Crc32c.hpp"
 
 #include <algorithm>
+#include <chrono>
 #include <limits>
 #include <stdexcept>
 #include <string_view>
@@ -36,6 +37,11 @@ constexpr uint32_t kFlagSegments = 1;
 constexpr uint32_t kConfigAsGiven = 1;
 constexpr uint16_t kPacketKeyframe = 1;
 constexpr uint32_t kNoSource = 0xFFFFFFFF;
+// The encoders make no B-frames, so a packet is shown as it is decoded. A few frames of
+// delay are let through; more would make the gap, counted in frame lengths, overflow.
+constexpr uint64_t kMaxDecodeDelayFrames = 16;
+// The longest frame a 32-bit frame rate gives.
+constexpr Nanoseconds kMaxFrameDuration = std::chrono::seconds{std::numeric_limits<int32_t>::max()};
 
 constexpr uint32_t fourcc(std::string_view text)
 {
@@ -347,7 +353,9 @@ std::shared_ptr<const Gop> decodeGopChunk(std::span<const uint8_t> chunk, uint32
 		packet.time = getTime(bytes, at + 16);
 		const uint64_t size = get32(bytes, at + 24);
 		packet.keyframe = (get32(bytes, at + 28) & kPacketKeyframe) != 0;
-		if ((i == 0 && !packet.keyframe) || (i > 0 && packet.time <= previous) || size > data.size() - offset) {
+		if ((i == 0 && !packet.keyframe) || (i > 0 && packet.time <= previous) || packet.dts > packet.pts ||
+		    static_cast<uint64_t>(packet.pts) - static_cast<uint64_t>(packet.dts) > kMaxDecodeDelayFrames ||
+		    size > data.size() - offset) {
 			return nullptr;
 		}
 		packet.data = data.subspan(offset, size);
@@ -767,12 +775,14 @@ std::optional<ReplayIndex> decodeManifest(std::span<const uint8_t> head, std::sp
 			const std::optional<VideoCodec> codec = codecOfNumber(get32(payload, at));
 			const uint64_t configAt = get32(payload, at + 20);
 			const uint64_t configSize = get32(payload, at + 24);
-			if (!codec || get32(payload, at + 4) != kConfigAsGiven || !inBlob(configAt, configSize)) {
+			const Nanoseconds frameDuration = getTime(payload, at + 8);
+			if (!codec || get32(payload, at + 4) != kConfigAsGiven || !inBlob(configAt, configSize) ||
+			    frameDuration <= Nanoseconds{0} || frameDuration > kMaxFrameDuration) {
 				return std::nullopt;
 			}
 			StoredRun stored;
 			stored.codec = *codec;
-			stored.frameDuration = getTime(payload, at + 8);
+			stored.frameDuration = frameDuration;
 			stored.key = get32(payload, at + 16);
 			if (configSize > 0) {
 				const std::span<const uint8_t> config = blob.subspan(configAt, configSize);
@@ -817,8 +827,12 @@ std::optional<ReplayIndex> decodeManifest(std::span<const uint8_t> head, std::sp
 			}
 			source.frameTimes.push_back(time);
 		}
+		// Times of a source are measured from one another, so the span of its frames
+		// must fit.
+		const uint64_t span = static_cast<uint64_t>(source.frameTimes.back().count()) -
+				      static_cast<uint64_t>(source.frameTimes.front().count());
 		if (source.in > source.out || source.in < source.frameTimes.front() ||
-		    source.out > source.frameTimes.back()) {
+		    source.out > source.frameTimes.back() || span > uint64_t{std::numeric_limits<int64_t>::max()}) {
 			return std::nullopt;
 		}
 		index.sources.push_back(std::move(source));

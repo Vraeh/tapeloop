@@ -8,7 +8,9 @@
 #include <catch2/catch_test_macros.hpp>
 
 #include <algorithm>
+#include <chrono>
 #include <cstdint>
+#include <limits>
 #include <memory>
 #include <optional>
 #include <span>
@@ -258,6 +260,31 @@ TEST_CASE("a GOP chunk that is damaged, cut short or not the one meant is refuse
 	CHECK_FALSE(tapeloop::decodeGopChunk(chunk, place.headerCrc, other));
 }
 
+TEST_CASE("a GOP chunk whose packets are shown long after they are decoded is refused")
+{
+	// A keyframe, then a frame decoded at dts and shown at pts.
+	const auto decodes = [](int64_t pts, int64_t dts) {
+		GopBuilder builder(Nanoseconds{16'666'667});
+		builder.setCodecConfig(VideoCodec::H264, nullptr);
+		const std::vector<uint8_t> data(10, 0x42);
+		builder.append({data, 0, 0, Nanoseconds{0}, true});
+		builder.append({data, pts, dts, Nanoseconds{16'666'667}, false});
+		const std::shared_ptr<const Gop> gop = builder.seal();
+		std::vector<uint8_t> segment;
+		const ChunkPlace place = tapeloop::appendGopChunk(segment, 0, *gop);
+		return tapeloop::decodeGopChunk(segment, place.headerCrc, runOf(*gop)) != nullptr;
+	};
+	constexpr int64_t kLargest = std::numeric_limits<int64_t>::max();
+	constexpr int64_t kSmallest = std::numeric_limits<int64_t>::min();
+	CHECK(decodes(1, 1));
+	CHECK(decodes(17, 1));
+	CHECK_FALSE(decodes(18, 1));
+	CHECK_FALSE(decodes(1, 2));
+	CHECK_FALSE(decodes(kLargest, 0));
+	CHECK_FALSE(decodes(kLargest, kSmallest));
+	CHECK_FALSE(decodes(kSmallest, kLargest));
+}
+
 TEST_CASE("the GOP still being encoded has another key than the GOP it becomes")
 {
 	SyntheticEncoder encoder(smallFrames());
@@ -349,6 +376,39 @@ TEST_CASE("a manifest cut short or damaged where it is checked is refused")
 	std::vector<uint8_t> longer = file;
 	longer.push_back(0);
 	CHECK_FALSE(tapeloop::decodeManifest(longer));
+}
+
+TEST_CASE("a manifest whose frame lengths or frame times cannot be counted with is refused")
+{
+	const auto decodes = [](const ReplayIndex &index) {
+		return tapeloop::decodeManifest(tapeloop::encodeManifest(index, {})).has_value();
+	};
+	ReplayIndex index = twoSources();
+	REQUIRE(decodes(index));
+	// The longest frame a 32-bit frame rate gives.
+	const Nanoseconds longest = std::chrono::seconds{std::numeric_limits<int32_t>::max()};
+	index.sources[0].runs[1].frameDuration = longest;
+	CHECK(decodes(index));
+	for (const Nanoseconds duration :
+	     {longest + Nanoseconds{1}, Nanoseconds::max(), Nanoseconds{0}, Nanoseconds{-1}}) {
+		CAPTURE(duration.count());
+		index.sources[0].runs[1].frameDuration = duration;
+		CHECK_FALSE(decodes(index));
+	}
+
+	// The span from the first frame to the last must fit in a signed 64-bit count.
+	index = twoSources();
+	StoredSource &source = index.sources[1];
+	source.frameTimes.front() = Nanoseconds{-5'000'000'000'000'000'000};
+	source.frameTimes.back() = Nanoseconds{4'000'000'000'000'000'000};
+	source.out = source.frameTimes.back();
+	CHECK(decodes(index));
+	source.frameTimes.front() = Nanoseconds{-6'000'000'000'000'000'000};
+	CHECK_FALSE(decodes(index));
+	source.frameTimes.front() = Nanoseconds::min();
+	source.frameTimes.back() = Nanoseconds::max();
+	source.out = source.frameTimes.back();
+	CHECK_FALSE(decodes(index));
 }
 
 TEST_CASE("a self-contained replay holds its GOP chunks between its tag slots and its index")

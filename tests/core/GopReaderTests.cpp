@@ -172,6 +172,19 @@ TEST_CASE("a GOP whose segment is damaged or gone is not read")
 		changed.gops[2].packetCount += 1;
 		CHECK_FALSE(reader.read(stored.manifest(), changed, 2));
 	}
+	SECTION("its times other than the ones its index gives")
+	{
+		StoredSource changed = stored.source();
+		// The fourth frame of the third GOP, still between its neighbours.
+		changed.frameTimes[13] += tapeloop::Nanoseconds{1};
+		GopReader reader;
+		CHECK(reader.read(stored.manifest(), changed, 1));
+		CHECK_FALSE(reader.read(stored.manifest(), changed, 2));
+		// Nor from the cache, once read for an index that agrees with it.
+		REQUIRE(reader.read(stored.manifest(), stored.source(), 2));
+		CHECK_FALSE(reader.read(stored.manifest(), changed, 2));
+		CHECK(reader.stats().failed == 2);
+	}
 	SECTION("larger than the segment holds")
 	{
 		StoredSource changed = stored.source();
