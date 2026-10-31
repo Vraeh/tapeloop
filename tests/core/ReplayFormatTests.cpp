@@ -482,24 +482,37 @@ TEST_CASE("a replay is self-contained or uses segments, never both")
 	index.sources.push_back(sourceOf("a", gops, places));
 	index.start = index.sources[0].in;
 	index.end = index.sources[0].out;
-	const auto build = [&](const ReplayIndex &written, uint64_t indexOffset) {
+	// The head says which, from the index it is encoded with, and the tail holds the
+	// index itself.
+	const auto join = [&](const ReplayIndex &headOf, const ReplayIndex &tailOf, uint64_t indexOffset) {
 		std::vector<uint8_t> bytes = file;
-		const std::vector<uint8_t> head = tapeloop::encodeManifestHead(written, {});
+		const std::vector<uint8_t> head = tapeloop::encodeManifestHead(headOf, {});
 		std::copy(head.begin(), head.end(), bytes.begin());
 		bytes.resize(indexOffset);
-		const std::vector<uint8_t> tail = tapeloop::encodeManifestTail(written, indexOffset);
+		const std::vector<uint8_t> tail = tapeloop::encodeManifestTail(tailOf, indexOffset);
 		bytes.insert(bytes.end(), tail.begin(), tail.end());
 		return bytes;
+	};
+	const auto build = [&](const ReplayIndex &written, uint64_t indexOffset) {
+		return join(written, written, indexOffset);
 	};
 
 	// A manifest, which refers to segments, has its index right after its tag slots.
 	CHECK(tapeloop::decodeManifest(build(index, tapeloop::kManifestIndexOffset)));
 	CHECK_FALSE(tapeloop::decodeManifest(build(index, file.size())));
+	// Its index names segments only.
+	ReplayIndex mixed = index;
+	mixed.sources[0].gops[1].segment = tapeloop::kOwnFile;
+	CHECK_FALSE(tapeloop::decodeManifest(join(index, mixed, tapeloop::kManifestIndexOffset)));
 
 	index.sources[0].gops[1].segment = tapeloop::kOwnFile;
 	CHECK_THROWS_AS(tapeloop::encodeManifestHead(index, {}), std::invalid_argument);
 	index.sources[0].gops[0].segment = tapeloop::kOwnFile;
 	CHECK(tapeloop::decodeManifest(build(index, file.size())));
+	// A self-contained replay never sends a read to a segment.
+	mixed = index;
+	mixed.sources[0].gops[1].segment = 0;
+	CHECK_FALSE(tapeloop::decodeManifest(join(index, mixed, file.size())));
 	// Its own GOPs must lie between the tag slots and the index.
 	CHECK_FALSE(tapeloop::decodeManifest(build(index, tapeloop::kManifestIndexOffset)));
 	index.sources[0].gops[1].offset = file.size();

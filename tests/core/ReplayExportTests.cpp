@@ -14,6 +14,7 @@
 #include <catch2/catch_test_macros.hpp>
 
 #include <algorithm>
+#include <chrono>
 #include <condition_variable>
 #include <cstdint>
 #include <filesystem>
@@ -22,6 +23,7 @@
 #include <optional>
 #include <stdexcept>
 #include <string>
+#include <thread>
 #include <vector>
 
 using tapeloop::CaptureSource;
@@ -222,6 +224,25 @@ TEST_CASE("an MP4 export has a part for each codec of a source, from its in poin
 	REQUIRE(tapeloop::mp4Parts(narrow).size() == 1);
 	CHECK(tapeloop::mp4Parts(narrow).front().firstGop == 1);
 	CHECK(tapeloop::mp4Parts(narrow).front().endGop == 2);
+}
+
+TEST_CASE("an MP4 part after a change of codec starts at its own first frame")
+{
+	TempDirectory dir;
+	Gops gops = makeGops(2);
+	const Gops hevc = makeGops(2, 10, VideoCodec::Hevc, nullptr);
+	gops.insert(gops.end(), hevc.begin(), hevc.end());
+	const WrittenReplay written = ReplayWriter().write(captureOf(dir.path(), {trimmed("a", gops)}));
+	std::vector<WrittenFile> files;
+	ReplayExporter exporter(recording(files));
+	REQUIRE(exportOnce(exporter, requestFor(written, ExportFormat::Mp4)).error.empty());
+	REQUIRE(files.size() == 2);
+	CHECK(files[0].codec == VideoCodec::H264);
+	CHECK(files[0].times[2] == Nanoseconds{0});
+	CHECK(files[1].codec == VideoCodec::Hevc);
+	REQUIRE(files[1].times.size() == 9);
+	CHECK(files[1].times.front() == Nanoseconds{0});
+	CHECK(files[1].times.back() == hevc.back()->packets()[3].time - hevc.front()->startTime());
 }
 
 TEST_CASE("an MP4 export writes each source from its in point, in the Export folder")
@@ -511,6 +532,26 @@ TEST_CASE("a scan leaves alone the file an export is writing")
 	REQUIRE(results.size() == 1);
 	CHECK(results.front().error.empty());
 	CHECK(namesIn(folder / "Export") == std::vector<std::string>{"2026-10-09 21-05-42 - Camera a.mp4"});
+}
+
+TEST_CASE("an exporter that goes during an export stops it and leaves no file")
+{
+	TempDirectory dir;
+	const WrittenReplay written = ReplayWriter().write(captureOf(dir.path(), {sourceOf("a", makeGops(20))}));
+	std::vector<WrittenFile> files;
+	Pause pause(0);
+	auto exporter = std::make_unique<ReplayExporter>(recording(files, -1, &pause));
+	exporter->exportReplay(requestFor(written, ExportFormat::Mp4));
+	pause.waitUntilReached();
+	std::thread closing([&exporter] { exporter.reset(); });
+	// Time for the exporter to ask the export to stop before the export goes on.
+	std::this_thread::sleep_for(std::chrono::milliseconds(200));
+	pause.release();
+	closing.join();
+	REQUIRE(files.size() == 1);
+	CHECK(files.front().times.size() < static_cast<size_t>(20 * tapeloop::test::kGopLength));
+	CHECK_FALSE(files.front().finished);
+	CHECK(namesIn(dir.path() / "Export").empty());
 }
 
 TEST_CASE("an MP4 export without an MP4 writer fails, and so does one of a replay that is gone")
