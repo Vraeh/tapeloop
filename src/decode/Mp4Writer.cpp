@@ -147,22 +147,32 @@ void Mp4Writer::open(const std::filesystem::path &path, const Gop &first)
 	// Through a file of our own, which is created only where none is: FFmpeg's file
 	// protocol would empty a file already there, or one a link there points to.
 	file_ = File(path, File::Mode::CreateNew);
-	position_ = 0;
-	ioError_.clear();
-	auto *buffer = static_cast<uint8_t *>(av_malloc(kIoBufferSize));
-	if (!buffer) {
-		throw std::bad_alloc();
-	}
-	io_ = avio_alloc_context(buffer, kIoBufferSize, 1, this, nullptr, &Mp4Writer::writeIo, &Mp4Writer::seekIo);
-	if (!io_) {
-		av_free(buffer);
-		throw std::bad_alloc();
-	}
-	context_->pb = io_;
-	context_->flags |= AVFMT_FLAG_CUSTOM_IO;
-	error = avformat_write_header(context_, nullptr);
-	if (error < 0) {
-		fail("cannot write the start of " + utf8FromPath(path), error);
+	try {
+		position_ = 0;
+		ioError_.clear();
+		auto *buffer = static_cast<uint8_t *>(av_malloc(kIoBufferSize));
+		if (!buffer) {
+			throw std::bad_alloc();
+		}
+		io_ = avio_alloc_context(buffer, kIoBufferSize, 1, this, nullptr, &Mp4Writer::writeIo,
+					 &Mp4Writer::seekIo);
+		if (!io_) {
+			av_free(buffer);
+			throw std::bad_alloc();
+		}
+		context_->pb = io_;
+		context_->flags |= AVFMT_FLAG_CUSTOM_IO;
+		error = avformat_write_header(context_, nullptr);
+		if (error < 0) {
+			fail("cannot write the start of " + utf8FromPath(path), error);
+		}
+	} catch (...) {
+		// The caller deletes the file only once open has made it, so what failed here
+		// removes it, after closing it.
+		close();
+		std::error_code ignored;
+		std::filesystem::remove(path, ignored);
+		throw;
 	}
 }
 

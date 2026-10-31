@@ -161,6 +161,21 @@ private:
 	fs::path part_;
 };
 
+// Finds its path taken, as when another OBS exporting the same replay gets there first,
+// and fails as a writer that creates its file only where none is.
+class TakenPathWriter final : public tapeloop::VideoFileWriter {
+public:
+	void open(const fs::path &path, const Gop &) override
+	{
+		const uint8_t byte = 3;
+		File(path, File::Mode::CreateNew).writeAt(0, {&byte, 1});
+		throw std::runtime_error("a file is already at " + tapeloop::utf8FromPath(path));
+	}
+	bool fits(const Gop &) const override { return true; }
+	void write(const Gop &, size_t, Nanoseconds) override {}
+	void finish() override {}
+};
+
 ReplayExporter::WriterFactory recording(std::vector<WrittenFile> &files, int failAt = -1, Pause *pause = nullptr,
 					int64_t splitAt = -1)
 {
@@ -363,6 +378,20 @@ TEST_CASE("an export whose name is taken while it is written gets the next free 
 	CHECK(tapeloop::test::fileBytes(result.files.front()) == std::vector<uint8_t>{1});
 	CHECK(tapeloop::test::fileBytes(folder / "2026-10-09 21-05-42 - Camera a.mp4") == std::vector<uint8_t>{2});
 	CHECK(namesIn(folder).size() == 2);
+}
+
+TEST_CASE("an MP4 export that cannot open its file leaves the file at that path")
+{
+	TempDirectory dir;
+	const WrittenReplay written = ReplayWriter().write(captureOf(dir.path(), {sourceOf("a", makeGops(1))}));
+	ReplayExporter exporter([] { return std::make_unique<TakenPathWriter>(); });
+	const ExportResult result = exportOnce(exporter, requestFor(written, ExportFormat::Mp4));
+	CHECK_FALSE(result.error.empty());
+	CHECK(result.files.empty());
+	const fs::path folder = dir.path() / "Export";
+	REQUIRE(namesIn(folder) == std::vector<std::string>{"2026-10-09 21-05-42 - Camera a.mp4.tapeloop-part"});
+	CHECK(tapeloop::test::fileBytes(folder / "2026-10-09 21-05-42 - Camera a.mp4.tapeloop-part") ==
+	      std::vector<uint8_t>{3});
 }
 
 TEST_CASE("a self-contained export plays without the broadcast folder")

@@ -36,7 +36,8 @@ enum class ExportFormat {
 
 // Writes the packets of one source to a video file; the decode module writes MP4 with
 // FFmpeg. Each call throws std::runtime_error, naming what failed, when it cannot do its
-// part, and the caller then deletes the file.
+// part, and the caller then deletes the file, except when open fails: open creates the
+// file only where none is, and removes it again itself if a later step of it fails.
 class VideoFileWriter {
 public:
 	VideoFileWriter() = default;

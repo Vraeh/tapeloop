@@ -394,9 +394,10 @@ std::vector<std::filesystem::path> ReplayExporter::exportMp4(const ExportRequest
 				const std::filesystem::path target = freeExportPath(folder, stem, ".mp4", files);
 				const std::filesystem::path partPath = partPathOf(target);
 				writing.add(partPath);
-				leftovers.add(partPath);
 				std::unique_ptr<VideoFileWriter> writer = mp4_();
+				// Not before: when open fails, a file at the path is not ours.
 				writer->open(partPath, *read);
+				leftovers.add(partPath);
 				// A later file starts at its own keyframe; the first, at the in point,
 				// after the frames before it that decoding needs.
 				const Nanoseconds origin = std::max(source.in, read->startTime());
