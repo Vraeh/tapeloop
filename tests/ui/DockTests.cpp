@@ -501,6 +501,7 @@ TEST_CASE("a tag comes off the selected replay, and a deleted one off every repl
 		auto *question = dock.findChild<QMessageBox *>("deleteTagQuestion");
 		REQUIRE(question);
 		CHECK(question->text().contains("#goal"));
+		CHECK(question->textFormat() == Qt::PlainText);
 		question->button(button)->click();
 		QCoreApplication::processEvents();
 	};
@@ -1470,4 +1471,29 @@ TEST_CASE("the dock says how the exports go")
 	dock.refresh();
 	CHECK(status->text() ==
 	      localeText()("Dock.Export.Failed").arg("2026-10-10 21-06-10").arg("no space left on the disk"));
+
+	// A name or an error is shown as it is, though it holds a placeholder or markup.
+	CHECK(status->textFormat() == Qt::PlainText);
+	const QString odd = QStringLiteral("goal %2 %1 <b>x</b>");
+	const QString oddError = QStringLiteral("cannot write <i>here</i> %1");
+	running.name = odd.toStdString();
+	waiting.name = odd.toStdString();
+	backend.exportList = {running, waiting};
+	dock.refresh();
+	CHECK(status->text().contains(odd));
+	CHECK(status->text() ==
+	      localeText()("Dock.Export.Waiting").arg(odd, QStringLiteral("45"), QStringLiteral("1")));
+	backend.exportList = {running};
+	dock.refresh();
+	CHECK(status->text() == localeText()("Dock.Export.Running").arg(odd, QStringLiteral("45")));
+	done.name = odd.toStdString();
+	failed.name = odd.toStdString();
+	failed.error = oddError.toStdString();
+	backend.exportList = {done};
+	dock.refresh();
+	CHECK(status->text() == localeText()("Dock.Export.Done").arg(odd, QString::fromStdString(done.folder)));
+	backend.exportList = {failed};
+	dock.refresh();
+	CHECK(status->text().endsWith(oddError));
+	CHECK(status->text() == localeText()("Dock.Export.Failed").arg(odd, oddError));
 }

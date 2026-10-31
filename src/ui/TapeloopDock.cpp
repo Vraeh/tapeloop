@@ -209,6 +209,8 @@ TapeloopDock::TapeloopDock(DockBackend &backend, TextLookup text, QWidget *paren
 	exportReplay_->setToolTip(text_("Dock.ExportReplay.Tooltip"));
 	exportStatus_->setObjectName("exportStatus");
 	exportStatus_->setWordWrap(true);
+	// Names and errors come from files and the system, and are shown as they are.
+	exportStatus_->setTextFormat(Qt::PlainText);
 	exportStatus_->hide();
 	followsOutputs_->setObjectName("followsOutputs");
 	followsOutputs_->setWordWrap(true);
@@ -374,6 +376,7 @@ TapeloopDock::TapeloopDock(DockBackend &backend, TextLookup text, QWidget *paren
 						 text_("Dock.DeleteTag.Question").arg(tag),
 						 QMessageBox::Yes | QMessageBox::No, this);
 		question->setObjectName("deleteTagQuestion");
+		question->setTextFormat(Qt::PlainText);
 		question->setDefaultButton(QMessageBox::No);
 		question->setAttribute(Qt::WA_DeleteOnClose);
 		connect(question, &QMessageBox::finished, this, [this, tag](int answer) {
@@ -709,18 +712,18 @@ void TapeloopDock::updateReplays()
 			std::chrono::duration_cast<std::chrono::milliseconds>(replay.capturedAt.time_since_epoch())
 				.count());
 		const QString time = captured.toString(QStringLiteral("HH:mm:ss"));
-		const auto sources = static_cast<qulonglong>(replay.sources);
+		const QString sources = QString::number(static_cast<qulonglong>(replay.sources));
 		QString text;
 		QString tip;
 		switch (replay.state) {
 		case ReplayState::Writing:
-			text = text_("Dock.Replay.Saving").arg(time).arg(sources);
+			text = text_("Dock.Replay.Saving").arg(time, sources);
 			break;
 		case ReplayState::Stored:
-			text = text_("Dock.Replay").arg(time).arg(sources);
+			text = text_("Dock.Replay").arg(time, sources);
 			break;
 		case ReplayState::NotSaved:
-			text = text_("Dock.Replay.NotSaved").arg(time).arg(sources);
+			text = text_("Dock.Replay.NotSaved").arg(time, sources);
 			tip = text_("Dock.Replay.NotSaved.Tooltip");
 			break;
 		case ReplayState::Damaged:
@@ -844,19 +847,19 @@ void TapeloopDock::updateExports()
 	QString text;
 	if (active) {
 		const QString name = QString::fromStdString(active->name);
-		const int percent = static_cast<int>(std::clamp(active->progress, 0.0, 1.0) * 100.0);
-		text = waiting == 0 ? text_("Dock.Export.Running").arg(name).arg(percent)
+		const QString percent =
+			QString::number(static_cast<int>(std::clamp(active->progress, 0.0, 1.0) * 100.0));
+		// In one call each, so that a name with %2 in it is not taken for a placeholder.
+		text = waiting == 0 ? text_("Dock.Export.Running").arg(name, percent)
 				    : text_("Dock.Export.Waiting")
-					      .arg(name)
-					      .arg(percent)
-					      .arg(static_cast<qulonglong>(waiting));
+					      .arg(name, percent, QString::number(static_cast<qulonglong>(waiting)));
 	} else if (!exports.empty()) {
 		// None runs or waits, so the one asked for last is the one that finished last.
 		const DockExport &last = exports.back();
 		const QString name = QString::fromStdString(last.name);
 		text = last.state == DockExport::State::Done
-			       ? text_("Dock.Export.Done").arg(name).arg(QString::fromStdString(last.folder))
-			       : text_("Dock.Export.Failed").arg(name).arg(QString::fromStdString(last.error));
+			       ? text_("Dock.Export.Done").arg(name, QString::fromStdString(last.folder))
+			       : text_("Dock.Export.Failed").arg(name, QString::fromStdString(last.error));
 	}
 	exportStatus_->setVisible(!text.isEmpty());
 	if (exportStatus_->text() != text) {
