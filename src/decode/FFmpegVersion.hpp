@@ -8,4 +8,8 @@ namespace tapeloop::decode {
 // The version of the FFmpeg linked into the plugin, as FFmpeg reports it.
 const char *ffmpegVersion() noexcept;
 
+// Silences FFmpeg's own messages, which go to stderr. For the fuzzers, which feed it
+// broken bitstreams on purpose and include no FFmpeg header of their own.
+void quietFFmpegLog() noexcept;
+
 } // namespace tapeloop::decode

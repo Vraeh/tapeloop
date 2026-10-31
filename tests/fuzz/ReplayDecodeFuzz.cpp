@@ -5,15 +5,12 @@
 #include "core/GopReader.hpp"
 #include "core/ReplayWriter.hpp"
 #include "decode/FFmpegDecoder.hpp"
+#include "decode/FFmpegVersion.hpp"
 #include "decode/Picture.hpp"
 
 #include "../core/TempDirectory.hpp"
 #include "FuzzInput.hpp"
 #include "StoredReplay.hpp"
-
-extern "C" {
-#include <libavutil/log.h>
-}
 
 #include <algorithm>
 #include <array>
@@ -130,7 +127,7 @@ void play(FuzzInput &input, const std::filesystem::path &manifest, const tapeloo
 extern "C" int LLVMFuzzerInitialize(int *, char ***)
 {
 	// The decoders report every broken bitstream, which would bury what the fuzzer prints.
-	av_log_set_level(AV_LOG_QUIET);
+	tapeloop::decode::quietFFmpegLog();
 	return 0;
 }
 

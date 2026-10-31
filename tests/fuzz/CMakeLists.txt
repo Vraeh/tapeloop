@@ -9,7 +9,7 @@ endfunction()
 # The readers of replay files, through to the FFmpeg the plugin decodes with.
 function(tapeloop_add_ffmpeg_fuzzer name)
   tapeloop_add_fuzzer(${name} ${ARGN} ReplayDamage.hpp StoredReplay.hpp)
-  target_link_libraries(${name} PRIVATE tapeloop-decode FFmpeg::avutil)
+  target_link_libraries(${name} PRIVATE tapeloop-decode)
 endfunction()
 
 tapeloop_add_fuzzer(source-buffer-fuzz SourceBufferFuzz.cpp)

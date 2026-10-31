@@ -5,14 +5,11 @@
 #include "core/ReplayExport.hpp"
 #include "core/ReplayWriter.hpp"
 #include "decode/Mp4Writer.hpp"
+#include "decode/FFmpegVersion.hpp"
 
 #include "../core/TempDirectory.hpp"
 #include "FuzzInput.hpp"
 #include "StoredReplay.hpp"
-
-extern "C" {
-#include <libavutil/log.h>
-}
 
 #include <algorithm>
 #include <cstddef>
@@ -57,7 +54,7 @@ void checkExportedReplay(const std::filesystem::path &exported, const ReplayInde
 extern "C" int LLVMFuzzerInitialize(int *, char ***)
 {
 	// The parsers report every broken bitstream, which would bury what the fuzzer prints.
-	av_log_set_level(AV_LOG_QUIET);
+	tapeloop::decode::quietFFmpegLog();
 	return 0;
 }
 
