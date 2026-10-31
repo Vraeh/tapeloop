@@ -955,7 +955,7 @@ TEST_CASE_METHOD(ObsFixture, "a replay player decodes on its own thread once sta
 	const std::vector<size_t> starts = gopStarts(clip, expected);
 
 	Screen screen;
-	for (const auto [onGpu, refused] : {std::pair{false, false}, std::pair{true, false}, std::pair{true, true}}) {
+	for (const auto &[onGpu, refused] : {std::pair{false, false}, std::pair{true, false}, std::pair{true, true}}) {
 		CAPTURE(onGpu, refused);
 		FakeGpuPictures gpu;
 		gpu.refuse = refused;
