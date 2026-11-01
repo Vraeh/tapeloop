@@ -32,6 +32,17 @@
       }
     },
     {
+      "name": "linux-obs-tidy",
+      "displayName": "Linux, compile database of the libobs glue and the decoder for clang-tidy",
+      "inherits": ["linux-obs"],
+      "cacheVariables": {
+        "CMAKE_CXX_COMPILER": "clang++",
+        "CMAKE_BUILD_TYPE": "Debug",
+        "CMAKE_EXPORT_COMPILE_COMMANDS": true,
+        "CMAKE_CXX_SCAN_FOR_MODULES": false
+      }
+    },
+    {
       "name": "windows-obs",
       "displayName": "Windows, libobs on Direct3D 11",
       "binaryDir": "${sourceDir}/../../build_tests/${presetName}",
