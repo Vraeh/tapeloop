@@ -54,13 +54,20 @@ public:
 
 	// Puts the replay on air. Its sources the list does not have yet join it at the end,
 	// shown, by name. A source with fewer than two frames has nothing to play and is left
-	// out. False while a replay is on air, for a damaged replay or one whose index cannot
-	// be read, and when none of its shown sources has a clip.
+	// out. False while closed or a replay is on air, for a damaged replay or one whose
+	// index cannot be read, and when none of its shown sources has a clip.
 	bool putOnAir(const Replay &replay);
 	// Takes the replay off air early, as ReplayPlayerState's cutShort() says.
 	void takeOffAir();
 	// Ends the part on air as if it had played out.
 	void skip();
+
+	// For a scene collection that goes away: takes the replay off air at once, without
+	// an outro, and forgets the list, whose sources were that collection's. Nothing goes
+	// on air again until open().
+	void close();
+	void open() noexcept { closed_ = false; }
+	bool closed() const noexcept { return closed_; }
 
 private:
 	// What follows the state's part on air, if it changed: the clip of a source, or else
@@ -78,6 +85,7 @@ private:
 	obs_source_t *source_ = nullptr;
 	ReplayPlayer *player_ = nullptr;
 	ReplayPlayerState state_;
+	bool closed_ = false;
 	// The token of the part follow() last set up, and the clip it loaded for a source.
 	uint64_t token_ = 0;
 	uint64_t clip_ = 0;

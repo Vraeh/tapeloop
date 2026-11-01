@@ -358,6 +358,20 @@ TEST_CASE_METHOD(ObsFixture, "hotkeys run the buffers, pick replays and play the
 	CHECK(sequence->state().phase() == AirPhase::Live);
 	REQUIRE(playerUntil(*sequence, [](const PlayerState &state) { return !state.loaded; }));
 
+	// Presses that reach the UI thread after the collection went away change nothing.
+	Keys::press(*hotkeys, HotkeyAction::PutOnAir);
+	Keys::press(*hotkeys, HotkeyAction::StartStopBuffers);
+	handOver();
+	sequence->close();
+	UiTasks::run();
+	CHECK(sequence->state().phase() == AirPhase::Live);
+	CHECK(manager.running());
+	sequence->open();
+	press(HotkeyAction::PutOnAir);
+	CHECK(sequence->state().phase() == AirPhase::Source);
+	press(HotkeyAction::TakeOffAir);
+	CHECK(sequence->state().phase() == AirPhase::Live);
+
 	press(HotkeyAction::StartStopBuffers);
 	CHECK_FALSE(manager.running());
 	manager.finishWrites();

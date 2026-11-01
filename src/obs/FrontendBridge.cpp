@@ -127,7 +127,13 @@ void FrontendBridge::handleEvent(obs_frontend_event event, void *data) noexcept
 			manager.onRecording(false);
 			break;
 		case OBS_FRONTEND_EVENT_SCENE_COLLECTION_CLEANUP:
+			bridge.sequence_->close();
 			manager.onSceneCollectionCleanup();
+			break;
+		case OBS_FRONTEND_EVENT_SCENE_COLLECTION_CHANGED:
+			// OBS sends it after every collection it loads, the first one included;
+			// FINISHED_LOADING comes only once.
+			bridge.sequence_->open();
 			break;
 		case OBS_FRONTEND_EVENT_FINISHED_LOADING:
 			bridge.hotkeys_->load(obs_frontend_get_profile_config());
@@ -137,6 +143,7 @@ void FrontendBridge::handleEvent(obs_frontend_event event, void *data) noexcept
 			bridge.hotkeys_->load(obs_frontend_get_profile_config());
 			break;
 		case OBS_FRONTEND_EVENT_EXIT:
+			bridge.sequence_->close();
 			manager.onExit();
 			bridge.removeFrontendCallbacks();
 			break;

@@ -83,7 +83,7 @@ bool SequencePlayer::setShown(std::string_view sourceKey, bool shown)
 
 bool SequencePlayer::putOnAir(const Replay &replay)
 {
-	if (!player_ || state_.phase() != AirPhase::Live || replay.state == ReplayState::Damaged) {
+	if (closed_ || !player_ || state_.phase() != AirPhase::Live || replay.state == ReplayState::Damaged) {
 		return false;
 	}
 	std::shared_ptr<const ReplayIndex> index = replay.index;
@@ -145,6 +145,17 @@ void SequencePlayer::skip()
 	}
 	keepRate();
 	state_.ended(state_.token());
+	follow();
+}
+
+void SequencePlayer::close()
+{
+	closed_ = true;
+	// cutShort() goes to the outro when there is one; cut short again, the replay is live.
+	while (state_.phase() != AirPhase::Live) {
+		state_.cutShort();
+	}
+	state_.setEntries({});
 	follow();
 }
 

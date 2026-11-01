@@ -207,6 +207,11 @@ void ReplayHotkeys::run(void *param) noexcept
 
 void runHotkey(HotkeyAction action, bool pressed, CaptureManager &manager, SequencePlayer &sequence)
 {
+	// OBS still delivers presses queued before it cleared a collection or began to exit,
+	// while it does.
+	if (sequence.closed()) {
+		return;
+	}
 	if (!pressed) {
 		// Only a scrub hears of its release, and ends whatever it began.
 		if (ReplayPlayer *player = sequence.player()) {

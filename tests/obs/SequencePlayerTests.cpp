@@ -291,3 +291,33 @@ TEST_CASE_METHOD(ObsFixture, "a sequence leaves out what has nothing to play", "
 	sequence.reset();
 	obs_wait_for_destroy_queue();
 }
+
+TEST_CASE_METHOD(ObsFixture, "a closed sequence goes back to live and forgets its list until opened", "[obs][sequence]")
+{
+	registerReplaySource({});
+	const UiTasks ui;
+	std::optional<SequencePlayer> sequence(std::in_place);
+	REQUIRE(sequence->player());
+
+	const Captured captured({"a", "b"}, 120);
+	sequence->setEntries({{"b", true}, {"a", false}});
+	REQUIRE(sequence->putOnAir(captured.replay()));
+	CHECK(playing(*sequence) == "b");
+
+	sequence->close();
+	CHECK(sequence->closed());
+	CHECK(sequence->state().phase() == AirPhase::Live);
+	CHECK(sequence->state().sequence().entries().empty());
+	REQUIRE(playerUntil(*sequence, [](const PlayerState &state) { return !state.loaded; }));
+	CHECK_FALSE(sequence->putOnAir(captured.replay()));
+	CHECK(sequence->state().phase() == AirPhase::Live);
+
+	sequence->open();
+	CHECK_FALSE(sequence->closed());
+	REQUIRE(sequence->putOnAir(captured.replay()));
+	CHECK(keysOf(*sequence) == std::vector<std::string>{"a", "b"});
+	CHECK(playing(*sequence) == "a");
+
+	sequence.reset();
+	obs_wait_for_destroy_queue();
+}
