@@ -50,6 +50,47 @@ ReplayResolution resolutionFrom(const std::string &name, int64_t height)
 	return {};
 }
 
+std::string mediaKindName(AirMediaKind kind)
+{
+	switch (kind) {
+	case AirMediaKind::Video:
+		return "video";
+	case AirMediaKind::Image:
+		return "image";
+	case AirMediaKind::None:
+		break;
+	}
+	return "none";
+}
+
+std::chrono::milliseconds clampMilliseconds(int64_t ms, std::chrono::milliseconds low, std::chrono::milliseconds high)
+{
+	return std::chrono::milliseconds(std::clamp<int64_t>(ms, low.count(), high.count()));
+}
+
+SavedMedia saveMedia(const AirMedia &media)
+{
+	return {mediaKindName(media.kind), media.path, media.imageTime.count()};
+}
+
+AirMedia loadMedia(const SavedMedia &saved)
+{
+	AirMedia media;
+	if (saved.kind == "video") {
+		media.kind = AirMediaKind::Video;
+	} else if (saved.kind == "image") {
+		media.kind = AirMediaKind::Image;
+	}
+	media.path = saved.path;
+	media.imageTime = clampMilliseconds(saved.imageMs, kMinImageTime, kMaxImageTime);
+	return media;
+}
+
+AirTransition loadTransition(const SavedTransition &saved)
+{
+	return {saved.name, clampMilliseconds(saved.durationMs, kMinAirTransition, kMaxAirTransition)};
+}
+
 } // namespace
 
 Nanoseconds clampBufferLength(Nanoseconds length)
@@ -127,6 +168,10 @@ SavedSettings saveSettings(const BufferSettings &settings)
 		}
 		saved.sources.push_back(std::move(entry));
 	}
+	saved.intro = saveMedia(settings.air.intro);
+	saved.into = {settings.air.into.name, settings.air.into.duration.count()};
+	saved.outro = saveMedia(settings.air.outro);
+	saved.back = {settings.air.back.name, settings.air.back.duration.count()};
 	return saved;
 }
 
@@ -161,6 +206,10 @@ std::optional<BufferSettings> loadSettings(const SavedSettings &saved)
 		}
 		settings.sources[entry.uuid] = source;
 	}
+	settings.air.intro = loadMedia(saved.intro);
+	settings.air.into = loadTransition(saved.into);
+	settings.air.outro = loadMedia(saved.outro);
+	settings.air.back = loadTransition(saved.back);
 	return settings;
 }
 

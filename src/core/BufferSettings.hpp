@@ -26,6 +26,48 @@ Nanoseconds clampBufferLength(Nanoseconds length);
 // One of the fixed heights the dock offers: 360, 480, 720, 1080 or 2160.
 bool isFixedHeight(uint32_t height);
 
+inline constexpr std::chrono::milliseconds kMinAirTransition{50};
+inline constexpr std::chrono::milliseconds kMaxAirTransition{20000};
+inline constexpr std::chrono::milliseconds kDefaultAirTransition{300};
+inline constexpr std::chrono::milliseconds kMinImageTime{500};
+inline constexpr std::chrono::milliseconds kMaxImageTime{60000};
+inline constexpr std::chrono::milliseconds kDefaultImageTime{3000};
+
+enum class AirMediaKind { None, Video, Image };
+
+// An intro or an outro: a video played to its end, or an image shown for a time.
+struct AirMedia {
+	AirMediaKind kind = AirMediaKind::None;
+	// UTF-8.
+	std::string path;
+	std::chrono::milliseconds imageTime = kDefaultImageTime;
+
+	// A kind without a file is none.
+	bool present() const noexcept { return kind != AirMediaKind::None && !path.empty(); }
+	bool operator==(const AirMedia &) const = default;
+};
+
+// One of the transitions the user has in OBS, by name, with its type and settings there;
+// an empty name is OBS's fade.
+struct AirTransition {
+	std::string name;
+	std::chrono::milliseconds duration = kDefaultAirTransition;
+
+	bool operator==(const AirTransition &) const = default;
+};
+
+// How a replay goes on air and back: the transition from live into the intro, or into
+// the replay without one, and the transition from the outro, or the replay without one,
+// back to live. The steps in between are cuts.
+struct AirSettings {
+	AirMedia intro;
+	AirTransition into;
+	AirMedia outro;
+	AirTransition back;
+
+	bool operator==(const AirSettings &) const = default;
+};
+
 struct SourceSettings {
 	bool selected = false;
 	std::optional<Nanoseconds> length;
@@ -54,6 +96,7 @@ struct BufferSettings {
 	// The memory every buffer may hold together, in MiB; zero for the automatic budget.
 	int64_t bufferMemoryMiB = 0;
 	std::map<std::string, SourceSettings> sources;
+	AirSettings air;
 
 	Nanoseconds lengthFor(const std::string &uuid) const;
 	ReplayResolution resolutionFor(const std::string &uuid) const;
@@ -81,6 +124,18 @@ struct SavedSource {
 	std::optional<bool> activateOffAir;
 };
 
+// The intro or outro kinds are "none", "video" or "image", and times are milliseconds.
+struct SavedMedia {
+	std::string kind = "none";
+	std::string path;
+	int64_t imageMs = kDefaultImageTime.count();
+};
+
+struct SavedTransition {
+	std::string name;
+	int64_t durationMs = kDefaultAirTransition.count();
+};
+
 // A reader skips the keys it does not know, so a field added later, as activateOffAir
 // was, needs no new version.
 struct SavedSettings {
@@ -96,12 +151,17 @@ struct SavedSettings {
 	bool showAdvanced = false;
 	int64_t bufferMemoryMiB = 0;
 	std::vector<SavedSource> sources;
+	SavedMedia intro;
+	SavedTransition into;
+	SavedMedia outro;
+	SavedTransition back;
 };
 
 SavedSettings saveSettings(const BufferSettings &settings);
 
 // Empty when the version is not kSettingsVersion. Values out of range are brought
-// back into it, and a resolution this build does not know becomes the canvas.
+// back into it, a resolution this build does not know becomes the canvas, and an intro
+// or outro of a kind it does not know becomes none.
 std::optional<BufferSettings> loadSettings(const SavedSettings &saved);
 
 struct SourceIdentity {
