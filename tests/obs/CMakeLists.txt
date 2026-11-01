@@ -142,11 +142,14 @@ target_sources(
     PlayerTests.cpp
     ProfileHotkeyTests.cpp
     ReplaySourceTests.cpp
+    SequencePlayerTests.cpp
     SmokeTests.cpp
     TestEncoders.cpp
     TestEncoders.hpp
     TestPattern.cpp
     TestPattern.hpp
+    UiTasks.cpp
+    UiTasks.hpp
 )
 target_compile_definitions(
   tapeloop-obs-tests
