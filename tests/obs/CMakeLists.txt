@@ -101,6 +101,17 @@ add_subdirectory(../../src/core core)
 add_subdirectory(../../src/obs obs)
 add_subdirectory(../../src/decode decode)
 
+# The frontend bridge is built only with the plugin, so clang-tidy reads it from this
+# compile database. The libobs of BuildLibobs.cmake comes with obs-frontend-api.
+option(TAPELOOP_TIDY_FRONTEND "Compile the frontend bridge too, for clang-tidy" OFF)
+if(TAPELOOP_TIDY_FRONTEND)
+  find_package(obs-frontend-api REQUIRED)
+  add_library(tapeloop-frontend-tidy OBJECT ../../src/obs/FrontendBridge.cpp)
+  target_compile_definitions(tapeloop-frontend-tidy PRIVATE TAPELOOP_FFMPEG)
+  target_link_libraries(tapeloop-frontend-tidy PRIVATE tapeloop-obs tapeloop-decode OBS::obs-frontend-api)
+  tapeloop_core_warnings(tapeloop-frontend-tidy)
+endif()
+
 # A module that calls back into the test from obs_module_unload.
 add_library(tapeloop-test-unload MODULE unload-hook/UnloadHook.cpp)
 target_link_libraries(tapeloop-test-unload PRIVATE OBS::libobs)

@@ -77,7 +77,7 @@ set_target_properties(
   PROPERTIES AUTOMOC ON AUTOUIC ON AUTORCC ON
 )
 
-# FrontendBridge needs obs-frontend-api, which the libobs tests do not have, so it is
+# FrontendBridge needs obs-frontend-api, which the libobs tests do not link, so it is
 # not part of tapeloop-obs.
 target_sources(
   ${CMAKE_PROJECT_NAME}

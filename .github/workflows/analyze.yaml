@@ -72,8 +72,8 @@ jobs:
         working-directory: tests/obs
         run: cmake --preset linux-obs-tidy
 
-      # Not in the database: SharedPictures.cpp, built on Windows only, and
-      # FrontendBridge.cpp, built only with the plugin and the frontend API.
+      # The Windows-only code is not in the database: SharedPictures.cpp and the _WIN32
+      # parts of FFmpegDecoder.cpp.
       - name: Run clang-tidy on the decoder and the OBS glue
         run: |
           jq -r '.[].file' build_tests/linux-obs-tidy/compile_commands.json | grep -E '/src/(decode|obs)/' |

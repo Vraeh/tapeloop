@@ -39,7 +39,8 @@
         "CMAKE_CXX_COMPILER": "clang++",
         "CMAKE_BUILD_TYPE": "Debug",
         "CMAKE_EXPORT_COMPILE_COMMANDS": true,
-        "CMAKE_CXX_SCAN_FOR_MODULES": false
+        "CMAKE_CXX_SCAN_FOR_MODULES": false,
+        "TAPELOOP_TIDY_FRONTEND": true
       }
     },
     {
