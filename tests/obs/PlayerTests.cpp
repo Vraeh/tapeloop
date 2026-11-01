@@ -787,6 +787,101 @@ TEST_CASE_METHOD(ObsFixture, "a replay player shows nothing of the clip before a
 	CHECK_FALSE(screen.draw(player).drawn);
 }
 
+TEST_CASE_METHOD(ObsFixture, "a replay player says when its clip played forward to the end", "[obs][player]")
+{
+	const Clip clip = captureClip(2);
+	constexpr Nanoseconds kLong = 1min;
+
+	ReplayPlayer player(makeDecoder);
+	const uint64_t first = player.load(gopsOf(clip));
+	REQUIRE(first != 0);
+	player.play();
+	player.tick(kTick);
+	PlayerState state = player.state();
+	CHECK(state.clip == first);
+	CHECK(state.playing);
+	CHECK_FALSE(state.ended);
+
+	player.tick(kLong);
+	state = player.state();
+	REQUIRE(state.frames > 2);
+	CHECK(state.frame == state.frames - 1);
+	CHECK_FALSE(state.playing);
+	CHECK(state.ended);
+
+	// A change of speed leaves it there; a step away, or back onto the last frame, is
+	// someone at the controls.
+	player.faster();
+	player.tick(kTick);
+	CHECK(player.state().ended);
+	player.step(-1);
+	player.tick(kTick);
+	CHECK_FALSE(player.state().ended);
+	player.step(1);
+	player.tick(kTick);
+	state = player.state();
+	CHECK(state.frame == state.frames - 1);
+	CHECK_FALSE(state.ended);
+
+	// Played again it starts over, and ends again.
+	player.play();
+	player.tick(kTick);
+	state = player.state();
+	CHECK(state.playing);
+	CHECK(state.frame < state.frames - 1);
+	CHECK_FALSE(state.ended);
+	player.tick(kLong);
+	CHECK(player.state().ended);
+
+	// Backwards to the first frame, or scrubbing to the last, is not an end. Controls
+	// apply after the playhead moves, so a tick of no time applies them first.
+	player.reverse();
+	player.play();
+	player.tick(0ns);
+	player.tick(kLong);
+	state = player.state();
+	CHECK(state.frame == 0);
+	CHECK_FALSE(state.playing);
+	CHECK_FALSE(state.ended);
+	player.beginScrub(ScrubDirection::Forward);
+	player.tick(0ns);
+	player.tick(kLong);
+	player.endScrub();
+	player.tick(kTick);
+	state = player.state();
+	CHECK(state.frame == state.frames - 1);
+	CHECK_FALSE(state.ended);
+
+	// Scrubbing while it plays and letting go plays on to the end.
+	player.setRate(1000);
+	player.play();
+	player.beginScrub(ScrubDirection::Backward);
+	player.tick(0ns);
+	player.tick(kTick);
+	player.endScrub();
+	player.tick(0ns);
+	CHECK_FALSE(player.state().ended);
+	player.tick(kLong);
+	CHECK(player.state().ended);
+
+	// The next clip has its own number, which the state gives once a tick takes the clip
+	// in, and has not ended; neither has a load of nothing.
+	const uint64_t second = player.load(gopsOf(clip));
+	CHECK(second > first);
+	CHECK(player.state().clip == first);
+	player.tick(kTick);
+	state = player.state();
+	CHECK(state.clip == second);
+	CHECK_FALSE(state.ended);
+	const uint64_t nothing = player.load(nullptr);
+	CHECK(nothing > second);
+	player.play();
+	player.tick(kLong);
+	state = player.state();
+	CHECK(state.clip == nothing);
+	CHECK_FALSE(state.ended);
+}
+
 TEST_CASE_METHOD(ObsFixture, "a replay player without a decoder keeps its playhead and tries again at the next load",
 		 "[obs][player]")
 {
