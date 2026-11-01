@@ -39,8 +39,9 @@ inline constexpr size_t kHotkeyActions = 16;
 
 // Tapeloop's hotkeys, registered as the frontend's own, so that OBS's settings list them
 // and write their bindings into the profile. Every press, and the release of a scrub,
-// goes to the handler on the UI thread, in the order they came, unless the hotkeys are
-// gone by then. Created and destroyed on the UI thread.
+// goes to the handler on a later pass of the UI thread, never while libobs is calling the
+// hotkey, in the order they came, unless the hotkeys are gone by then. Created and
+// destroyed on the UI thread.
 class ReplayHotkeys {
 public:
 	using Handler = std::function<void(HotkeyAction action, bool pressed)>;
@@ -67,6 +68,7 @@ private:
 	};
 
 	static void handle(void *data, obs_hotkey_id id, obs_hotkey_t *hotkey, bool pressed) noexcept;
+	static void toUiThread(void *param) noexcept;
 	static void run(void *param) noexcept;
 
 	Handler handler_;

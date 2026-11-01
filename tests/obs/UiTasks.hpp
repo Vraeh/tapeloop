@@ -9,9 +9,10 @@
 
 namespace tapeloop::test {
 
-// Stands in for the frontend's UI thread: what libobs is asked to run there waits until
-// the test thread runs it. One at a time, made after libobs starts; whatever is still
-// queued when it goes runs then.
+// Stands in for the frontend's UI thread, which is the test thread that makes it. As in
+// OBS, a task queued from that thread runs at once, and one queued from any other waits
+// until the test thread runs it. One at a time, made after libobs starts; whatever is
+// still queued when it goes runs then.
 class UiTasks {
 public:
 	UiTasks();

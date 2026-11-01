@@ -167,8 +167,6 @@ const char *ReplayHotkeys::textKey(HotkeyAction action) noexcept
 
 void ReplayHotkeys::handle(void *data, obs_hotkey_id, obs_hotkey_t *, bool pressed) noexcept
 {
-	// libobs calls hotkeys on its own thread unless the frontend routes them to its UI
-	// thread, as OBS does; queuing is right either way, and keeps them in order.
 	const auto &binding = *static_cast<const Binding *>(data);
 	const bool hold = binding.action == HotkeyAction::ScrubForward || binding.action == HotkeyAction::ScrubBackward;
 	if (!pressed && !hold) {
@@ -182,7 +180,16 @@ void ReplayHotkeys::handle(void *data, obs_hotkey_id, obs_hotkey_t *, bool press
 	task->handler = &binding.owner->handler_;
 	task->action = binding.action;
 	task->pressed = pressed;
-	obs_queue_task(OBS_TASK_UI, run, task.release(), false);
+	// libobs calls a hotkey with its hotkey lock held, which OBS does on its UI thread, and
+	// OBS runs a task queued from that thread for it at once. Queued from the graphics
+	// thread it runs on a later pass instead, after the lock is let go. Both queues keep
+	// the presses in order.
+	obs_queue_task(OBS_TASK_GRAPHICS, toUiThread, task.release(), false);
+}
+
+void ReplayHotkeys::toUiThread(void *param) noexcept
+{
+	obs_queue_task(OBS_TASK_UI, run, param, false);
 }
 
 void ReplayHotkeys::run(void *param) noexcept

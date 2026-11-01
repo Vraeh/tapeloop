@@ -19,6 +19,7 @@
 #include <util/config-file.h>
 
 #include <array>
+#include <atomic>
 #include <chrono>
 #include <cstddef>
 #include <cstdint>
@@ -27,6 +28,7 @@
 #include <memory>
 #include <optional>
 #include <string>
+#include <thread>
 #include <utility>
 #include <vector>
 
@@ -135,6 +137,13 @@ public:
 	}
 };
 
+// Hotkeys go to the UI thread through the graphics thread. Once it has run a task queued
+// after them, they are all on the UI thread's queue.
+void handOver()
+{
+	obs_queue_task(OBS_TASK_GRAPHICS, [](void *) noexcept {}, nullptr, true);
+}
+
 class OfflineHost : public tapeloop::obs::CaptureHost {
 public:
 	bool streamingActive() const override { return false; }
@@ -201,7 +210,9 @@ TEST_CASE_METHOD(ObsFixture, "hotkeys reach the UI thread in order while they la
 	Keys::press(*hotkeys, HotkeyAction::PlayPause);
 	Keys::press(*hotkeys, HotkeyAction::ScrubBackward);
 	Keys::press(*hotkeys, HotkeyAction::NextFrame);
+	// Not while libobs calls them, though OBS calls them on its UI thread.
 	CHECK(heard.empty());
+	handOver();
 	UiTasks::run();
 	// Only a scrub, which lasts while the key is held, hears of its release.
 	CHECK(heard == std::vector<std::pair<HotkeyAction, bool>>{{HotkeyAction::PlayPause, true},
@@ -209,12 +220,48 @@ TEST_CASE_METHOD(ObsFixture, "hotkeys reach the UI thread in order while they la
 								  {HotkeyAction::ScrubBackward, false},
 								  {HotkeyAction::NextFrame, true}});
 
-	// What is still queued when they go is dropped.
+	// What is still on its way when they go is dropped.
 	Keys::press(*hotkeys, HotkeyAction::Faster);
-	REQUIRE(UiTasks::pending() == 1);
 	hotkeys.reset();
+	handOver();
+	REQUIRE(UiTasks::pending() == 1);
 	UiTasks::run();
 	CHECK(heard.size() == 4);
+}
+
+TEST_CASE_METHOD(ObsFixture, "hotkeys run once libobs has let go of its hotkeys", "[obs][hotkey]")
+{
+	const UiTasks ui;
+	const Keys keys;
+	bool triggering = false;
+	std::vector<bool> heardWhileTriggering;
+	// Whether another thread could use libobs's hotkeys while the handler ran: OBS's own
+	// hotkey thread and every source destroyed need them.
+	bool othersCouldUseThem = false;
+	std::atomic<bool> enumerated{false};
+	std::thread other;
+	std::optional<ReplayHotkeys> hotkeys(
+		std::in_place,
+		[&](HotkeyAction, bool) {
+			heardWhileTriggering.push_back(triggering);
+			other = std::thread([&] {
+				obs_enum_hotkeys([](void *, obs_hotkey_id, obs_hotkey_t *) { return false; }, nullptr);
+				enumerated = true;
+			});
+			othersCouldUseThem = waitFor([&] { return enumerated.load(); }, std::chrono::seconds(5));
+		},
+		localeText);
+
+	triggering = true;
+	obs_hotkey_trigger_routed_callback(hotkeys->id(HotkeyAction::CaptureReplay), true);
+	triggering = false;
+	handOver();
+	UiTasks::run();
+	if (other.joinable()) {
+		other.join();
+	}
+	CHECK(heardWhileTriggering == std::vector<bool>{false});
+	CHECK(othersCouldUseThem);
 }
 
 TEST_CASE_METHOD(ObsFixture, "hotkeys run the buffers, pick replays and play them on air", "[obs][hotkey][replay]")
@@ -237,6 +284,12 @@ TEST_CASE_METHOD(ObsFixture, "hotkeys run the buffers, pick replays and play the
 		[&](HotkeyAction action, bool pressed) { runHotkey(action, pressed, manager, *sequence); }, localeText);
 	const auto press = [&](HotkeyAction action) {
 		Keys::press(*hotkeys, action);
+		handOver();
+		UiTasks::run();
+	};
+	const auto hold = [&](HotkeyAction action, bool down) {
+		obs_hotkey_trigger_routed_callback(hotkeys->id(action), down);
+		handOver();
 		UiTasks::run();
 	};
 
@@ -291,11 +344,9 @@ TEST_CASE_METHOD(ObsFixture, "hotkeys run the buffers, pick replays and play the
 	CHECK(waitFor([&] { return sequence->player()->state().frame == frame; }, std::chrono::seconds(10)));
 
 	// A scrub lasts while its key is held.
-	obs_hotkey_trigger_routed_callback(hotkeys->id(HotkeyAction::ScrubForward), true);
-	UiTasks::run();
+	hold(HotkeyAction::ScrubForward, true);
 	REQUIRE(playerUntil(*sequence, [](const PlayerState &state) { return state.scrubbing; }));
-	obs_hotkey_trigger_routed_callback(hotkeys->id(HotkeyAction::ScrubForward), false);
-	UiTasks::run();
+	hold(HotkeyAction::ScrubForward, false);
 	REQUIRE(playerUntil(*sequence, [](const PlayerState &state) { return !state.scrubbing; }));
 
 	// The only source skipped, the replay is over.
