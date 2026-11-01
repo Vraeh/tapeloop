@@ -1,13 +1,16 @@
 // SPDX-License-Identifier: GPL-2.0-or-later
 // Copyright (C) 2026 Vicente Aedo <ryde1337@gmail.com>
 
+#include "../core/StoredReplays.hpp"
 #include "../core/TempDirectory.hpp"
 #include "ObsFixture.hpp"
 #include "TestPattern.hpp"
 #include "UiTasks.hpp"
 
 #include "core/FileIo.hpp"
+#include "core/ReplayLibrary.hpp"
 #include "core/ReplayPlayerState.hpp"
+#include "core/ReplayWriter.hpp"
 #include "obs/CaptureManager.hpp"
 #include "obs/ReplayHotkeys.hpp"
 #include "obs/ReplayPlayer.hpp"
@@ -23,6 +26,7 @@
 #include <chrono>
 #include <cstddef>
 #include <cstdint>
+#include <filesystem>
 #include <fstream>
 #include <map>
 #include <memory>
@@ -375,6 +379,52 @@ TEST_CASE_METHOD(ObsFixture, "hotkeys run the buffers, pick replays and play the
 	press(HotkeyAction::StartStopBuffers);
 	CHECK_FALSE(manager.running());
 	manager.finishWrites();
+	hotkeys.reset();
+	sequence.reset();
+	obs_wait_for_destroy_queue();
+}
+
+TEST_CASE_METHOD(ObsFixture, "newer and older step over a damaged replay", "[obs][hotkey][replay]")
+{
+	tapeloop::obs::registerReplaySource({});
+	const UiTasks ui;
+	const Keys keys;
+	OfflineHost host;
+	const std::filesystem::path broadcast = host.dir.path() / "Tapeloop" / "Liga 2026-10-09 21-00";
+	const tapeloop::test::Gops gops = tapeloop::test::makeGops(2);
+	tapeloop::ReplayWriter writer;
+	writer.write(tapeloop::test::captureOf(broadcast, {tapeloop::test::sourceOf("a", gops)}, "newest"));
+	tapeloop::ReplayCapture oldest =
+		tapeloop::test::captureOf(broadcast, {tapeloop::test::sourceOf("a", gops)}, "oldest");
+	// A damaged replay has no capture time and sorts as of 1970, so only a replay from a
+	// clock set before then sorts after it.
+	oldest.capturedAtUtc = -1'000'000'000;
+	writer.write(oldest);
+	tapeloop::File(broadcast / "broken.tplp", tapeloop::File::Mode::CreateNew)
+		.writeAt(0, std::vector<uint8_t>(100, 1));
+
+	CaptureManager manager(host);
+	manager.loadLibrary();
+	manager.finishWrites();
+	std::optional<SequencePlayer> sequence(std::in_place, manager.library());
+	std::optional<ReplayHotkeys> hotkeys(
+		std::in_place,
+		[&](HotkeyAction action, bool pressed) { runHotkey(action, pressed, manager, *sequence); }, localeText);
+	const auto press = [&](HotkeyAction action) {
+		Keys::press(*hotkeys, action);
+		handOver();
+		UiTasks::run();
+	};
+
+	const std::vector<uint64_t> replays = manager.library().list();
+	REQUIRE(replays.size() == 3);
+	REQUIRE(manager.library().find(replays[1])->state == tapeloop::ReplayState::Damaged);
+	CHECK(manager.library().current() == replays[0]);
+	press(HotkeyAction::OlderReplay);
+	CHECK(manager.library().current() == replays[2]);
+	press(HotkeyAction::NewerReplay);
+	CHECK(manager.library().current() == replays[0]);
+
 	hotkeys.reset();
 	sequence.reset();
 	obs_wait_for_destroy_queue();
