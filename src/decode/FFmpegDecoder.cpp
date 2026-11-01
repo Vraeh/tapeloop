@@ -441,20 +441,30 @@ DecodeStatus FFmpegDecoder::statusOf(int result) const noexcept
 	return DecodeStatus::InvalidData;
 }
 
-FFmpegDecoder::Slot *FFmpegDecoder::slotOf(const DecodedFrame &frame) noexcept
+std::optional<size_t> FFmpegDecoder::heldSlot(const DecodedFrame &frame) const noexcept
 {
 	const auto index = static_cast<size_t>(frame.id & 0xffffffffu);
 	const auto generation = static_cast<uint32_t>(frame.id >> 32);
 	if (index >= slots_.size()) {
-		return nullptr;
+		return std::nullopt;
 	}
-	Slot &slot = slots_[index];
-	return slot.held && slot.generation == generation ? &slot : nullptr;
+	const Slot &slot = slots_[index];
+	if (!slot.held || slot.generation != generation) {
+		return std::nullopt;
+	}
+	return index;
+}
+
+FFmpegDecoder::Slot *FFmpegDecoder::slotOf(const DecodedFrame &frame) noexcept
+{
+	const std::optional<size_t> index = heldSlot(frame);
+	return index ? &slots_[*index] : nullptr;
 }
 
 const FFmpegDecoder::Slot *FFmpegDecoder::slotOf(const DecodedFrame &frame) const noexcept
 {
-	return const_cast<FFmpegDecoder *>(this)->slotOf(frame);
+	const std::optional<size_t> index = heldSlot(frame);
+	return index ? &slots_[*index] : nullptr;
 }
 
 FFmpegDecoder::Slot *FFmpegDecoder::takeSlot(uint32_t &index) noexcept
