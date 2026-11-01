@@ -298,9 +298,9 @@ DecodeStatus FFmpegDecoder::send(std::span<const uint8_t> data, int64_t pts, int
 	if (!buffer) {
 		return DecodeStatus::OutOfMemory;
 	}
-	const size_t size =
-		copyWithoutKnownParameterSets(codec_, runConfig_, data, std::span<uint8_t>(buffer->data, data.size()));
-	std::memset(buffer->data + size, 0, AV_INPUT_BUFFER_PADDING_SIZE);
+	const std::span<uint8_t> bytes(buffer->data, needed);
+	const size_t size = copyWithoutKnownParameterSets(codec_, runConfig_, data, bytes.first(data.size()));
+	std::memset(bytes.subspan(size).data(), 0, AV_INPUT_BUFFER_PADDING_SIZE);
 	skippedBytes_ += data.size() - size;
 
 	packet_->buf = buffer;
@@ -565,7 +565,7 @@ DecodeStatus FFmpegDecoder::keepPicture(Slot &slot) noexcept
 	}
 	av_frame_move_ref(slot.frame.get(), received_.get());
 	slot.bytes = 0;
-	for (const AVBufferRef *buffer : slot.frame->buf) {
+	for (const AVBufferRef *buffer : std::span(slot.frame->buf)) {
 		if (buffer) {
 			slot.bytes += buffer->size;
 		}
