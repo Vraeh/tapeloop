@@ -364,3 +364,27 @@ TEST_CASE_METHOD(ObsFixture, "a drag moves the source the dock showed, though th
 	CHECK(keysOf(sequence) == std::vector<std::string>{obs_source_get_uuid(added), obs_source_get_uuid(c),
 							   obs_source_get_uuid(a), obs_source_get_uuid(b)});
 }
+
+TEST_CASE_METHOD(ObsFixture, "a source created since the list was last set can be dragged", "[obs][dock]")
+{
+	tapeloop::obs::registerReplaySource({});
+	OBSDataAutoRelease settings = obs_data_create();
+	obs_data_set_int(settings, "width", 320);
+	obs_data_set_int(settings, "height", 180);
+	OBSSourceAutoRelease a = obs_source_create(tapeloop::test::kTestPatternId, "A camera", settings, nullptr);
+	OBSSourceAutoRelease b = obs_source_create(tapeloop::test::kTestPatternId, "B camera", settings, nullptr);
+	const std::string uuidA = obs_source_get_uuid(a);
+	const std::string uuidB = obs_source_get_uuid(b);
+	OfflineHost host;
+	CaptureManager manager(host);
+	SequencePlayer sequence(manager.library());
+	ManagerDockBackend backend(manager, &sequence);
+	REQUIRE(backend.setShown(uuidB, false));
+	REQUIRE(keysOf(sequence) == std::vector<std::string>{uuidA, uuidB + "-"});
+
+	OBSSourceAutoRelease c = obs_source_create(tapeloop::test::kTestPatternId, "C camera", settings, nullptr);
+	const std::string uuidC = obs_source_get_uuid(c);
+	REQUIRE(backend.moveSource(uuidC, uuidA));
+	CHECK(keysOf(sequence) == std::vector<std::string>{uuidC, uuidA, uuidB + "-"});
+	CHECK(namesOf(backend.sources()) == std::vector<std::string>{"C camera", "A camera", "B camera-"});
+}
