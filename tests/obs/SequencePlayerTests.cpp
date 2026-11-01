@@ -1,13 +1,17 @@
 // SPDX-License-Identifier: GPL-2.0-or-later
 // Copyright (C) 2026 Vicente Aedo <ryde1337@gmail.com>
 
+#include "../core/FakeDecoder.hpp"
 #include "../core/StoredReplays.hpp"
+#include "../core/TempDirectory.hpp"
 #include "ObsFixture.hpp"
 #include "UiTasks.hpp"
 
 #include "core/ReplayLibrary.hpp"
 #include "core/ReplayPlayerState.hpp"
 #include "core/ReplaySequence.hpp"
+#include "core/ReplayWriter.hpp"
+#include "decode/PictureDecoder.hpp"
 #include "obs/ReplayPlayer.hpp"
 #include "obs/ReplaySource.hpp"
 #include "obs/SequencePlayer.hpp"
@@ -15,11 +19,14 @@
 #include <catch2/catch_test_macros.hpp>
 #include <obs.h>
 
+#include <atomic>
 #include <chrono>
 #include <cstddef>
 #include <cstdint>
 #include <functional>
+#include <memory>
 #include <optional>
+#include <span>
 #include <string>
 #include <thread>
 #include <utility>
@@ -27,19 +34,26 @@
 
 using namespace std::chrono_literals;
 using tapeloop::AirPhase;
+using tapeloop::DecodedFrame;
+using tapeloop::DecodeStatus;
 using tapeloop::Nanoseconds;
-using tapeloop::Replay;
 using tapeloop::ReplayLibrary;
 using tapeloop::SequenceEntry;
+using tapeloop::VideoCodec;
+using tapeloop::decode::Picture;
+using tapeloop::decode::PictureDecoder;
 using tapeloop::obs::PlayerState;
 using tapeloop::obs::registerReplaySource;
 using tapeloop::obs::SequencePlayer;
 using tapeloop::test::captureOf;
+using tapeloop::test::FakeDecoder;
 using tapeloop::test::Gops;
 using tapeloop::test::makeGops;
 using tapeloop::test::ObsFixture;
 using tapeloop::test::sourceOf;
+using tapeloop::test::TempDirectory;
 using tapeloop::test::UiTasks;
+using tapeloop::test::waitFor;
 
 namespace {
 
@@ -47,23 +61,53 @@ namespace {
 // which the test holds, so nothing is read from disk.
 class Captured {
 public:
-	Captured(const std::vector<std::string> &keys, size_t gops) : gops_(makeGops(gops))
+	Captured(ReplayLibrary &library, const std::vector<std::string> &keys, size_t gops) : gops_(makeGops(gops))
 	{
 		std::vector<tapeloop::CaptureSource> sources;
 		for (const std::string &key : keys) {
 			sources.push_back(sourceOf(key, gops_));
 		}
-		id_ = library_.addCaptured(captureOf("unused", std::move(sources)), "Broadcast");
+		id_ = library.addCaptured(captureOf("unused", std::move(sources)), "Broadcast");
 		REQUIRE(id_ != 0);
 	}
 
-	const Replay &replay() const { return *library_.find(id_); }
+	uint64_t id() const noexcept { return id_; }
 	Nanoseconds lastFrame() const { return gops_.back()->lastTime(); }
 
 private:
 	Gops gops_;
-	ReplayLibrary library_;
 	uint64_t id_ = 0;
+};
+
+// Decodes as a FakeDecoder does, and keeps the newest presentation time it was handed.
+// Its frames have no picture, so the player shows nothing.
+class NewestDecoder final : public PictureDecoder {
+public:
+	explicit NewestDecoder(std::atomic<int64_t> &newest) : newest_(newest) {}
+
+	DecodeStatus open(VideoCodec codec, std::span<const uint8_t> config) noexcept override
+	{
+		return decoder_.open(codec, config);
+	}
+
+	DecodeStatus send(std::span<const uint8_t> data, int64_t pts, int64_t dts) noexcept override
+	{
+		if (pts > newest_.load()) {
+			newest_.store(pts);
+		}
+		return decoder_.send(data, pts, dts);
+	}
+
+	DecodeStatus receive(DecodedFrame &frame) noexcept override { return decoder_.receive(frame); }
+	DecodeStatus flush() noexcept override { return decoder_.flush(); }
+	void reset() noexcept override { decoder_.reset(); }
+	void release(const DecodedFrame &frame) noexcept override { decoder_.release(frame); }
+	void close() noexcept override { decoder_.close(); }
+	std::optional<Picture> picture(const DecodedFrame &) const noexcept override { return std::nullopt; }
+
+private:
+	std::atomic<int64_t> &newest_;
+	FakeDecoder decoder_{[](int64_t pts) { return pts % tapeloop::test::kGopLength == 0; }, 0};
 };
 
 // Runs the UI thread's tasks until the condition holds, as OBS ticks on its own.
@@ -119,14 +163,15 @@ TEST_CASE_METHOD(ObsFixture, "a sequence plays the shown sources of a replay in 
 {
 	registerReplaySource({});
 	const UiTasks ui;
-	std::optional<SequencePlayer> sequence(std::in_place);
+	ReplayLibrary library;
+	std::optional<SequencePlayer> sequence(std::in_place, library);
 	REQUIRE(sequence->source());
 	REQUIRE(sequence->player());
 
 	// Clips of a sixth of a second, which play out by themselves.
-	const Captured captured({"b", "a", "c", "d"}, 2);
+	const Captured captured(library, {"b", "a", "c", "d"}, 2);
 	sequence->setEntries({{"c", true}, {"d", false}, {"a", true}});
-	REQUIRE(sequence->putOnAir(captured.replay()));
+	REQUIRE(sequence->putOnAir(captured.id()));
 	// The source the list did not have joins it at the end, shown.
 	CHECK(keysOf(*sequence) == std::vector<std::string>{"c", "d-", "a", "b"});
 
@@ -145,7 +190,7 @@ TEST_CASE_METHOD(ObsFixture, "a sequence plays the shown sources of a replay in 
 	REQUIRE(playerUntil(*sequence, [](const PlayerState &state) { return !state.loaded; }));
 
 	// Another goes on air from the start of the list.
-	REQUIRE(sequence->putOnAir(captured.replay()));
+	REQUIRE(sequence->putOnAir(captured.id()));
 	CHECK(sequence->state().source() == "c");
 	sequence.reset();
 	obs_wait_for_destroy_queue();
@@ -155,13 +200,14 @@ TEST_CASE_METHOD(ObsFixture, "a sequence follows the list as it changes while a 
 {
 	registerReplaySource({});
 	const UiTasks ui;
-	std::optional<SequencePlayer> sequence(std::in_place);
+	ReplayLibrary library;
+	std::optional<SequencePlayer> sequence(std::in_place, library);
 	REQUIRE(sequence->player());
 
 	// Clips of ten seconds, which move on only when told.
-	const Captured captured({"a", "b", "c", "d"}, 120);
+	const Captured captured(library, {"a", "b", "c", "d"}, 120);
 	sequence->setEntries({{"a", true}, {"b", true}, {"c", true}, {"d", true}});
-	REQUIRE(sequence->putOnAir(captured.replay()));
+	REQUIRE(sequence->putOnAir(captured.id()));
 	CHECK(playing(*sequence) == "a");
 
 	REQUIRE(sequence->move(3, 1));
@@ -195,11 +241,12 @@ TEST_CASE_METHOD(ObsFixture, "a sequence keeps the speed for the next source and
 {
 	registerReplaySource({});
 	const UiTasks ui;
-	std::optional<SequencePlayer> sequence(std::in_place);
+	ReplayLibrary library;
+	std::optional<SequencePlayer> sequence(std::in_place, library);
 	REQUIRE(sequence->player());
 
-	const Captured captured({"a", "b", "c"}, 120);
-	REQUIRE(sequence->putOnAir(captured.replay()));
+	const Captured captured(library, {"a", "b", "c"}, 120);
+	REQUIRE(sequence->putOnAir(captured.id()));
 	CHECK(playing(*sequence) == "a");
 	CHECK(sequence->player()->state().rate == 1000);
 
@@ -219,7 +266,7 @@ TEST_CASE_METHOD(ObsFixture, "a sequence keeps the speed for the next source and
 
 	// Each replay starts at real time.
 	sequence->takeOffAir();
-	REQUIRE(sequence->putOnAir(captured.replay()));
+	REQUIRE(sequence->putOnAir(captured.id()));
 	CHECK(playing(*sequence) == "a");
 	REQUIRE(playerUntil(*sequence, [](const PlayerState &state) { return state.rate == 1000; }));
 
@@ -231,14 +278,15 @@ TEST_CASE_METHOD(ObsFixture, "a sequence goes back to live when cut short, and n
 {
 	registerReplaySource({});
 	const UiTasks ui;
-	std::optional<SequencePlayer> sequence(std::in_place);
+	ReplayLibrary library;
+	std::optional<SequencePlayer> sequence(std::in_place, library);
 	REQUIRE(sequence->player());
 
-	const Captured captured({"a", "b"}, 120);
-	REQUIRE(sequence->putOnAir(captured.replay()));
+	const Captured captured(library, {"a", "b"}, 120);
+	REQUIRE(sequence->putOnAir(captured.id()));
 	CHECK(playing(*sequence) == "a");
 	// One replay at a time.
-	CHECK_FALSE(sequence->putOnAir(captured.replay()));
+	CHECK_FALSE(sequence->putOnAir(captured.id()));
 
 	// Someone who takes the clip off its end as it gets there keeps it on air.
 	sequence->player()->seek(captured.lastFrame() - 50ms);
@@ -269,23 +317,37 @@ TEST_CASE_METHOD(ObsFixture, "a sequence leaves out what has nothing to play", "
 {
 	registerReplaySource({});
 	const UiTasks ui;
-	std::optional<SequencePlayer> sequence(std::in_place);
+	ReplayLibrary library;
+	std::optional<SequencePlayer> sequence(std::in_place, library);
 	REQUIRE(sequence->player());
 
-	const Captured captured({"a", "b"}, 2);
+	const Captured captured(library, {"a", "b"}, 2);
 	sequence->setEntries({{"a", false}, {"b", false}});
-	CHECK_FALSE(sequence->putOnAir(captured.replay()));
+	CHECK_FALSE(sequence->putOnAir(captured.id()));
 	CHECK(sequence->state().phase() == AirPhase::Live);
 
-	// Found on disk without a manifest that can be read.
-	Replay found = captured.replay();
-	found.index.reset();
-	found.manifest = "missing.tlr";
 	REQUIRE(sequence->setShown("a", true));
-	CHECK_FALSE(sequence->putOnAir(found));
-	found.state = tapeloop::ReplayState::Damaged;
-	found.index = captured.replay().index;
-	CHECK_FALSE(sequence->putOnAir(found));
+	CHECK_FALSE(sequence->putOnAir(0));
+
+	// Found on disk, with a manifest that cannot be read.
+	tapeloop::FoundReplay found;
+	found.manifest = "missing.tlr";
+	found.broadcast = "Broadcast";
+	found.intact = true;
+	found.id = tapeloop::newReplayId();
+	found.sources = {{"a", "Camera a"}};
+	const uint64_t unreadable = library.addFound(found);
+	REQUIRE(unreadable != 0);
+	CHECK_FALSE(sequence->putOnAir(unreadable));
+
+	// Damaged, even if what it names can be read.
+	const TempDirectory folder;
+	found.manifest =
+		tapeloop::ReplayWriter().write(captureOf(folder.path(), {sourceOf("a", makeGops(2))})).manifest;
+	found.intact = false;
+	const uint64_t damaged = library.addFound(found);
+	REQUIRE(damaged != 0);
+	CHECK_FALSE(sequence->putOnAir(damaged));
 	CHECK(sequence->state().phase() == AirPhase::Live);
 
 	sequence.reset();
@@ -296,12 +358,13 @@ TEST_CASE_METHOD(ObsFixture, "a closed sequence goes back to live and forgets it
 {
 	registerReplaySource({});
 	const UiTasks ui;
-	std::optional<SequencePlayer> sequence(std::in_place);
+	ReplayLibrary library;
+	std::optional<SequencePlayer> sequence(std::in_place, library);
 	REQUIRE(sequence->player());
 
-	const Captured captured({"a", "b"}, 120);
+	const Captured captured(library, {"a", "b"}, 120);
 	sequence->setEntries({{"b", true}, {"a", false}});
-	REQUIRE(sequence->putOnAir(captured.replay()));
+	REQUIRE(sequence->putOnAir(captured.id()));
 	CHECK(playing(*sequence) == "b");
 
 	sequence->close();
@@ -309,14 +372,49 @@ TEST_CASE_METHOD(ObsFixture, "a closed sequence goes back to live and forgets it
 	CHECK(sequence->state().phase() == AirPhase::Live);
 	CHECK(sequence->state().sequence().entries().empty());
 	REQUIRE(playerUntil(*sequence, [](const PlayerState &state) { return !state.loaded; }));
-	CHECK_FALSE(sequence->putOnAir(captured.replay()));
+	CHECK_FALSE(sequence->putOnAir(captured.id()));
 	CHECK(sequence->state().phase() == AirPhase::Live);
 
 	sequence->open();
 	CHECK_FALSE(sequence->closed());
-	REQUIRE(sequence->putOnAir(captured.replay()));
+	REQUIRE(sequence->putOnAir(captured.id()));
 	CHECK(keysOf(*sequence) == std::vector<std::string>{"a", "b"});
 	CHECK(playing(*sequence) == "a");
+
+	sequence.reset();
+	obs_wait_for_destroy_queue();
+}
+
+TEST_CASE_METHOD(ObsFixture, "a replay put on air while written plays its next sources from its files",
+		 "[obs][sequence]")
+{
+	// Declared before the source, whose decoding thread writes it until it is destroyed.
+	std::atomic<int64_t> newest{-1};
+	registerReplaySource(
+		[&newest](bool) -> std::unique_ptr<PictureDecoder> { return std::make_unique<NewestDecoder>(newest); });
+	const UiTasks ui;
+	const TempDirectory folder;
+	ReplayLibrary library;
+	std::optional<SequencePlayer> sequence(std::in_place, library);
+	REQUIRE(sequence->player());
+
+	Gops first = makeGops(120);
+	Gops second = makeGops(120, 1000);
+	std::optional<tapeloop::ReplayCapture> capture(
+		captureOf(folder.path(), {sourceOf("a", first), sourceOf("b", second)}));
+	const uint64_t id = library.addCaptured(*capture, "Broadcast");
+	REQUIRE(sequence->putOnAir(id));
+	CHECK(playing(*sequence) == "a");
+
+	tapeloop::WrittenReplay written = tapeloop::ReplayWriter().write(*capture);
+	REQUIRE(library.stored(id, written.manifest, std::move(written.index)));
+	// The buffers let go of the GOPs.
+	capture.reset();
+	first.clear();
+	second.clear();
+	sequence->skip();
+	CHECK(playing(*sequence) == "b");
+	CHECK(waitFor([&] { return newest.load() >= 1000; }, 10s));
 
 	sequence.reset();
 	obs_wait_for_destroy_queue();

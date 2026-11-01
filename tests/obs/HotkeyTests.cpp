@@ -277,7 +277,7 @@ TEST_CASE_METHOD(ObsFixture, "hotkeys run the buffers, pick replays and play the
 	settings.startWithOutputs = false;
 	settings.sources[uuid].selected = true;
 	manager.setSettings(settings);
-	std::optional<SequencePlayer> sequence(std::in_place);
+	std::optional<SequencePlayer> sequence(std::in_place, manager.library());
 	REQUIRE(sequence->player());
 	std::optional<ReplayHotkeys> hotkeys(
 		std::in_place,

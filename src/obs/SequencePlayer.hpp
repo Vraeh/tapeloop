@@ -32,8 +32,9 @@ namespace tapeloop::obs {
 // source it was for is no longer on air or someone moved the playhead off the end.
 class SequencePlayer {
 public:
-	// Creates the replay source; source() is null when that fails, and nothing plays.
-	SequencePlayer();
+	// Plays the library's replays, and the library outlives it. Creates the replay source;
+	// source() is null when that fails, and nothing plays.
+	explicit SequencePlayer(const ReplayLibrary &library);
 	~SequencePlayer();
 
 	SequencePlayer(const SequencePlayer &) = delete;
@@ -52,11 +53,12 @@ public:
 	bool move(size_t from, size_t to);
 	bool setShown(std::string_view sourceKey, bool shown);
 
-	// Puts the replay on air. Its sources the list does not have yet join it at the end,
-	// shown, by name. A source with fewer than two frames has nothing to play and is left
-	// out. False while closed or a replay is on air, for a damaged replay or one whose
-	// index cannot be read, and when none of its shown sources has a clip.
-	bool putOnAir(const Replay &replay);
+	// Puts the library's replay on air. Its sources the list does not have yet join it at
+	// the end, shown, by name. A source with fewer than two frames has nothing to play and
+	// is left out. False while closed or a replay is on air, for an unknown or damaged
+	// replay or one whose index cannot be read, and when none of its shown sources has a
+	// clip.
+	bool putOnAir(uint64_t replay);
 	// Takes the replay off air early, as ReplayPlayerState's cutShort() says.
 	void takeOffAir();
 	// Ends the part on air as if it had played out.
@@ -75,6 +77,9 @@ private:
 	void follow();
 	// Loads the source's clip and plays it; zero when it cannot be loaded.
 	uint64_t play(std::string_view sourceKey);
+	// Takes the files of the replay on air once they are written, if it went on air while
+	// they were not: its sources still to play may be gone from the buffers by then.
+	void findStored();
 	// Keeps the speed of the source on air for the next one, before anything that may
 	// change sources.
 	void keepRate() noexcept;
@@ -82,6 +87,7 @@ private:
 	static void handleTick(void *data, float seconds) noexcept;
 	static void runEnded(void *param) noexcept;
 
+	const ReplayLibrary &library_;
 	obs_source_t *source_ = nullptr;
 	ReplayPlayer *player_ = nullptr;
 	ReplayPlayerState state_;
@@ -90,6 +96,7 @@ private:
 	uint64_t token_ = 0;
 	uint64_t clip_ = 0;
 	// The replay on air.
+	uint64_t replay_ = 0;
 	std::filesystem::path manifest_;
 	std::shared_ptr<const ReplayIndex> index_;
 	std::vector<std::vector<std::weak_ptr<const Gop>>> live_;

@@ -43,7 +43,7 @@ void runTask(void *param) noexcept
 
 FrontendBridge::FrontendBridge()
 	: manager_(std::make_unique<CaptureManager>(static_cast<CaptureHost &>(*this), mp4Writers())),
-	  sequence_(std::make_unique<SequencePlayer>()),
+	  sequence_(std::make_unique<SequencePlayer>(manager_->library())),
 	  // A hotkey pressed now runs on a later pass of the UI thread, once all of this is
 	  // built.
 	  hotkeys_(std::make_unique<ReplayHotkeys>(

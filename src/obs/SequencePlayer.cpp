@@ -34,6 +34,22 @@ bool nameBefore(const std::string &a, const std::string &b)
 					    });
 }
 
+// Null when it has none and its manifest cannot be read.
+std::shared_ptr<const ReplayIndex> indexOf(const Replay &replay)
+{
+	if (replay.index) {
+		return replay.index;
+	}
+	if (replay.manifest.empty()) {
+		return nullptr;
+	}
+	std::optional<ReplayIndex> read = readReplayIndex(replay.manifest);
+	if (!read) {
+		return nullptr;
+	}
+	return std::make_shared<const ReplayIndex>(std::move(*read));
+}
+
 size_t framesOf(const StoredSource &source)
 {
 	return static_cast<size_t>(
@@ -43,7 +59,9 @@ size_t framesOf(const StoredSource &source)
 
 } // namespace
 
-SequencePlayer::SequencePlayer() : source_(createReplaySource("Tapeloop replay"))
+SequencePlayer::SequencePlayer(const ReplayLibrary &library)
+	: library_(library),
+	  source_(createReplaySource("Tapeloop replay"))
 {
 	if (source_) {
 		player_ = replayPlayer(source_);
@@ -81,23 +99,18 @@ bool SequencePlayer::setShown(std::string_view sourceKey, bool shown)
 	return known;
 }
 
-bool SequencePlayer::putOnAir(const Replay &replay)
+bool SequencePlayer::putOnAir(uint64_t id)
 {
-	if (closed_ || !player_ || state_.phase() != AirPhase::Live || replay.state == ReplayState::Damaged) {
+	const Replay *replay = library_.find(id);
+	if (closed_ || !player_ || state_.phase() != AirPhase::Live || !replay ||
+	    replay->state == ReplayState::Damaged) {
 		return false;
 	}
-	std::shared_ptr<const ReplayIndex> index = replay.index;
+	std::shared_ptr<const ReplayIndex> index = indexOf(*replay);
 	if (!index) {
-		std::optional<ReplayIndex> read;
-		if (!replay.manifest.empty()) {
-			read = readReplayIndex(replay.manifest);
-		}
-		if (!read) {
-			blog(LOG_WARNING, "[tapeloop] Replay %llu cannot be read, so it cannot go on air",
-			     static_cast<unsigned long long>(replay.id));
-			return false;
-		}
-		index = std::make_shared<const ReplayIndex>(std::move(*read));
+		blog(LOG_WARNING, "[tapeloop] Replay %llu cannot be read, so it cannot go on air",
+		     static_cast<unsigned long long>(id));
+		return false;
 	}
 
 	std::vector<std::string> sources;
@@ -125,9 +138,10 @@ bool SequencePlayer::putOnAir(const Replay &replay)
 	if (!state_.start(std::move(sources))) {
 		return false;
 	}
-	manifest_ = replay.manifest;
+	replay_ = id;
+	manifest_ = replay->manifest;
 	index_ = std::move(index);
-	live_ = replay.live;
+	live_ = replay->live;
 	follow();
 	return true;
 }
@@ -179,6 +193,7 @@ void SequencePlayer::follow()
 			player_->load(nullptr);
 		}
 		if (state_.phase() == AirPhase::Live) {
+			replay_ = 0;
 			manifest_.clear();
 			index_.reset();
 			live_.clear();
@@ -188,6 +203,9 @@ void SequencePlayer::follow()
 
 uint64_t SequencePlayer::play(std::string_view sourceKey)
 {
+	if (manifest_.empty()) {
+		findStored();
+	}
 	if (!player_ || !index_) {
 		return 0;
 	}
@@ -214,6 +232,21 @@ uint64_t SequencePlayer::play(std::string_view sourceKey)
 		return clip;
 	}
 	return 0;
+}
+
+void SequencePlayer::findStored()
+{
+	const Replay *replay = library_.find(replay_);
+	if (!replay || replay->manifest.empty()) {
+		return;
+	}
+	// The index of the files lists the sources and their GOPs as the one of the capture
+	// did, so the buffer's GOPs still line up with it.
+	std::shared_ptr<const ReplayIndex> index = indexOf(*replay);
+	if (index) {
+		manifest_ = replay->manifest;
+		index_ = std::move(index);
+	}
 }
 
 void SequencePlayer::keepRate() noexcept

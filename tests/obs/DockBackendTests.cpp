@@ -313,7 +313,7 @@ TEST_CASE_METHOD(ObsFixture, "the dock lists the sources in the order of the rep
 	CaptureManager manager(host);
 
 	{
-		SequencePlayer sequence;
+		SequencePlayer sequence(manager.library());
 		sequence.setEntries({{"gone", true}, {uuidC, false}});
 		ManagerDockBackend backend(manager, &sequence);
 		// The replay's own source is private, so it is not listed.

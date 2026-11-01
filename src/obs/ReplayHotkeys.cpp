@@ -231,9 +231,7 @@ void runHotkey(HotkeyAction action, bool pressed, CaptureManager &manager, Seque
 		manager.captureReplay();
 		return;
 	case HotkeyAction::PutOnAir:
-		if (const Replay *replay = manager.library().find(manager.library().current())) {
-			sequence.putOnAir(*replay);
-		}
+		sequence.putOnAir(manager.library().current());
 		return;
 	case HotkeyAction::TakeOffAir:
 		sequence.takeOffAir();
