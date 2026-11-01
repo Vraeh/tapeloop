@@ -5,6 +5,7 @@
 
 #include <obs-module.h>
 
+#include <array>
 #include <chrono>
 #include <cstdint>
 #include <cstdio>
@@ -53,10 +54,10 @@ bool start(void *data) noexcept
 	const char *codecName = obs_encoder_get_codec(encoder);
 	const std::optional<VideoCodec> codec = videoCodecFromName(codecName ? codecName : "");
 	if (!codec) {
-		char error[96];
-		std::snprintf(error, sizeof(error), "A replay cannot hold %s",
+		std::array<char, 96> error{};
+		std::snprintf(error.data(), error.size(), "A replay cannot hold %s",
 			      codecName ? codecName : "an unknown codec");
-		obs_output_set_last_error(capture.output, error);
+		obs_output_set_last_error(capture.output, error.data());
 		return false;
 	}
 	if (!obs_output_initialize_encoders(capture.output, 0)) {
