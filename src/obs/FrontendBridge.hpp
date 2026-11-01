@@ -49,7 +49,7 @@ private:
 	static void handleTick(void *data, float seconds) noexcept;
 	// Runs work on the UI thread, where captures start and stop, unless the bridge is
 	// gone by then.
-	void onUiThread(void (*work)(CaptureManager &, SequencePlayer &)) noexcept;
+	void onUiThread(void (*work)(CaptureManager &)) noexcept;
 
 	std::unique_ptr<CaptureManager> manager_;
 	std::unique_ptr<SequencePlayer> sequence_;

@@ -10,6 +10,7 @@
 #include "core/ReplayLibrary.hpp"
 #include "core/ReplayPlayerState.hpp"
 #include "core/ReplaySequence.hpp"
+#include "core/ReplayStore.hpp"
 #include "core/ReplayWriter.hpp"
 #include "decode/PictureDecoder.hpp"
 #include "obs/ReplayPlayer.hpp"
@@ -571,10 +572,41 @@ TEST_CASE_METHOD(ObsFixture, "a source on air while its replay is written plays 
 
 	tapeloop::WrittenReplay written = tapeloop::ReplayWriter().write(*capture);
 	REQUIRE(library.stored(id, written.manifest, std::move(written.index)));
-	sequence->findStored();
 	// The buffer lets go of the GOPs while the source plays.
 	capture.reset();
 	gops.clear();
+	sequence->player()->seek(late);
+	CHECK(waitFor([&] { return newest.load() >= 110 * tapeloop::test::kGopLength; }, 10s));
+
+	sequence.reset();
+	obs_wait_for_destroy_queue();
+}
+
+TEST_CASE_METHOD(ObsFixture, "a source on air reads its files as soon as the store has written them", "[obs][sequence]")
+{
+	// Declared before the source, whose decoding thread writes it until it is destroyed.
+	std::atomic<int64_t> newest{-1};
+	registerReplaySource(
+		[&newest](bool) -> std::unique_ptr<PictureDecoder> { return std::make_unique<NewestDecoder>(newest); });
+	const UiTasks ui;
+	const TempDirectory folder;
+	ReplayLibrary library;
+	std::optional<SequencePlayer> sequence(std::in_place, library);
+	REQUIRE(sequence->player());
+
+	Gops gops = makeGops(120);
+	const Nanoseconds late = gops[110]->startTime();
+	tapeloop::ReplayCapture capture = captureOf(folder.path(), {sourceOf("a", gops)});
+	const uint64_t id = library.addCaptured(capture, "Broadcast");
+	REQUIRE(sequence->putOnAir(id));
+	CHECK(playing(*sequence) == "a");
+
+	// The buffer lets go of the GOPs while the store writes them, and the store once they
+	// are written, before anyone has taken in that they are.
+	tapeloop::ReplayStore store;
+	store.write(std::move(capture), library.find(id)->files);
+	gops.clear();
+	store.waitUntilIdle();
 	sequence->player()->seek(late);
 	CHECK(waitFor([&] { return newest.load() >= 110 * tapeloop::test::kGopLength; }, 10s));
 

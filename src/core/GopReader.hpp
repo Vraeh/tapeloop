@@ -6,13 +6,13 @@
 #include "core/Gop.hpp"
 #include "core/GopSource.hpp"
 #include "core/ReplayFormat.hpp"
+#include "core/ReplayWriter.hpp"
 
 #include <cstddef>
 #include <cstdint>
 #include <filesystem>
 #include <list>
 #include <memory>
-#include <mutex>
 #include <string>
 #include <unordered_map>
 #include <vector>
@@ -65,25 +65,6 @@ private:
 	Stats stats_;
 };
 
-// Where the files of a replay are, for one played while they are being written: set once
-// they are written, on one thread, and read on the threads that play it.
-class ReplayFiles {
-public:
-	struct Files {
-		std::filesystem::path manifest;
-		std::shared_ptr<const ReplayIndex> index;
-	};
-
-	// The index is the manifest's, and not null.
-	void set(std::filesystem::path manifest, std::shared_ptr<const ReplayIndex> index);
-	// Null until set.
-	std::shared_ptr<const Files> get() const;
-
-private:
-	mutable std::mutex mutex_;
-	std::shared_ptr<const Files> files_;
-};
-
 // The GOPs of one source of a stored replay, for a decode planner: the buffer's own while
 // it holds them, else read through a reader of its own.
 class StoredGops final : public GopSource {
@@ -91,9 +72,9 @@ public:
 	// live holds the buffer's GOPs by index, and may be shorter than the source's GOPs.
 	StoredGops(std::filesystem::path manifest, StoredSource source, std::vector<std::weak_ptr<const Gop>> live,
 		   size_t cacheBytes = kDefaultGopCacheBytes);
-	// For a replay that may not be stored yet: the GOPs the buffer let go of come from the
-	// files once they are set, and before that there are none. source may be the capture's,
-	// which lists the GOPs the files list.
+	// For a replay that may not be stored yet. A GOP of live expires only once the files
+	// are set, as the store sees to, so each is in the buffer or in the files. source may
+	// be the capture's, which lists the GOPs the files list.
 	StoredGops(std::shared_ptr<const ReplayFiles> files, StoredSource source,
 		   std::vector<std::weak_ptr<const Gop>> live, size_t cacheBytes = kDefaultGopCacheBytes);
 

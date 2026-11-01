@@ -112,9 +112,14 @@ bool SequencePlayer::putOnAir(uint64_t id)
 		     static_cast<unsigned long long>(id));
 		return false;
 	}
-	auto files = std::make_shared<ReplayFiles>();
-	if (!replay->manifest.empty()) {
-		files->set(replay->manifest, index);
+	std::shared_ptr<const ReplayFiles> files = replay->files;
+	if (!files) {
+		// Found on disk, or let go of by the buffers: whatever files it has are known.
+		auto own = std::make_shared<ReplayFiles>();
+		if (!replay->manifest.empty()) {
+			own->set(replay->manifest, index);
+		}
+		files = std::move(own);
 	}
 
 	std::vector<std::string> sources;
@@ -207,7 +212,6 @@ void SequencePlayer::follow()
 
 uint64_t SequencePlayer::play(std::string_view sourceKey)
 {
-	findStored();
 	if (!player_ || !index_ || !files_) {
 		return 0;
 	}
@@ -233,24 +237,6 @@ uint64_t SequencePlayer::play(std::string_view sourceKey)
 		return clip;
 	}
 	return 0;
-}
-
-void SequencePlayer::findStored()
-{
-	if (!files_ || files_->get()) {
-		return;
-	}
-	const Replay *replay = library_.find(replay_);
-	if (!replay || replay->manifest.empty()) {
-		return;
-	}
-	// The index of the files lists the sources and their GOPs as the one of the capture
-	// did, so the buffer's GOPs still line up with it.
-	std::shared_ptr<const ReplayIndex> index = indexOf(*replay);
-	if (index) {
-		files_->set(replay->manifest, index);
-		index_ = std::move(index);
-	}
 }
 
 void SequencePlayer::keepRate() noexcept

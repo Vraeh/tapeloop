@@ -219,6 +219,19 @@ ReplayIndex indexOf(const ReplayCapture &capture)
 	return index;
 }
 
+void ReplayFiles::set(std::filesystem::path manifest, std::shared_ptr<const ReplayIndex> index)
+{
+	std::shared_ptr<const Files> files = std::make_shared<Files>(Files{std::move(manifest), std::move(index)});
+	const std::lock_guard lock(mutex_);
+	files_ = std::move(files);
+}
+
+std::shared_ptr<const ReplayFiles::Files> ReplayFiles::get() const
+{
+	const std::lock_guard lock(mutex_);
+	return files_;
+}
+
 size_t ReplayWriter::GopKeyHash::operator()(const GopKey &key) const noexcept
 {
 	size_t hash = std::hash<uint64_t>{}(uint64_t{key.runKey} << 32 | key.packetCount);

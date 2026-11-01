@@ -130,19 +130,6 @@ void GopReader::remember(std::string key, std::shared_ptr<const Gop> gop)
 	}
 }
 
-void ReplayFiles::set(std::filesystem::path manifest, std::shared_ptr<const ReplayIndex> index)
-{
-	std::shared_ptr<const Files> files = std::make_shared<Files>(Files{std::move(manifest), std::move(index)});
-	const std::lock_guard lock(mutex_);
-	files_ = std::move(files);
-}
-
-std::shared_ptr<const ReplayFiles::Files> ReplayFiles::get() const
-{
-	const std::lock_guard lock(mutex_);
-	return files_;
-}
-
 StoredGops::StoredGops(std::filesystem::path manifest, StoredSource source, std::vector<std::weak_ptr<const Gop>> live,
 		       size_t cacheBytes)
 	: manifest_(std::move(manifest)),
@@ -174,11 +161,15 @@ std::vector<Nanoseconds> StoredGops::frameTimes() const
 
 std::shared_ptr<const Gop> StoredGops::read(size_t gop)
 {
-	if (files_) {
+	const std::weak_ptr<const Gop> live = gop < live_.size() ? live_[gop] : std::weak_ptr<const Gop>();
+	// Held until the reader has it, so the GOP cannot go between the look at the files and
+	// the read. Whoever lets go of the buffer's GOPs sets the files first, so a GOP already
+	// gone finds them set.
+	const std::shared_ptr<const Gop> held = live.lock();
+	if (files_ && !held) {
 		takeFiles();
 	}
-	return reader_.read(written_ ? written_->manifest : manifest_, stored_ ? *stored_ : source_, gop,
-			    gop < live_.size() ? live_[gop] : std::weak_ptr<const Gop>());
+	return reader_.read(written_ ? written_->manifest : manifest_, stored_ ? *stored_ : source_, gop, live);
 }
 
 void StoredGops::takeFiles()

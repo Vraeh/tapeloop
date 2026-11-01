@@ -307,6 +307,31 @@ TEST_CASE("ReplayLibrary follows a captured replay until it is written")
 	CHECK(library.addTag(failed, "goals"));
 }
 
+TEST_CASE("ReplayLibrary shares where a captured replay's files are once they are written")
+{
+	ReplayLibrary library;
+	const ReplayCapture capture = captureAt(10);
+	const uint64_t id = library.addCaptured(capture, "Liga");
+	const std::shared_ptr<tapeloop::ReplayFiles> files = library.find(id)->files;
+	REQUIRE(files);
+	CHECK_FALSE(files->get());
+	// Set here when the store could not set them.
+	REQUIRE(library.stored(id, "Liga/one.tplp", tapeloop::indexOf(capture)));
+	REQUIRE(files->get());
+	CHECK(files->get()->manifest == fs::path("Liga/one.tplp"));
+	CHECK(files->get()->index == library.find(id)->index);
+
+	const ReplayCapture second = captureAt(20);
+	const uint64_t set = library.addCaptured(second, "Liga");
+	const auto written = std::make_shared<const tapeloop::ReplayIndex>(tapeloop::indexOf(second));
+	library.find(set)->files->set("Liga/two.tplp", written);
+	REQUIRE(library.stored(set, "Liga/two.tplp", tapeloop::indexOf(second)));
+	CHECK(library.find(set)->index == written);
+	CHECK(library.find(set)->files->get()->index == written);
+
+	CHECK(library.find(library.addFound(foundAt(30)))->files == nullptr);
+}
+
 TEST_CASE("ReplayLibrary points at the buffers' GOPs only while they live")
 {
 	ReplayLibrary library;
@@ -349,17 +374,21 @@ TEST_CASE("ReplayLibrary forgets the frames of a replay the buffers no longer ho
 	CHECK(library.releaseExpired() == 2);
 	CHECK(library.find(stored)->index == nullptr);
 	CHECK(library.find(stored)->live.empty());
+	CHECK(library.find(stored)->files == nullptr);
 	CHECK(library.find(stored)->state == ReplayState::Stored);
 	CHECK(library.find(stored)->sources.size() == 1);
 	CHECK(library.find(unsaved)->index == nullptr);
 	// Still being written, it needs its index when the store reports it.
 	CHECK(library.find(writing)->index != nullptr);
+	CHECK(library.find(writing)->files != nullptr);
 	CHECK(library.find(held)->index != nullptr);
+	CHECK(library.find(held)->files != nullptr);
 	CHECK(library.find(held)->live[0].size() == 3);
 	CHECK(library.releaseExpired() == 0);
 	kept.clear();
 	CHECK(library.releaseExpired() == 1);
 	CHECK(library.find(held)->index == nullptr);
+	CHECK(library.find(held)->files == nullptr);
 }
 
 TEST_CASE("ReplayLibrary takes replays found on disk with their tags")

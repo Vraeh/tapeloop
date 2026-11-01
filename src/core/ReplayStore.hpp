@@ -12,6 +12,7 @@
 #include <deque>
 #include <filesystem>
 #include <list>
+#include <memory>
 #include <mutex>
 #include <optional>
 #include <string>
@@ -53,8 +54,10 @@ public:
 	ReplayStore(ReplayStore &&) = delete;
 	ReplayStore &operator=(ReplayStore &&) = delete;
 
-	// Each returns the ticket its result will carry, from 1 up.
-	uint64_t write(ReplayCapture capture);
+	// Each returns the ticket its result will carry, from 1 up. A capture's files, when
+	// given, are set once it is written and before it lets go of its GOPs, so that a
+	// replay played meanwhile finds each GOP in the buffer or on disk.
+	uint64_t write(ReplayCapture capture, std::shared_ptr<ReplayFiles> files = nullptr);
 	uint64_t writeTags(std::filesystem::path manifest, std::vector<std::string> tags);
 	uint64_t scan(std::filesystem::path base);
 
@@ -72,6 +75,7 @@ private:
 		uint64_t ticket = 0;
 		StoreResult::Kind kind = StoreResult::Kind::Capture;
 		ReplayCapture capture;
+		std::shared_ptr<ReplayFiles> files;
 		std::filesystem::path path;
 		std::vector<std::string> tags;
 		// Its result, made by the thread that asks, so that finishing it never allocates.

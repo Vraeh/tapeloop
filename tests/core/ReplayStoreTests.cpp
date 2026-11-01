@@ -125,6 +125,36 @@ TEST_CASE("a capture lets go of its GOPs once written")
 	CHECK(store.poll().size() == 1);
 }
 
+TEST_CASE("a capture's files are set before it lets go of its GOPs")
+{
+	TempDirectory dir;
+	const auto files = std::make_shared<tapeloop::ReplayFiles>();
+	// 1 once the store has let go of the capture's last GOP, 2 when its files were set by
+	// then.
+	std::atomic<int> freed{0};
+	const Gops gops = makeGops(3);
+	ReplayStore store;
+	{
+		Gops captured = gops;
+		captured.back() = std::shared_ptr<const Gop>(gops.back().get(), [&files, &freed](const Gop *) {
+			freed = files->get() ? 2 : 1;
+		});
+		store.write(captureOf(dir.path(), {sourceOf("a", captured)}), files);
+	}
+	store.waitUntilIdle();
+	CHECK(freed == 2);
+
+	const std::vector<StoreResult> results = store.poll();
+	REQUIRE(results.size() == 1);
+	REQUIRE(results[0].written);
+	const std::shared_ptr<const tapeloop::ReplayFiles::Files> set = files->get();
+	REQUIRE(set);
+	CHECK(set->manifest == results[0].written->manifest);
+	REQUIRE(set->index);
+	REQUIRE(set->index->sources.size() == 1);
+	requireReadsBack(set->manifest, set->index->sources[0], gops);
+}
+
 TEST_CASE("closing the store finishes the captures still asked for")
 {
 	TempDirectory dir;
