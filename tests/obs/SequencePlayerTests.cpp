@@ -401,6 +401,27 @@ TEST_CASE_METHOD(ObsFixture, "a sequence goes back to live when cut short, and n
 	obs_wait_for_destroy_queue();
 }
 
+TEST_CASE_METHOD(ObsFixture, "a sequence back to live lets go of the replay", "[obs][sequence]")
+{
+	registerReplaySource({});
+	const UiTasks ui;
+	ReplayLibrary library;
+	std::optional<SequencePlayer> sequence(std::in_place, library);
+	REQUIRE(sequence->player());
+
+	const Captured captured(library, {"a"}, 120);
+	REQUIRE(sequence->putOnAir(captured.id()));
+	const std::weak_ptr<const tapeloop::ReplayIndex> index = library.find(captured.id())->index;
+	// Gone from the library, the replay stays with the sequence while it is on air.
+	REQUIRE(library.remove(captured.id()));
+	CHECK_FALSE(index.expired());
+	sequence->takeOffAir();
+	CHECK(index.expired());
+
+	sequence.reset();
+	obs_wait_for_destroy_queue();
+}
+
 TEST_CASE_METHOD(ObsFixture, "a sequence leaves out what has nothing to play", "[obs][sequence]")
 {
 	registerReplaySource({});
