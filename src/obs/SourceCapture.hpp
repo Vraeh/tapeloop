@@ -70,6 +70,8 @@ public:
 
 	SourceCapture(const SourceCapture &) = delete;
 	SourceCapture &operator=(const SourceCapture &) = delete;
+	SourceCapture(SourceCapture &&) = delete;
+	SourceCapture &operator=(SourceCapture &&) = delete;
 
 	// Starts encoding source, which needs no reference beyond the call. The buffer is
 	// emptied once the encoder has started unless keepBuffer is set; a kept buffer takes
