@@ -17,6 +17,7 @@ extern "C" {
 }
 
 #include <algorithm>
+#include <array>
 #include <cerrno>
 #include <cstring>
 #include <limits>
@@ -40,9 +41,9 @@ constexpr int kIoBufferSize = 256 * 1024;
 
 std::runtime_error ffmpegError(const std::string &what, int code)
 {
-	char text[AV_ERROR_MAX_STRING_SIZE] = {};
-	av_strerror(code, text, sizeof(text));
-	return std::runtime_error(what + ": " + text);
+	std::array<char, AV_ERROR_MAX_STRING_SIZE> text{};
+	av_strerror(code, text.data(), text.size());
+	return std::runtime_error(what + ": " + text.data());
 }
 
 // FFmpeg counts the bytes of a buffer in an int and reads past its end by the padding.
@@ -293,7 +294,8 @@ void Mp4Writer::close() noexcept
 	context_ = nullptr;
 	if (io_) {
 		// Not avio_close(), which would take the context for one of FFmpeg's protocols.
-		av_freep(&io_->buffer);
+		av_free(io_->buffer);
+		io_->buffer = nullptr;
 		avio_context_free(&io_);
 	}
 	file_.close();

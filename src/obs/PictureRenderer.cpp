@@ -311,10 +311,10 @@ void PictureRenderer::setColors(const decode::Picture &picture) noexcept
 	const video_range_type range = picture.fullRange ? VIDEO_RANGE_FULL : VIDEO_RANGE_PARTIAL;
 	const video_format format = picture.layout == decode::PixelLayout::Nv12 ? VIDEO_FORMAT_NV12 : VIDEO_FORMAT_I420;
 
-	float matrix[16] = {};
-	float minimum[3] = {};
-	float maximum[3] = {};
-	video_format_get_parameters_for_format(space, range, format, matrix, minimum, maximum);
+	std::array<float, 16> matrix{};
+	std::array<float, 3> minimum{};
+	std::array<float, 3> maximum{};
+	video_format_get_parameters_for_format(space, range, format, matrix.data(), minimum.data(), maximum.data());
 	for (size_t row = 0; row < toRgb_.size(); ++row) {
 		vec4_set(&toRgb_[row], matrix[row * 4], matrix[row * 4 + 1], matrix[row * 4 + 2], matrix[row * 4 + 3]);
 	}

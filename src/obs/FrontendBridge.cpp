@@ -52,6 +52,9 @@ FrontendBridge::FrontendBridge()
 	obs_frontend_add_event_callback(handleEvent, this);
 	obs_frontend_add_save_callback(handleSave, this);
 	obs_add_tick_callback(handleTick, this);
+	// Registered last: the hotkey can fire at once, and its handler reads alive_, which
+	// the initializer list would not have built yet.
+	// NOLINTNEXTLINE(cppcoreguidelines-prefer-member-initializer)
 	captureHotkey_ = obs_hotkey_register_frontend(kCaptureHotkeyName, obs_module_text("Hotkey.CaptureReplay"),
 						      handleCaptureHotkey, this);
 }
@@ -197,7 +200,7 @@ void FrontendBridge::handleCaptureHotkey(void *data, obs_hotkey_id, obs_hotkey_t
 
 void FrontendBridge::onUiThread(void (*work)(CaptureManager &)) noexcept
 {
-	auto *task = new (std::nothrow) std::function<void()>;
+	std::unique_ptr<std::function<void()>> task(new (std::nothrow) std::function<void()>);
 	if (!task) {
 		return;
 	}
@@ -208,10 +211,9 @@ void FrontendBridge::onUiThread(void (*work)(CaptureManager &)) noexcept
 			}
 		};
 	} catch (...) {
-		delete task;
 		return;
 	}
-	obs_queue_task(OBS_TASK_UI, runTask, task, false);
+	obs_queue_task(OBS_TASK_UI, runTask, task.release(), false);
 }
 
 } // namespace tapeloop::obs

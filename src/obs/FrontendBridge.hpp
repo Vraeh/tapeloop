@@ -25,6 +25,8 @@ public:
 
 	FrontendBridge(const FrontendBridge &) = delete;
 	FrontendBridge &operator=(const FrontendBridge &) = delete;
+	FrontendBridge(FrontendBridge &&) = delete;
+	FrontendBridge &operator=(FrontendBridge &&) = delete;
 
 	CaptureManager &manager() noexcept { return *manager_; }
 

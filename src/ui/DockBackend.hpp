@@ -88,7 +88,13 @@ struct EncoderChoice {
 // manager; tests replace it, so the widgets run without OBS.
 class DockBackend {
 public:
+	DockBackend() = default;
 	virtual ~DockBackend() = default;
+
+	DockBackend(const DockBackend &) = delete;
+	DockBackend &operator=(const DockBackend &) = delete;
+	DockBackend(DockBackend &&) = delete;
+	DockBackend &operator=(DockBackend &&) = delete;
 
 	virtual std::vector<DockSource> sources() const = 0;
 	virtual BufferSettings settings() const = 0;

@@ -7,6 +7,8 @@
 
 #include <algorithm>
 #include <cstring>
+#include <iterator>
+#include <span>
 #include <utility>
 
 namespace tapeloop::obs {
@@ -39,7 +41,7 @@ int32_t nextPreset(int32_t rate, bool up) noexcept
 	} else {
 		const auto below = std::lower_bound(kSpeedPresets.begin(), kSpeedPresets.end(), speed);
 		if (below != kSpeedPresets.begin()) {
-			next = *(below - 1);
+			next = *std::prev(below);
 		}
 	}
 	return rate < 0 ? -next : next;
@@ -491,20 +493,24 @@ bool ReplayPlayer::handOff(const decode::Picture &picture, const Wanted &wanted)
 	Copy &copy = copies_[back_];
 	copy.bytes.resize(total);
 	copy.picture = picture;
-	uint8_t *at = copy.bytes.data();
+	const std::span<uint8_t> bytes(copy.bytes);
+	size_t at = 0;
 	for (size_t plane = 0; plane < 3; ++plane) {
 		if (rows[plane] == 0) {
 			copy.picture.planes[plane] = nullptr;
 			copy.picture.strides[plane] = 0;
 			continue;
 		}
+		const std::span<uint8_t> to = bytes.subspan(at, size_t{rowBytes[plane]} * rows[plane]);
+		const std::span<const uint8_t> from(picture.planes[plane],
+						    size_t{rows[plane] - 1} * picture.strides[plane] + rowBytes[plane]);
 		for (uint32_t row = 0; row < rows[plane]; ++row) {
-			std::memcpy(at + size_t{row} * rowBytes[plane],
-				    picture.planes[plane] + size_t{row} * picture.strides[plane], rowBytes[plane]);
+			std::memcpy(to.subspan(size_t{row} * rowBytes[plane]).data(),
+				    from.subspan(size_t{row} * picture.strides[plane]).data(), rowBytes[plane]);
 		}
-		copy.picture.planes[plane] = at;
+		copy.picture.planes[plane] = to.data();
 		copy.picture.strides[plane] = rowBytes[plane];
-		at += size_t{rowBytes[plane]} * rows[plane];
+		at += to.size();
 	}
 	copy.clip = wanted.clip;
 	copy.frame = wanted.frame;

@@ -98,6 +98,8 @@ private:
 	// made; clears that for the next call.
 	bool refusedSize() noexcept;
 	DecodeStatus statusOf(int result) const noexcept;
+	// Where the slot of frame is, while the frame is held.
+	std::optional<size_t> heldSlot(const DecodedFrame &frame) const noexcept;
 	Slot *slotOf(const DecodedFrame &frame) noexcept;
 	const Slot *slotOf(const DecodedFrame &frame) const noexcept;
 	// A free slot, or a new one; null when memory runs out.

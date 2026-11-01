@@ -1,5 +1,6 @@
-# Checks for the core library (src/core). CI runs them with the Clang of the runner
-# and fails on any warning.
+# Checks for the core library (src/core), the decoder (src/decode) and the OBS glue
+# (src/obs), which adds one exception of its own. CI runs them with the Clang of the
+# runner and fails on any warning.
 #
 # Disabled, and why:
 # - bugprone-easily-swappable-parameters: parameters used together are already exempt,
@@ -35,7 +36,7 @@ Checks: >
   -modernize-return-braced-init-list,
   -performance-enum-size
 WarningsAsErrors: '*'
-HeaderFilterRegex: 'src/core/'
+HeaderFilterRegex: 'src/(core|decode|obs)/'
 CheckOptions:
   # Naming as in the OBS C++ code style.
   readability-identifier-naming.NamespaceCase: lower_case

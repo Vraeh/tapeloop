@@ -27,7 +27,14 @@ namespace tapeloop::obs {
 // obs-frontend-api; tests replace it.
 class CaptureHost {
 public:
+	CaptureHost() = default;
 	virtual ~CaptureHost() = default;
+
+	CaptureHost(const CaptureHost &) = delete;
+	CaptureHost &operator=(const CaptureHost &) = delete;
+	CaptureHost(CaptureHost &&) = delete;
+	CaptureHost &operator=(CaptureHost &&) = delete;
+
 	virtual bool streamingActive() const = 0;
 	virtual bool recordingActive() const = 0;
 	// The settings were edited: have them saved at once, so that a crash right after an
@@ -78,6 +85,8 @@ public:
 
 	CaptureManager(const CaptureManager &) = delete;
 	CaptureManager &operator=(const CaptureManager &) = delete;
+	CaptureManager(CaptureManager &&) = delete;
+	CaptureManager &operator=(CaptureManager &&) = delete;
 
 	const BufferSettings &settings() const noexcept { return settings_; }
 	// An edit of the settings, which the host is asked to save unless the collection
@@ -174,6 +183,8 @@ private:
 
 		Activation(const Activation &) = delete;
 		Activation &operator=(const Activation &) = delete;
+		Activation(Activation &&) = delete;
+		Activation &operator=(Activation &&) = delete;
 
 		void hold(obs_source_t *source);
 		void reset() noexcept;
