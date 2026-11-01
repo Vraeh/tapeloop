@@ -4,8 +4,8 @@
 #include "core/GopReader.hpp"
 #include "core/ReplayExport.hpp"
 #include "core/ReplayWriter.hpp"
-#include "decode/Mp4Writer.hpp"
 #include "decode/FFmpegVersion.hpp"
+#include "decode/Mp4Writer.hpp"
 
 #include "../core/TempDirectory.hpp"
 #include "FuzzInput.hpp"
