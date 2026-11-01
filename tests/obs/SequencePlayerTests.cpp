@@ -473,6 +473,26 @@ TEST_CASE_METHOD(ObsFixture, "a closed sequence goes back to live and forgets it
 	obs_wait_for_destroy_queue();
 }
 
+TEST_CASE_METHOD(ObsFixture, "an end that reaches the UI thread after the sequence is gone does nothing",
+		 "[obs][sequence]")
+{
+	registerReplaySource({});
+	const UiTasks ui;
+	ReplayLibrary library;
+	// On the heap, so that a sanitizer sees a use once it is gone.
+	auto sequence = std::make_unique<SequencePlayer>(library);
+	REQUIRE(sequence->player());
+
+	// A clip of a sixth of a second plays out by itself, and its end waits for the UI
+	// thread.
+	const Captured captured(library, {"a"}, 2);
+	REQUIRE(sequence->putOnAir(captured.id()));
+	REQUIRE(waitFor([] { return UiTasks::pending() > 0; }, 10s));
+	sequence.reset();
+	obs_wait_for_destroy_queue();
+	CHECK(UiTasks::run() == 1);
+}
+
 TEST_CASE_METHOD(ObsFixture, "a replay put on air while written plays its next sources from its files",
 		 "[obs][sequence]")
 {
