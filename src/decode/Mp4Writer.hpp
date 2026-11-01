@@ -25,7 +25,10 @@ namespace tapeloop::decode {
 // the codec gets a sample entry of its own, and the frames before the in point, which
 // only serve decoding, are left out of what plays by an edit list. The moov box goes at
 // the end, so the file is written in one pass. The file is created anew: open() fails
-// when one is at its path.
+// when one is at its path. A sequence parameter set cut short fails open() or write()
+// before it reaches the muxer, which would read past its end. A file of only packets
+// without bytes fails finish(): the muxer leaves such packets out, so the file would
+// have no track.
 class Mp4Writer final : public VideoFileWriter {
 public:
 	Mp4Writer() = default;
@@ -59,6 +62,10 @@ private:
 	AVPacket *packet_ = nullptr;
 	// The configuration of the last packet written.
 	CodecConfig config_;
+	// Whether the first packet with bytes is still to come and the muxer takes it for the
+	// configuration, as the first GOP had none.
+	bool configFromPacket_ = false;
+	bool bytesWritten_ = false;
 	int width_ = 0;
 	int height_ = 0;
 	int64_t frameTicks_ = 1;

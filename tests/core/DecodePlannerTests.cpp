@@ -4,6 +4,7 @@
 #include "core/DecodePlanner.hpp"
 
 #include "AllocationCounter.hpp"
+#include "CopiedGops.hpp"
 #include "FakeDecoder.hpp"
 #include "SyntheticEncoder.hpp"
 
@@ -12,10 +13,12 @@
 #include <cstddef>
 #include <cstdint>
 #include <limits>
+#include <map>
 #include <memory>
 #include <new>
 #include <optional>
 #include <span>
+#include <utility>
 #include <vector>
 
 using tapeloop::Clip;
@@ -30,6 +33,7 @@ using tapeloop::Nanoseconds;
 using tapeloop::PlayDirection;
 using tapeloop::VideoCodec;
 using tapeloop::test::AllocationCounter;
+using tapeloop::test::CopiedGops;
 using tapeloop::test::FakeDecoder;
 using tapeloop::test::SyntheticEncoder;
 
@@ -908,4 +912,138 @@ TEST_CASE("DecodePlanner remembers a skipped frame after the pass leaves its GOP
 	// Frames it holds still show without decoding.
 	REQUIRE(shows(planner, decoder, 11));
 	CHECK(planner.work().packetsSent == sent);
+}
+
+TEST_CASE("DecodePlanner opens the decoder again only for another codec or configuration")
+{
+	FakeDecoder decoder = makeDecoder();
+	DecodePlanner planner(decoder);
+	// Each run has a configuration object of its own, the first two with the same bytes.
+	planner.load(makeClip({{VideoCodec::H264, {1}, 1},
+			       {VideoCodec::H264, {1}, 1},
+			       {VideoCodec::Hevc, {1}, 1},
+			       {VideoCodec::Hevc, {2}, 1}}));
+	for (int64_t frame = 0; frame < 4 * kGopLength; ++frame) {
+		CAPTURE(frame);
+		REQUIRE(shows(planner, decoder, frame));
+	}
+	CHECK(planner.work().opens == 3);
+	CHECK(planner.work().resets == 1);
+}
+
+TEST_CASE("DecodePlanner reads a GOP when a pass over it starts, and holds it until another starts")
+{
+	FakeDecoder decoder = makeDecoder();
+	DecodePlanner planner(decoder);
+	auto owned = std::make_unique<CopiedGops>(makeClip({{VideoCodec::H264, {1, 2, 3}, 3}}));
+	CopiedGops &gops = *owned;
+	planner.load(std::move(owned));
+	for (int64_t frame = 0; frame < 3 * kGopLength; ++frame) {
+		CAPTURE(frame);
+		REQUIRE(shows(planner, decoder, frame));
+	}
+	CHECK(gops.reads == std::map<size_t, int>{{0, 1}, {1, 1}, {2, 1}});
+	// Frames kept need no read; a GOP decoded again is read again.
+	REQUIRE(shows(planner, decoder, 2 * kGopLength + 1));
+	REQUIRE(shows(planner, decoder, 5));
+	CHECK(gops.reads[0] == 2);
+	// Every GOP read is a copy with a configuration object of its own, as one read from
+	// disk is, yet one run opens the decoder once.
+	CHECK(planner.work().opens == 1);
+}
+
+TEST_CASE("DecodePlanner has no frames to show of a GOP that cannot be read, nor reads it again while kept")
+{
+	FakeDecoder decoder = makeDecoder();
+	DecodePlanner planner(decoder);
+	auto owned = std::make_unique<CopiedGops>(makeClip({{VideoCodec::H264, {1}, 5}}));
+	CopiedGops &gops = *owned;
+	gops.unreadable = {1};
+	planner.load(std::move(owned));
+
+	REQUIRE(shows(planner, decoder, 3));
+	CHECK(planner.frameAt(timeOf(kGopLength + 2)).status == DecodeStatus::InvalidData);
+	CHECK(planner.frameAt(timeOf(kGopLength + 5)).status == DecodeStatus::InvalidData);
+	CHECK(gops.reads[1] == 1);
+	// The GOPs around it still play.
+	CHECK(shows(planner, decoder, 2 * kGopLength + 4));
+	CHECK(shows(planner, decoder, 6));
+	CHECK(planner.frameAt(timeOf(kGopLength + 2)).status == DecodeStatus::InvalidData);
+	CHECK(gops.reads[1] == 1);
+	// Once no longer kept, it is tried again.
+	REQUIRE(shows(planner, decoder, 3 * kGopLength));
+	REQUIRE(shows(planner, decoder, 4 * kGopLength));
+	REQUIRE(shows(planner, decoder, 2 * kGopLength));
+	CHECK(planner.keptGopCount() == 2);
+	CHECK(planner.prefetch(PlayDirection::Backward) == DecodeStatus::InvalidData);
+	CHECK(gops.reads[1] == 2);
+	CHECK(planner.prefetch(PlayDirection::Backward) == DecodeStatus::Ok);
+	CHECK(gops.reads[1] == 2);
+	CHECK(shows(planner, decoder, 2 * kGopLength + 1));
+}
+
+TEST_CASE("DecodePlanner starts a pass over again when a GOP that cannot be read takes its slot")
+{
+	FakeDecoder decoder = makeDecoder();
+	DecodePlanner planner(decoder, DecodePlannerConfig{1});
+	auto owned = std::make_unique<CopiedGops>(makeClip({{VideoCodec::H264, {1}, 2}}));
+	owned->unreadable = {1};
+	planner.load(std::move(owned));
+
+	REQUIRE(shows(planner, decoder, 3));
+	CHECK(planner.frameAt(timeOf(kGopLength + 2)).status == DecodeStatus::InvalidData);
+	CHECK(decoder.outstanding.empty());
+	// The pass over GOP 0 had gone past frame 2, whose slot is gone.
+	CHECK(shows(planner, decoder, 2));
+	CHECK(planner.work().resets == 1);
+}
+
+namespace {
+
+// Answers with whatever place it is told to, as a source built from a damaged file might.
+class MisplacingGops final : public tapeloop::GopSource {
+public:
+	size_t gopCount() const noexcept override { return 1; }
+	size_t packetCount(size_t) const noexcept override { return 2; }
+	tapeloop::FrameLocation locate(Nanoseconds) const noexcept override { return at; }
+	std::vector<Nanoseconds> frameTimes() const override { return {}; }
+	std::shared_ptr<const tapeloop::Gop> read(size_t) override
+	{
+		++reads;
+		return nullptr;
+	}
+
+	tapeloop::FrameLocation at;
+	int reads = 0;
+};
+
+} // namespace
+
+TEST_CASE("DecodePlanner refuses a frame its source places outside its GOPs")
+{
+	FakeDecoder decoder = makeDecoder();
+	DecodePlanner planner(decoder);
+	auto owned = std::make_unique<MisplacingGops>();
+	MisplacingGops &gops = *owned;
+	planner.load(std::move(owned));
+
+	gops.at = {1, 0};
+	CHECK(planner.frameAt(timeOf(0)).status == DecodeStatus::InvalidData);
+	gops.at = {0, 2};
+	CHECK(planner.frameAt(timeOf(0)).status == DecodeStatus::InvalidData);
+	CHECK(planner.prefetch(PlayDirection::Backward) == DecodeStatus::Ok);
+	CHECK(gops.reads == 0);
+	CHECK(planner.keptGopCount() == 0);
+}
+
+TEST_CASE("DecodePlanner has nothing to show without GOPs")
+{
+	FakeDecoder decoder = makeDecoder();
+	DecodePlanner planner(decoder);
+	planner.load(makeClip({{VideoCodec::H264, {1}, 1}}));
+	REQUIRE(shows(planner, decoder, 1));
+	planner.load(nullptr);
+	CHECK(planner.frameAt(timeOf(0)).status == DecodeStatus::NoFrame);
+	CHECK(planner.prefetch(PlayDirection::Backward) == DecodeStatus::Ok);
+	CHECK(decoder.outstanding.empty());
 }

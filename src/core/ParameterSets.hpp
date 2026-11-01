@@ -22,4 +22,12 @@ namespace tapeloop {
 size_t copyWithoutKnownParameterSets(VideoCodec codec, std::span<const uint8_t> config, std::span<const uint8_t> packet,
 				     std::span<uint8_t> out) noexcept;
 
+// Whether each sequence parameter set in data, in Annex B, holds every field up to the
+// last one whose value FFmpeg's MP4 muxer counts through as it writes the sample entry:
+// the short-term reference picture sets of HEVC, the picture order count cycle of H.264.
+// In a set cut short before them the muxer reads counts of billions past its end and
+// steps through each, for minutes. Data that is not Annex B passes: the muxer does not
+// read the sets in it.
+bool sequenceParameterSetsAreWhole(VideoCodec codec, std::span<const uint8_t> data) noexcept;
+
 } // namespace tapeloop

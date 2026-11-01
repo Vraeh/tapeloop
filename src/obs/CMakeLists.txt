@@ -11,6 +11,7 @@ target_sources(
     CaptureManager.hpp
     CaptureOutput.cpp
     CaptureOutput.hpp
+    GpuPictures.hpp
     ManagerDockBackend.cpp
     ManagerDockBackend.hpp
     ObsEncoders.cpp
@@ -21,6 +22,10 @@ target_sources(
     ProfileHotkeys.hpp
     RenderAdapter.cpp
     RenderAdapter.hpp
+    ReplayPlayer.cpp
+    ReplayPlayer.hpp
+    ReplaySource.cpp
+    ReplaySource.hpp
     SettingsData.cpp
     SettingsData.hpp
     SourceCapture.cpp

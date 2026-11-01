@@ -48,6 +48,7 @@ target_sources(
     core/BufferLifecycleTests.cpp
     core/BufferSettingsTests.cpp
     core/ClipTests.cpp
+    core/CopiedGops.hpp
     core/Crc32cTests.cpp
     core/DecodePlannerTests.cpp
     core/EncoderPolicyTests.cpp
@@ -58,6 +59,7 @@ target_sources(
     core/GopTests.cpp
     core/MediaTimeTests.cpp
     core/MomentCutterTests.cpp
+    core/NalUnitWriter.hpp
     core/ParameterSetsTests.cpp
     core/PlayheadTests.cpp
     core/ReplayExportTests.cpp
@@ -85,5 +87,16 @@ include(Catch)
 catch_discover_tests(tapeloop-core-tests)
 
 if(TAPELOOP_FUZZ)
+  # The replay readers are fuzzed through to the FFmpeg the plugin links. FFmpeg's own
+  # configure builds it with the system's compiler, whatever compiles the harnesses, and
+  # its build is keyed on the C compiler: the system's here too, as in the libobs
+  # harness, so that both share one build.
+  if(NOT CMAKE_C_COMPILER)
+    set(CMAKE_C_COMPILER cc)
+  endif()
+  enable_language(C)
+  include("${CMAKE_CURRENT_SOURCE_DIR}/../cmake/ffmpeg/ffmpeg.cmake")
+  tapeloop_add_ffmpeg()
+  add_subdirectory(../src/decode decode)
   add_subdirectory(fuzz)
 endif()

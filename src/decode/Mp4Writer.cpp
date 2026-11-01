@@ -5,6 +5,7 @@
 #include "decode/FFmpegHeaders.hpp"
 
 #include "core/FileIo.hpp"
+#include "core/ParameterSets.hpp"
 
 extern "C" {
 #include <libavcodec/avcodec.h>
@@ -107,6 +108,15 @@ std::pair<int, int> pictureSize(const Gop &gop)
 	return *size;
 }
 
+// The muxer reads the sequence parameter sets of each configuration as it finishes the
+// file. One cut short holds it up there for minutes, so it is refused before it gets in.
+void checkParameterSets(VideoCodec codec, std::span<const uint8_t> data)
+{
+	if (!sequenceParameterSetsAreWhole(codec, data)) {
+		throw std::runtime_error("a sequence parameter set is cut short");
+	}
+}
+
 } // namespace
 
 Mp4Writer::~Mp4Writer()
@@ -118,6 +128,9 @@ void Mp4Writer::open(const std::filesystem::path &path, const Gop &first)
 {
 	close();
 	config_ = first.codecConfig() ? *first.codecConfig() : CodecConfig{};
+	checkParameterSets(first.codec(), config_);
+	configFromPacket_ = config_.empty();
+	bytesWritten_ = false;
 	frameTicks_ = std::max<int64_t>(ticksOf(first.frameDuration()), 1);
 	lastDts_ = std::numeric_limits<int64_t>::min();
 	const auto [width, height] = pictureSize(first);
@@ -210,11 +223,24 @@ void Mp4Writer::write(const Gop &gop, size_t packet, Nanoseconds time)
 	}
 	const PacketRecord &record = gop.packets()[packet];
 	const std::span<const uint8_t> data = gop.packetData(packet);
+	if (const CodecConfig *config = gop.codecConfig(); config && *config != config_) {
+		checkParameterSets(gop.codec(), *config);
+	}
+	// Without a configuration in the first GOP, the muxer takes the first packet with
+	// bytes for one.
+	if (configFromPacket_ && !data.empty()) {
+		checkParameterSets(gop.codec(), data);
+		configFromPacket_ = false;
+	}
 	av_packet_unref(packet_);
 	if (av_new_packet(packet_, ffmpegSize(data.size())) < 0) {
 		throw std::bad_alloc();
 	}
-	std::memcpy(packet_->data, data.data(), data.size());
+	// A GOP of empty packets has no bytes at all, and memcpy takes no null pointer even
+	// for nothing.
+	if (!data.empty()) {
+		std::memcpy(packet_->data, data.data(), data.size());
+	}
 	packet_->stream_index = 0;
 	packet_->pts = ticksOf(time);
 	// Whatever the encoder put between decoding and showing a frame, in frames, stays.
@@ -227,8 +253,9 @@ void Mp4Writer::write(const Gop &gop, size_t packet, Nanoseconds time)
 		throw std::runtime_error("the packets are not in decode order");
 	}
 	lastDts_ = packet_->dts;
-	// A run of another configuration gets a sample entry of its own.
-	if (const CodecConfig *config = gop.codecConfig(); config && *config != config_) {
+	// A run of another configuration gets a sample entry of its own, from its first packet
+	// with bytes: the muxer drops a packet without any, and the configuration with it.
+	if (const CodecConfig *config = gop.codecConfig(); config && *config != config_ && !data.empty()) {
 		uint8_t *side = av_packet_new_side_data(packet_, AV_PKT_DATA_NEW_EXTRADATA, config->size());
 		if (!side) {
 			throw std::bad_alloc();
@@ -239,12 +266,16 @@ void Mp4Writer::write(const Gop &gop, size_t packet, Nanoseconds time)
 	if (const int error = av_write_frame(context_, packet_); error < 0) {
 		fail("cannot write to the MP4 file", error);
 	}
+	bytesWritten_ = bytesWritten_ || !data.empty();
 }
 
 void Mp4Writer::finish()
 {
 	if (!context_) {
 		throw std::logic_error("no MP4 file is open");
+	}
+	if (!bytesWritten_) {
+		throw std::runtime_error("no packet of the MP4 file holds any bytes");
 	}
 	if (const int error = av_write_trailer(context_); error < 0) {
 		fail("cannot finish the MP4 file", error);

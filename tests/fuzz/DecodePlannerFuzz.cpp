@@ -3,6 +3,7 @@
 
 #include "core/DecodePlanner.hpp"
 
+#include "../core/CopiedGops.hpp"
 #include "../core/FakeDecoder.hpp"
 #include "../core/SyntheticEncoder.hpp"
 #include "FuzzInput.hpp"
@@ -11,6 +12,8 @@
 #include <cstddef>
 #include <cstdint>
 #include <memory>
+#include <set>
+#include <utility>
 #include <vector>
 
 using tapeloop::Clip;
@@ -25,19 +28,23 @@ using tapeloop::PlayDirection;
 using tapeloop::VideoCodec;
 using tapeloop::fuzz::FuzzInput;
 using tapeloop::fuzz::require;
+using tapeloop::test::CopiedGops;
 using tapeloop::test::FakeDecoder;
 using tapeloop::test::SyntheticEncoder;
 
 namespace {
 
-// A clip of whole GOPs in runs, and for each frame number the codec and configuration
-// of its run.
+// A clip of whole GOPs in runs, for each frame number the codec and configuration of its
+// run, and the GOPs that cannot be read.
 struct Model {
 	int64_t gopLength = 1;
 	int64_t frames = 0;
 	std::vector<VideoCodec> codecOfFrame;
 	std::vector<CodecConfig> configOfFrame;
+	std::set<size_t> unreadable;
 	Clip clip;
+
+	size_t gopOf(int64_t frame) const { return static_cast<size_t>(frame / gopLength); }
 };
 
 SyntheticEncoder::Config encoderConfig(int64_t gopLength)
@@ -70,9 +77,21 @@ Model readClip(FuzzInput &input)
 			gops.push_back(builder.seal());
 		}
 	}
+	// Sometimes GOPs that cannot be read, whose frames the planner reports as InvalidData.
+	for (int fails = input.byte() % 8 - 5; fails > 0; --fails) {
+		model.unreadable.insert(input.byte() % gops.size());
+	}
 	model.frames = static_cast<int64_t>(model.codecOfFrame.size());
 	model.clip = Clip(gops, gops.front()->startTime(), gops.back()->lastTime());
 	return model;
+}
+
+// Through copies, each with a configuration object of its own, as GOPs read from disk are.
+void load(DecodePlanner &planner, const Model &model)
+{
+	auto gops = std::make_unique<CopiedGops>(model.clip);
+	gops->unreadable = model.unreadable;
+	planner.load(std::move(gops));
 }
 
 void checkAlways(const DecodePlanner &planner, const FakeDecoder &decoder, const DecodePlannerConfig &config,
@@ -109,8 +128,10 @@ extern "C" int LLVMFuzzerTestOneInput(const uint8_t *data, size_t size)
 		DecodePlanner planner(decoder, config);
 		Model model = readClip(input);
 		*gopLength = model.gopLength;
-		planner.load(model.clip);
+		load(planner, model);
 		int64_t last = 0;
+		// The GOP of the frame asked for last, which the planner decodes ahead from.
+		size_t lastGop = 0;
 
 		while (!input.empty()) {
 			switch (input.byte() % 6) {
@@ -126,7 +147,8 @@ extern "C" int LLVMFuzzerTestOneInput(const uint8_t *data, size_t size)
 				const DecodeResult result = planner.frameAt(encoder.timeOf(frame));
 				const int64_t shown = std::clamp<int64_t>(frame, 0, model.frames - 1);
 				last = shown;
-				if (decoder.dropped.contains(shown)) {
+				lastGop = model.gopOf(shown);
+				if (model.unreadable.contains(lastGop) || decoder.dropped.contains(shown)) {
 					require(result.status == DecodeStatus::InvalidData);
 					break;
 				}
@@ -138,17 +160,27 @@ extern "C" int LLVMFuzzerTestOneInput(const uint8_t *data, size_t size)
 				require(session.config == model.configOfFrame[static_cast<size_t>(shown)]);
 				break;
 			}
-			case 3:
-				require(planner.prefetch(input.flag() ? PlayDirection::Backward
-								      : PlayDirection::Forward) == DecodeStatus::Ok);
+			case 3: {
+				const bool backward = input.flag();
+				const DecodeStatus status =
+					planner.prefetch(backward ? PlayDirection::Backward : PlayDirection::Forward);
+				// Only reverse play decodes ahead, and only the GOP before the last one asked for.
+				const bool unreadable = backward && lastGop > 0 &&
+							model.unreadable.contains(lastGop - 1);
+				require(status == DecodeStatus::Ok ||
+					(unreadable && status == DecodeStatus::InvalidData));
 				break;
+			}
 			case 4: {
 				// A decoder that cannot open leaves the planner able to go on afterwards.
 				decoder.openStatus = DecodeStatus::Unsupported;
 				const SyntheticEncoder encoder(encoderConfig(model.gopLength));
 				const int64_t frame = input.byte() % 64;
 				const DecodeResult result = planner.frameAt(encoder.timeOf(frame));
-				const bool skipped = decoder.dropped.contains(std::min(frame, model.frames - 1));
+				const int64_t shown = std::min(frame, model.frames - 1);
+				lastGop = model.gopOf(shown);
+				const bool skipped = model.unreadable.contains(lastGop) ||
+						     decoder.dropped.contains(shown);
 				require(result.status == (skipped ? DecodeStatus::InvalidData : DecodeStatus::Ok) ||
 					result.status == DecodeStatus::Unsupported);
 				decoder.openStatus = DecodeStatus::Ok;
@@ -157,9 +189,10 @@ extern "C" int LLVMFuzzerTestOneInput(const uint8_t *data, size_t size)
 			default:
 				model = readClip(input);
 				*gopLength = model.gopLength;
-				planner.load(model.clip);
+				load(planner, model);
 				require(decoder.outstanding.empty());
 				last = 0;
+				lastGop = 0;
 				break;
 			}
 			checkAlways(planner, decoder, config, model);

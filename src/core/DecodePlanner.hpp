@@ -5,10 +5,12 @@
 
 #include "core/Clip.hpp"
 #include "core/FrameDecoder.hpp"
+#include "core/GopSource.hpp"
 #include "core/MediaTime.hpp"
 
 #include <cstddef>
 #include <cstdint>
+#include <memory>
 #include <optional>
 #include <vector>
 
@@ -70,11 +72,14 @@ struct DecodeResult {
 // decoded frames of the last GOPs are kept, within maxBytes, so that stepping back costs
 // nothing while they fit, a new run opens the decoder again, and reverse play can have
 // the previous GOP decoded ahead.
-// Runs are told apart by their codec and configuration; two runs of one codec without a
-// configuration carry their parameter sets in the stream, so a reset is enough between
-// them. A frame the decoder never gives is reported as InvalidData, without decoding its
-// GOP again. Once warm, deciding allocates nothing unless a GOP is longer than any kept
-// before. Everything runs on the caller's thread.
+// Runs are told apart by their codec and the bytes of their configuration, so that the
+// buffer's GOPs and their copies read from disk share one open; two runs of one codec
+// without a configuration carry their parameter sets in the stream, so a reset is enough
+// between them. A frame the decoder never gives is reported as InvalidData, without
+// decoding its GOP again, and so is a frame of a GOP that cannot be read, without reading
+// it again while it is kept. A GOP is read from its source when a pass over it starts and
+// held until another starts. Once warm, deciding allocates nothing unless a GOP is longer
+// than any kept before. Everything runs on the caller's thread.
 class DecodePlanner {
 public:
 	explicit DecodePlanner(FrameDecoder &decoder, DecodePlannerConfig config = {});
@@ -86,9 +91,10 @@ public:
 	DecodePlanner(DecodePlanner &&) = delete;
 	DecodePlanner &operator=(DecodePlanner &&) = delete;
 
-	// Starts over with another clip; the frames of the previous one go back to the
-	// decoder.
-	void load(Clip clip);
+	// Starts over with other GOPs; the frames of the previous ones go back to the
+	// decoder. Null, like an empty clip, leaves nothing to show.
+	void load(std::unique_ptr<GopSource> gops);
+	void load(Clip clip) { load(std::make_unique<ClipGops>(std::move(clip))); }
 
 	// The frame on screen at time t, as Clip::locate picks it, decoding what is missing.
 	DecodeResult frameAt(Nanoseconds t);
@@ -136,7 +142,7 @@ private:
 	// Decodes GOP gop until the frame of packet `packet` has come out or the pass has gone
 	// past it, or the whole GOP when packet is past its end.
 	DecodeStatus decode(size_t gop, size_t packet);
-	DecodeStatus startAt(size_t gop);
+	DecodeStatus startAt(size_t gop, std::shared_ptr<const Gop> source);
 	DecodeStatus receiveAll(KeptGop &kept, size_t wanted);
 	// Ends a pass that failed. A lost device also lets go of every kept frame and of
 	// the decoder, which the next pass opens again.
@@ -144,15 +150,14 @@ private:
 
 	FrameDecoder &decoder_;
 	DecodePlannerConfig config_;
-	Clip clip_;
+	std::unique_ptr<GopSource> gops_;
 	std::vector<KeptGop> kept_;
 	size_t heldBytes_ = 0;
 	DecodeWork work_;
-	// The run the decoder is open for: the configuration object its GOPs share, which
-	// may be null, and the codec.
-	bool open_ = false;
-	const CodecConfig *openConfig_ = nullptr;
-	VideoCodec openCodec_ = VideoCodec::H264;
+	// The GOP the decoder was last opened or reset for, null while it is closed: its codec
+	// and configuration are the run the decoder is open for, and while streamGop_ is set
+	// its packets are the ones a pass sends.
+	std::shared_ptr<const Gop> started_;
 	// Where the decoder is in the stream: the GOP whose packets it was last given, the
 	// next packet of it to send, whether it was flushed since, and whether it was given
 	// anything at all since it was opened or reset.

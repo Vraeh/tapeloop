@@ -37,6 +37,7 @@ target_sources(
     Gop.hpp
     GopReader.cpp
     GopReader.hpp
+    GopSource.hpp
     MediaTime.cpp
     MediaTime.hpp
     MomentCutter.cpp

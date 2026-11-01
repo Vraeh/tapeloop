@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: GPL-2.0-or-later
 // Copyright (C) 2026 Vicente Aedo <ryde1337@gmail.com>
 
+#include "../core/NalUnitWriter.hpp"
 #include "../core/StoredReplays.hpp"
 #include "../core/TempDirectory.hpp"
 #include "AllocationCounter.hpp"
@@ -31,9 +32,11 @@ extern "C" {
 
 #include <algorithm>
 #include <chrono>
+#include <cstdarg>
 #include <cstddef>
 #include <cstdint>
 #include <cstdio>
+#include <cstring>
 #include <filesystem>
 #include <fstream>
 #include <functional>
@@ -550,6 +553,159 @@ TEST_CASE("the FFmpeg decoder refuses pictures of another format and keeps nothi
 	}
 }
 
+namespace {
+
+// One H.264 picture of mbWidth by mbHeight macroblocks, as cheap to decode as a picture
+// can be: every macroblock predicts its DC and codes nothing else.
+struct H264Picture {
+	CodecConfig config;
+	std::vector<uint8_t> keyframe;
+};
+
+void appendUnit(std::vector<uint8_t> &out, const tapeloop::test::NalUnit &unit)
+{
+	out.insert(out.end(), {0, 0, 0, 1});
+	out.insert(out.end(), unit.bytes.begin(), unit.bytes.end());
+}
+
+H264Picture flatH264Picture(uint32_t mbWidth, uint32_t mbHeight)
+{
+	tapeloop::test::NalUnitWriter sps({0x67});
+	sps.bits(66, 8);
+	sps.bits(0, 8);
+	sps.bits(51, 8);
+	sps.ue(0);
+	sps.ue(0);
+	sps.ue(2);
+	sps.ue(1);
+	sps.bit(false);
+	sps.ue(mbWidth - 1);
+	sps.ue(mbHeight - 1);
+	sps.bits(0b1100, 4);
+	tapeloop::test::NalUnitWriter pps({0x68});
+	pps.ue(0);
+	pps.ue(0);
+	pps.bits(0, 2);
+	pps.ue(0);
+	pps.ue(0);
+	pps.ue(0);
+	pps.bits(0, 3);
+	pps.se(0);
+	pps.se(0);
+	pps.se(0);
+	pps.bits(0, 3);
+	tapeloop::test::NalUnitWriter slice({0x65});
+	slice.ue(0);
+	slice.ue(7);
+	slice.ue(0);
+	slice.bits(0, 4);
+	slice.ue(0);
+	slice.bits(0, 2);
+	slice.se(0);
+	for (uint64_t mb = 0; mb < uint64_t{mbWidth} * mbHeight; ++mb) {
+		// Intra 16x16 with DC prediction and no coded blocks, DC chroma, no change of
+		// quantizer, and no luma DC coefficients.
+		slice.ue(3);
+		slice.ue(0);
+		slice.se(0);
+		slice.bit(true);
+	}
+	H264Picture picture;
+	appendUnit(picture.config, sps.finish());
+	appendUnit(picture.config, pps.finish());
+	appendUnit(picture.keyframe, slice.finish());
+	return picture;
+}
+
+// Counts the lines FFmpeg logs whose format holds `text`, and passes every line on to its
+// own printer. FFmpeg has one callback and gives it no pointer of ours, so only one
+// counter can be alive at a time.
+struct FFmpegLogCounter {
+	const char *text;
+	int lines = 0;
+
+	explicit FFmpegLogCounter(const char *counted) : text(counted)
+	{
+		active = this;
+		av_log_set_callback(count);
+	}
+	~FFmpegLogCounter()
+	{
+		av_log_set_callback(av_log_default_callback);
+		active = nullptr;
+	}
+	FFmpegLogCounter(const FFmpegLogCounter &) = delete;
+	FFmpegLogCounter &operator=(const FFmpegLogCounter &) = delete;
+
+	static void count(void *object, int level, const char *format, va_list args) noexcept
+	{
+		if (std::strstr(format, active->text)) {
+			++active->lines;
+		}
+		av_log_default_callback(object, level, format, args);
+	}
+
+	static inline FFmpegLogCounter *active = nullptr;
+};
+
+} // namespace
+
+TEST_CASE("the FFmpeg decoder takes pictures up to 8K and refuses larger ones", "[decode]")
+{
+	// A replay file can claim any picture size, and the decoder would allocate for it.
+	FFmpegDecoder decoder;
+	DecodedFrame frame;
+	const H264Picture largest = flatH264Picture(512, 270);
+	REQUIRE(decoder.open(VideoCodec::H264, largest.config) == DecodeStatus::Ok);
+	REQUIRE(decoder.send(largest.keyframe, 0, 0) == DecodeStatus::Ok);
+	REQUIRE(decoder.receive(frame) == DecodeStatus::Ok);
+	const std::optional<Picture> picture = decoder.picture(frame);
+	REQUIRE(picture);
+	CHECK(picture->width == 8192);
+	CHECK(picture->height == 4320);
+	decoder.release(frame);
+
+	// One row of macroblocks more, and one column. Unsupported rather than InvalidData:
+	// refused when FFmpeg asks for the format, before a hardware decoder makes its
+	// surfaces, and not when the first picture is allocated.
+	for (const H264Picture &larger : {flatH264Picture(512, 271), flatH264Picture(513, 270)}) {
+		REQUIRE(decoder.open(VideoCodec::H264, larger.config) == DecodeStatus::Ok);
+		CHECK(decoder.send(larger.keyframe, 0, 0) == DecodeStatus::Unsupported);
+		CHECK(decoder.receive(frame) != DecodeStatus::Ok);
+		CHECK(decoder.heldFrames() == 0);
+	}
+}
+
+TEST_CASE("the FFmpeg decoder refuses larger pictures mid-run each time", "[decode]")
+{
+	// FFmpeg's H.264 decoder logs this each time it sizes its tables for the pictures.
+	FFmpegLogCounter sized("Reinit context");
+	FFmpegDecoder decoder;
+	DecodedFrame frame;
+	const H264Picture largest = flatH264Picture(512, 270);
+	REQUIRE(decoder.open(VideoCodec::H264, largest.config) == DecodeStatus::Ok);
+	REQUIRE(decoder.send(largest.keyframe, 0, 0) == DecodeStatus::Ok);
+	REQUIRE(decoder.receive(frame) == DecodeStatus::Ok);
+	decoder.release(frame);
+	REQUIRE(sized.lines == 1);
+
+	// After a picture it decoded, FFmpeg's H.264 decoder asks for the format of larger
+	// pictures only while it has none. Otherwise the next slice that needs them, the
+	// second of this packet or the first of the next, would size the tables for them.
+	const H264Picture taller = flatH264Picture(512, 271);
+	std::vector<uint8_t> keyframe = taller.config;
+	for (int slice = 0; slice < 2; ++slice) {
+		keyframe.insert(keyframe.end(), taller.keyframe.begin(), taller.keyframe.end());
+	}
+	for (int64_t pts = 1; pts <= 2; ++pts) {
+		CHECK(decoder.send(keyframe, pts, pts) == DecodeStatus::Unsupported);
+		CHECK(decoder.receive(frame) != DecodeStatus::Ok);
+		decoder.reset();
+	}
+	CHECK(sized.lines == 1);
+	CHECK(decoder.heldFrames() == 0);
+}
+
 TEST_CASE("a damaged configuration fails the frames that need it, not the decoder", "[decode]")
 {
 	const RecordedRun hevc = loadRecordedRun(kHevcPattern);
@@ -829,6 +985,134 @@ TEST_CASE_METHOD(ObsFixture, "an MP4 that cannot be written says why", "[decode]
 	const std::vector<uint8_t> garbage(64, 0x55);
 	builder.append({garbage, 0, 0, Nanoseconds{0}, true});
 	CHECK_THROWS_AS(writer.open(dir.path() / "garbage.mp4", *builder.seal()), std::runtime_error);
+}
+
+namespace {
+
+// The configuration with its SPS cut after the profile, tier and level, well before the
+// reference picture sets.
+CodecConfig withSpsCut(const CodecConfig &config)
+{
+	CodecConfig cut;
+	for (std::vector<uint8_t> unit : annexBUnits(config)) {
+		if (((unit.at(0) >> 1) & 0x3F) == 33) {
+			unit.resize(16);
+		}
+		cut.insert(cut.end(), {0, 0, 0, 1});
+		cut.insert(cut.end(), unit.begin(), unit.end());
+	}
+	return cut;
+}
+
+std::shared_ptr<const Gop> hevcKeyframe(const CodecConfig *config, std::span<const uint8_t> data)
+{
+	GopBuilder builder(kFrameInterval);
+	builder.setCodecConfig(VideoCodec::Hevc, config ? std::make_shared<const CodecConfig>(*config) : nullptr);
+	builder.append({data, 0, 0, Nanoseconds{0}, true});
+	return builder.seal();
+}
+
+} // namespace
+
+TEST_CASE_METHOD(ObsFixture, "an MP4 refuses a sequence parameter set cut short", "[decode][export]")
+{
+	// FFmpeg's muxer reads the sets as it finishes the file. In one cut short it reads
+	// counts past the end and can step through billions of values.
+	const RecordedRun run = loadRecordedRun(kHevcPattern);
+	const std::vector<uint8_t> &keyframe = run.packets.front().data;
+	const CodecConfig cut = withSpsCut(run.config);
+	REQUIRE(cut.size() < run.config.size());
+	const std::string error = "a sequence parameter set is cut short";
+	tapeloop::test::TempDirectory dir;
+	Mp4Writer writer;
+
+	// In the configuration of the first GOP, before the file is made.
+	const std::filesystem::path first = dir.path() / "first.mp4";
+	CHECK(errorOf([&] { writer.open(first, *hevcKeyframe(&cut, keyframe)); }) == error);
+	CHECK_FALSE(std::filesystem::exists(first));
+
+	// In the configuration of a later GOP.
+	const std::shared_ptr<const Gop> whole = hevcKeyframe(&run.config, keyframe);
+	writer.open(dir.path() / "later.mp4", *whole);
+	writer.write(*whole, 0, Nanoseconds{0});
+	CHECK(errorOf([&] { writer.write(*hevcKeyframe(&cut, keyframe), 0, kFrameInterval); }) == error);
+
+	// In the first packet with bytes when the first GOP has no configuration: the muxer
+	// takes that packet for one. The whole sets after the cut one give the size.
+	std::vector<uint8_t> packet = cut;
+	packet.insert(packet.end(), run.config.begin(), run.config.end());
+	packet.insert(packet.end(), keyframe.begin(), keyframe.end());
+	const std::shared_ptr<const Gop> bare = hevcKeyframe(nullptr, packet);
+	writer.open(dir.path() / "bare.mp4", *bare);
+	CHECK(errorOf([&] { writer.write(*bare, 0, Nanoseconds{0}); }) == error);
+}
+
+TEST_CASE_METHOD(ObsFixture, "an MP4 starts a sample entry at the first packet of its run with bytes",
+		 "[decode][export]")
+{
+	// The muxer drops a packet without bytes, and a new configuration with it.
+	const RecordedRun first = loadRecordedRun(kHevcPattern);
+	const RecordedRun second = loadRecordedRun(kHevcFullRange601);
+	REQUIRE(first.config != second.config);
+	const std::shared_ptr<const Gop> before = hevcKeyframe(&first.config, first.packets.front().data);
+	GopBuilder builder(kFrameInterval);
+	builder.setCodecConfig(VideoCodec::Hevc, std::make_shared<const CodecConfig>(second.config));
+	builder.append({{}, 0, 0, Nanoseconds{0}, true});
+	builder.append({second.packets.front().data, 1, 1, kFrameInterval, false});
+	const std::shared_ptr<const Gop> after = builder.seal();
+	tapeloop::test::TempDirectory dir;
+	const std::filesystem::path path = dir.path() / "late bytes.mp4";
+	Mp4Writer writer;
+	writer.open(path, *before);
+	writer.write(*before, 0, Nanoseconds{0});
+	writer.write(*after, 0, kFrameInterval);
+	writer.write(*after, 1, 2 * kFrameInterval);
+	writer.finish();
+
+	const Mp4Track track = tapeloop::test::readMp4(readFile(path));
+	REQUIRE(track.entries.size() == 2);
+	CHECK(sorted(annexBUnits(track.entries[1].config)) == sorted(annexBUnits(second.config)));
+	REQUIRE(track.samples.size() == 2);
+	CHECK(track.samples[0].entry == 1);
+	CHECK(track.samples[1].entry == 2);
+}
+
+TEST_CASE_METHOD(ObsFixture, "an MP4 export of packets without bytes fails", "[decode][export]")
+{
+	// A replay file can list packets of no bytes. In a GOP of only those, the size of the
+	// pictures comes from a configuration that holds a whole keyframe after the parameter
+	// sets, and the muxer leaves every packet out: the file would have no track.
+	const RecordedRun run = loadRecordedRun(kHevcPattern);
+	CodecConfig config = run.config;
+	config.insert(config.end(), run.packets.front().data.begin(), run.packets.front().data.end());
+	GopBuilder builder(kFrameInterval);
+	builder.setCodecConfig(VideoCodec::Hevc, std::make_shared<const CodecConfig>(std::move(config)));
+	builder.append({{}, 0, 0, Nanoseconds{0}, true});
+	builder.append({{}, 1, 1, kFrameInterval, false});
+	const std::shared_ptr<const Gop> gop = builder.seal();
+	const std::string error = "no packet of the MP4 file holds any bytes";
+	tapeloop::test::TempDirectory dir;
+	{
+		Mp4Writer writer;
+		writer.open(dir.path() / "empty.mp4", *gop);
+		writer.write(*gop, 0, Nanoseconds{0});
+		writer.write(*gop, 1, kFrameInterval);
+		CHECK(errorOf([&] { writer.finish(); }) == error);
+	}
+
+	// The export publishes no file, and leaves none behind.
+	const tapeloop::WrittenReplay written = tapeloop::ReplayWriter().write(
+		tapeloop::test::captureOf(dir.path(), {tapeloop::test::sourceOf("a", {gop})}));
+	tapeloop::ReplayExporter exporter([] { return std::make_unique<Mp4Writer>(); });
+	tapeloop::ExportRequest request;
+	request.manifest = written.manifest;
+	exporter.exportReplay(request);
+	exporter.waitUntilIdle();
+	const std::vector<tapeloop::ExportResult> results = exporter.poll();
+	REQUIRE(results.size() == 1);
+	CHECK(results[0].error == error);
+	CHECK(results[0].files.empty());
+	CHECK(std::filesystem::is_empty(tapeloop::exportFolderOf(written.manifest)));
 }
 
 TEST_CASE_METHOD(ObsFixture, "an MP4 is written to a new file, never over one already there", "[decode][export]")

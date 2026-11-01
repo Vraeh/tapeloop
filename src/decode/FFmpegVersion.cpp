@@ -7,6 +7,7 @@
 
 extern "C" {
 #include <libavutil/avutil.h>
+#include <libavutil/log.h>
 }
 
 namespace tapeloop::decode {
@@ -14,6 +15,11 @@ namespace tapeloop::decode {
 const char *ffmpegVersion() noexcept
 {
 	return av_version_info();
+}
+
+void quietFFmpegLog() noexcept
+{
+	av_log_set_level(AV_LOG_QUIET);
 }
 
 } // namespace tapeloop::decode
