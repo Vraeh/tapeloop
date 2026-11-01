@@ -135,6 +135,9 @@ public:
 	bool decodeNext() noexcept;
 
 	PlayerState state() const noexcept;
+	// The rate once the next tick has applied the controls given so far, which state()
+	// reports only after it.
+	int32_t rateAhead() const noexcept;
 
 private:
 	enum class Control {
@@ -193,7 +196,7 @@ private:
 	static constexpr size_t kMaxCommands = 64;
 
 	void command(Control control, int64_t value) noexcept;
-	void apply(const Command &command) noexcept;
+	static void apply(Playhead &playhead, const Command &command) noexcept;
 	bool takeRequest(Request &request, bool wait) noexcept;
 	void decode(Request &request) noexcept;
 	// Copies a picture in memory for render(), or publishes one on the GPU; false when
@@ -229,6 +232,9 @@ private:
 	uint64_t requests_ = 0;
 	bool stopping_ = false;
 	PlayerState state_;
+	// Takes every control and load as it is given, without a clip, so its rate is the one
+	// the playhead will have once a tick applies them.
+	Playhead ahead_;
 
 	// The thread of tick() and render() only.
 	Playhead playhead_;

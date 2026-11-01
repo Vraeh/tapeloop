@@ -254,10 +254,9 @@ void SequencePlayer::keepRate() noexcept
 	if (state_.phase() != AirPhase::Source || !player_) {
 		return;
 	}
-	const int32_t rate = player_->state().rate;
-	if (rate != 0) {
-		state_.setRate(std::abs(rate));
-	}
+	// The speed given since the last tick counts: the next clip is loaded before that
+	// speed would show in the player's state.
+	state_.setRate(std::abs(player_->rateAhead()));
 }
 
 void SequencePlayer::onEnded(uint64_t clip)

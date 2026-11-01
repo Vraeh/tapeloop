@@ -21,10 +21,12 @@
 
 #include <atomic>
 #include <chrono>
+#include <condition_variable>
 #include <cstddef>
 #include <cstdint>
 #include <functional>
 #include <memory>
+#include <mutex>
 #include <optional>
 #include <span>
 #include <string>
@@ -136,6 +138,47 @@ bool playerUntil(const SequencePlayer &sequence, const std::function<bool(const 
 	}
 	return false;
 }
+
+// Keeps the graphics thread waiting, and with it every tick, while it lives.
+class TicksHeld {
+public:
+	TicksHeld()
+	{
+		obs_queue_task(OBS_TASK_GRAPHICS, hold, this, false);
+		std::unique_lock lock(mutex_);
+		changed_.wait(lock, [this] { return holding_; });
+	}
+
+	~TicksHeld()
+	{
+		std::unique_lock lock(mutex_);
+		released_ = true;
+		changed_.notify_all();
+		changed_.wait(lock, [this] { return !holding_; });
+	}
+
+	TicksHeld(const TicksHeld &) = delete;
+	TicksHeld &operator=(const TicksHeld &) = delete;
+	TicksHeld(TicksHeld &&) = delete;
+	TicksHeld &operator=(TicksHeld &&) = delete;
+
+private:
+	static void hold(void *param) noexcept
+	{
+		auto &self = *static_cast<TicksHeld *>(param);
+		std::unique_lock lock(self.mutex_);
+		self.holding_ = true;
+		self.changed_.notify_all();
+		self.changed_.wait(lock, [&] { return self.released_; });
+		self.holding_ = false;
+		self.changed_.notify_all();
+	}
+
+	std::mutex mutex_;
+	std::condition_variable changed_;
+	bool holding_ = false;
+	bool released_ = false;
+};
 
 // The source on air once the player has its clip and plays it.
 std::string playing(SequencePlayer &sequence)
@@ -269,6 +312,51 @@ TEST_CASE_METHOD(ObsFixture, "a sequence keeps the speed for the next source and
 	REQUIRE(sequence->putOnAir(captured.id()));
 	CHECK(playing(*sequence) == "a");
 	REQUIRE(playerUntil(*sequence, [](const PlayerState &state) { return state.rate == 1000; }));
+
+	sequence.reset();
+	obs_wait_for_destroy_queue();
+}
+
+TEST_CASE_METHOD(ObsFixture, "a speed given in the frame of a skip or an end carries to the next source",
+		 "[obs][sequence]")
+{
+	registerReplaySource({});
+	const UiTasks ui;
+	ReplayLibrary library;
+	std::optional<SequencePlayer> sequence(std::in_place, library);
+	REQUIRE(sequence->player());
+
+	const Captured longer(library, {"a", "b"}, 120);
+	REQUIRE(sequence->putOnAir(longer.id()));
+	CHECK(playing(*sequence) == "a");
+	uint64_t clip = sequence->player()->state().clip;
+	{
+		const TicksHeld held;
+		sequence->player()->faster();
+		sequence->skip();
+	}
+	CHECK(sequence->state().source() == "b");
+	REQUIRE(playerUntil(*sequence, [&](const PlayerState &state) { return state.clip != clip; }));
+	CHECK(sequence->player()->state().rate == 2000);
+
+	// Clips of a sixth of a second, which play out by themselves; the end waits for the
+	// UI thread, and the speed is given before it gets there.
+	sequence->takeOffAir();
+	const Captured shorter(library, {"a", "b"}, 2);
+	REQUIRE(sequence->putOnAir(shorter.id()));
+	REQUIRE(playerUntil(*sequence, [&](const PlayerState &state) {
+		clip = state.clip;
+		return state.ended;
+	}));
+	REQUIRE(waitFor([] { return UiTasks::pending() > 0; }, 10s));
+	{
+		const TicksHeld held;
+		sequence->player()->faster();
+		CHECK(UiTasks::run() == 1);
+	}
+	CHECK(sequence->state().source() == "b");
+	REQUIRE(playerUntil(*sequence, [&](const PlayerState &state) { return state.clip != clip; }));
+	CHECK(sequence->player()->state().rate == 2000);
 
 	sequence.reset();
 	obs_wait_for_destroy_queue();
