@@ -22,6 +22,8 @@ target_sources(
     ProfileHotkeys.hpp
     RenderAdapter.cpp
     RenderAdapter.hpp
+    ReplayHotkeys.cpp
+    ReplayHotkeys.hpp
     ReplayPlayer.cpp
     ReplayPlayer.hpp
     ReplaySource.cpp
