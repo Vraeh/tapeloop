@@ -52,6 +52,9 @@ FrontendBridge::FrontendBridge()
 	obs_frontend_add_event_callback(handleEvent, this);
 	obs_frontend_add_save_callback(handleSave, this);
 	obs_add_tick_callback(handleTick, this);
+	// The hotkey can fire as soon as it is registered, so it comes after the callbacks
+	// above rather than in the initializer list.
+	// NOLINTNEXTLINE(cppcoreguidelines-prefer-member-initializer)
 	captureHotkey_ = obs_hotkey_register_frontend(kCaptureHotkeyName, obs_module_text("Hotkey.CaptureReplay"),
 						      handleCaptureHotkey, this);
 }
