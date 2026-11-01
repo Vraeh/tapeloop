@@ -1,7 +1,9 @@
 # The checks of the root file, with one more disabled, and why:
 # - cppcoreguidelines-pro-type-vararg: libobs logs through blog(), a C variadic
-#   function whose arguments the compiler checks against the format string, and the
-#   glue has no other way to log. The one snprintf fills an output's error message
-#   for libobs and is checked the same way.
+#   function, and the glue has no other way to log. GCC and Clang check its arguments
+#   against the format string; MSVC does not, as libobs's PRINTFATTR is empty there.
+#   The one snprintf fills an output's error message for libobs and is checked the
+#   same way. Any other C variadic call under src/obs passes unflagged as well, so it
+#   needs a look in review.
 InheritParentConfig: true
 Checks: -cppcoreguidelines-pro-type-vararg
