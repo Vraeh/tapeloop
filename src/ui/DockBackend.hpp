@@ -102,8 +102,10 @@ public:
 	virtual std::vector<DockSource> sources() const = 0;
 	// Both act at once, on the replay playing too. False when refused.
 	virtual bool setShown(const std::string &uuid, bool shown) = 0;
-	// Moves the source at this index of sources() so that it ends up at index `to`.
-	virtual bool moveSource(size_t from, size_t to) = 0;
+	// Moves a source to the place of `target` in sources(), which moves one place toward
+	// where the source was. Both are UUIDs, as the list the dock shows may be older than
+	// sources().
+	virtual bool moveSource(const std::string &uuid, const std::string &target) = 0;
 	virtual BufferSettings settings() const = 0;
 	virtual void setSettings(const BufferSettings &settings) = 0;
 	virtual std::vector<EncoderChoice> encoderChoices() const = 0;

@@ -103,22 +103,18 @@ bool ManagerDockBackend::setShown(const std::string &uuid, bool shown)
 	return sequence_->setShown(uuid, shown);
 }
 
-bool ManagerDockBackend::moveSource(size_t from, size_t to)
+bool ManagerDockBackend::moveSource(const std::string &uuid, const std::string &target)
 {
 	if (!sequence_) {
 		return false;
 	}
-	const std::vector<ui::DockSource> listed = sources();
-	if (from >= listed.size() || to >= listed.size()) {
-		return false;
-	}
-	enlist(listed);
+	enlist(sources());
 	// Sources the dock does not list keep their places in the sequence, and the one moved
 	// lands just past the one whose place it takes, as it does in the list.
 	const ReplaySequence &order = sequence_->state().sequence();
-	const std::optional<size_t> moving = order.indexOf(listed[from].uuid);
-	const std::optional<size_t> target = order.indexOf(listed[to].uuid);
-	return moving && target && sequence_->move(*moving, *target);
+	const std::optional<size_t> moving = order.indexOf(uuid);
+	const std::optional<size_t> place = order.indexOf(target);
+	return moving && place && sequence_->move(*moving, *place);
 }
 
 void ManagerDockBackend::enlist(const std::vector<ui::DockSource> &listed)

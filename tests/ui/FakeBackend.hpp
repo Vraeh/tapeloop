@@ -38,7 +38,7 @@ public:
 	// What the dock asked to export, and what it is shown of the exports.
 	std::vector<std::pair<uint64_t, ExportFormat>> exported;
 	std::vector<tapeloop::ui::DockExport> exportList;
-	// The rows the dock asked to move.
+	// The rows of the sources the dock asked to move, and of the ones whose places they take.
 	std::vector<std::pair<size_t, size_t>> moves;
 
 	std::vector<tapeloop::ui::DockSource> sources() const override
@@ -62,8 +62,16 @@ public:
 		return false;
 	}
 
-	bool moveSource(size_t from, size_t to) override
+	bool moveSource(const std::string &uuid, const std::string &target) override
 	{
+		const auto indexOf = [&](const std::string &key) {
+			return static_cast<size_t>(
+				std::find_if(shown.begin(), shown.end(),
+					     [&](const auto &source) { return source.uuid == key; }) -
+				shown.begin());
+		};
+		const size_t from = indexOf(uuid);
+		const size_t to = indexOf(target);
 		if (from >= shown.size() || to >= shown.size()) {
 			return false;
 		}

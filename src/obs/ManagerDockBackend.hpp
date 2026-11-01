@@ -23,7 +23,7 @@ public:
 
 	std::vector<ui::DockSource> sources() const override;
 	bool setShown(const std::string &uuid, bool shown) override;
-	bool moveSource(size_t from, size_t to) override;
+	bool moveSource(const std::string &uuid, const std::string &target) override;
 	BufferSettings settings() const override { return manager_.settings(); }
 	void setSettings(const BufferSettings &settings) override;
 	std::vector<ui::EncoderChoice> encoderChoices() const override;

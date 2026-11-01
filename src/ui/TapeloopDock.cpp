@@ -968,7 +968,15 @@ void TapeloopDock::changeSettings(void (*change)(BufferSettings &, int), int val
 
 void TapeloopDock::moveSource(int from, int to)
 {
-	guarded([&] { backend_.moveSource(static_cast<size_t>(from), static_cast<size_t>(to)); });
+	if (from < 0 || to < 0 || from >= sources_->rowCount() || to >= sources_->rowCount()) {
+		return;
+	}
+	guarded([&] {
+		const auto uuidAt = [this](int row) {
+			return sources_->item(row, kSourceColumn)->data(Qt::UserRole).toString().toStdString();
+		};
+		backend_.moveSource(uuidAt(from), uuidAt(to));
+	});
 	refresh();
 }
 
