@@ -9,6 +9,7 @@
 #include <chrono>
 #include <cstdint>
 #include <cstdio>
+#include <memory>
 #include <new>
 #include <optional>
 #include <span>
@@ -28,16 +29,16 @@ const char *name(void *) noexcept
 
 void *create(obs_data_t *, obs_output_t *output) noexcept
 {
-	auto *capture = new (std::nothrow) CaptureOutput;
+	std::unique_ptr<CaptureOutput> capture(new (std::nothrow) CaptureOutput);
 	if (capture) {
 		capture->output = output;
 	}
-	return capture;
+	return capture.release();
 }
 
 void destroy(void *data) noexcept
 {
-	delete static_cast<CaptureOutput *>(data);
+	const std::unique_ptr<CaptureOutput> capture(static_cast<CaptureOutput *>(data));
 }
 
 bool start(void *data) noexcept

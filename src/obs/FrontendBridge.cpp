@@ -197,7 +197,7 @@ void FrontendBridge::handleCaptureHotkey(void *data, obs_hotkey_id, obs_hotkey_t
 
 void FrontendBridge::onUiThread(void (*work)(CaptureManager &)) noexcept
 {
-	auto *task = new (std::nothrow) std::function<void()>;
+	std::unique_ptr<std::function<void()>> task(new (std::nothrow) std::function<void()>);
 	if (!task) {
 		return;
 	}
@@ -208,10 +208,9 @@ void FrontendBridge::onUiThread(void (*work)(CaptureManager &)) noexcept
 			}
 		};
 	} catch (...) {
-		delete task;
 		return;
 	}
-	obs_queue_task(OBS_TASK_UI, runTask, task, false);
+	obs_queue_task(OBS_TASK_UI, runTask, task.release(), false);
 }
 
 } // namespace tapeloop::obs

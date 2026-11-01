@@ -78,11 +78,11 @@ void *create(obs_data_t *, obs_source_t *source) noexcept
 
 void destroy(void *data) noexcept
 {
-	auto *replay = static_cast<ReplaySource *>(data);
+	std::unique_ptr<ReplaySource> replay(static_cast<ReplaySource *>(data));
 	// Outside the graphics context: the frame being decoded may take a while.
 	replay->player.stop();
 	obs_enter_graphics();
-	delete replay;
+	replay.reset();
 	obs_leave_graphics();
 }
 
@@ -115,7 +115,8 @@ void render(void *data, gs_effect_t *) noexcept
 
 void freeDecoders(void *typeData) noexcept
 {
-	delete static_cast<ReplayPlayer::DecoderFactory *>(typeData);
+	const std::unique_ptr<ReplayPlayer::DecoderFactory> decoders(
+		static_cast<ReplayPlayer::DecoderFactory *>(typeData));
 }
 
 } // namespace
