@@ -112,6 +112,10 @@ bool SequencePlayer::putOnAir(uint64_t id)
 		     static_cast<unsigned long long>(id));
 		return false;
 	}
+	auto files = std::make_shared<ReplayFiles>();
+	if (!replay->manifest.empty()) {
+		files->set(replay->manifest, index);
+	}
 
 	std::vector<std::string> sources;
 	std::vector<const StoredSource *> joining;
@@ -139,7 +143,7 @@ bool SequencePlayer::putOnAir(uint64_t id)
 		return false;
 	}
 	replay_ = id;
-	manifest_ = replay->manifest;
+	files_ = std::move(files);
 	index_ = std::move(index);
 	live_ = replay->live;
 	follow();
@@ -194,7 +198,7 @@ void SequencePlayer::follow()
 		}
 		if (state_.phase() == AirPhase::Live) {
 			replay_ = 0;
-			manifest_.clear();
+			files_.reset();
 			index_.reset();
 			live_.clear();
 		}
@@ -203,10 +207,8 @@ void SequencePlayer::follow()
 
 uint64_t SequencePlayer::play(std::string_view sourceKey)
 {
-	if (manifest_.empty()) {
-		findStored();
-	}
-	if (!player_ || !index_) {
+	findStored();
+	if (!player_ || !index_ || !files_) {
 		return 0;
 	}
 	for (size_t i = 0; i < index_->sources.size(); ++i) {
@@ -216,9 +218,8 @@ uint64_t SequencePlayer::play(std::string_view sourceKey)
 		}
 		std::unique_ptr<GopSource> gops;
 		try {
-			gops = std::make_unique<StoredGops>(manifest_, source,
-							    i < live_.size() ? live_[i]
-									     : std::vector<std::weak_ptr<const Gop>>());
+			gops = std::make_unique<StoredGops>(
+				files_, source, i < live_.size() ? live_[i] : std::vector<std::weak_ptr<const Gop>>());
 		} catch (const std::bad_alloc &) {
 			return 0;
 		}
@@ -236,6 +237,9 @@ uint64_t SequencePlayer::play(std::string_view sourceKey)
 
 void SequencePlayer::findStored()
 {
+	if (!files_ || files_->get()) {
+		return;
+	}
 	const Replay *replay = library_.find(replay_);
 	if (!replay || replay->manifest.empty()) {
 		return;
@@ -244,7 +248,7 @@ void SequencePlayer::findStored()
 	// did, so the buffer's GOPs still line up with it.
 	std::shared_ptr<const ReplayIndex> index = indexOf(*replay);
 	if (index) {
-		manifest_ = replay->manifest;
+		files_->set(replay->manifest, index);
 		index_ = std::move(index);
 	}
 }

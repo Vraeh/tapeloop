@@ -4,6 +4,7 @@
 #pragma once
 
 #include "core/Gop.hpp"
+#include "core/GopReader.hpp"
 #include "core/ReplayFormat.hpp"
 #include "core/ReplayLibrary.hpp"
 #include "core/ReplayPlayerState.hpp"
@@ -15,7 +16,6 @@
 #include <atomic>
 #include <cstddef>
 #include <cstdint>
-#include <filesystem>
 #include <memory>
 #include <string>
 #include <string_view>
@@ -71,15 +71,17 @@ public:
 	void open() noexcept { closed_ = false; }
 	bool closed() const noexcept { return closed_; }
 
+	// Takes the files of the replay on air once they are written, if it went on air while
+	// they were not: the GOPs the buffers let go of come from them, for the source on air
+	// as for the ones still to play. For whoever learns that a replay is stored.
+	void findStored();
+
 private:
 	// What follows the state's part on air, if it changed: the clip of a source, or else
 	// nothing loaded.
 	void follow();
 	// Loads the source's clip and plays it; zero when it cannot be loaded.
 	uint64_t play(std::string_view sourceKey);
-	// Takes the files of the replay on air once they are written, if it went on air while
-	// they were not: its sources still to play may be gone from the buffers by then.
-	void findStored();
 	// Keeps the speed of the source on air for the next one, before anything that may
 	// change sources.
 	void keepRate() noexcept;
@@ -95,9 +97,10 @@ private:
 	// The token of the part follow() last set up, and the clip it loaded for a source.
 	uint64_t token_ = 0;
 	uint64_t clip_ = 0;
-	// The replay on air.
+	// The replay on air. Its files are shared with the clips of its sources, which read
+	// their GOPs on the player's decoding thread.
 	uint64_t replay_ = 0;
-	std::filesystem::path manifest_;
+	std::shared_ptr<ReplayFiles> files_;
 	std::shared_ptr<const ReplayIndex> index_;
 	std::vector<std::vector<std::weak_ptr<const Gop>>> live_;
 	// Set while a source plays, so that the graphics thread looks for its end only then.

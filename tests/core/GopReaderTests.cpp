@@ -120,6 +120,21 @@ TEST_CASE("the cache stays within its size and keeps the GOPs read last")
 	CHECK(reader.stats().failed == 2);
 }
 
+TEST_CASE("a GOP is not looked for without a manifest")
+{
+	TempDirectory dir;
+	const Gops gops = makeGops(2);
+	const Stored stored = store(dir.path(), gops);
+	// From here, the path of a segment without the manifest's folder leads to the segment.
+	const fs::path before = fs::current_path();
+	fs::current_path(dir.path());
+	GopReader reader;
+	const bool read = reader.read({}, stored.source(), 1) != nullptr;
+	fs::current_path(before);
+	CHECK_FALSE(read);
+	CHECK(reader.stats().failed == 1);
+}
+
 TEST_CASE("a cache too small for one GOP still keeps the last one read")
 {
 	TempDirectory dir;
@@ -273,4 +288,30 @@ TEST_CASE("a stored source gives a planner its GOPs from the buffer while it hol
 	CHECK(sameGop(*fromDisk, *gops[2]));
 	CHECK(stored.stats().live == 1);
 	CHECK(stored.stats().read == 1);
+}
+
+TEST_CASE("a source played while its replay is written reads its files once they are set")
+{
+	TempDirectory dir;
+	const Gops gops = makeGops(3);
+	const tapeloop::ReplayCapture capture = captureOf(dir.path(), {sourceOf("a", gops)});
+	// The capture's index, without segments, and a buffer that holds the first GOP only.
+	const StoredSource captured = tapeloop::indexOf(capture).sources.front();
+	auto files = std::make_shared<tapeloop::ReplayFiles>();
+	tapeloop::StoredGops stored(files, captured, {gops[0]});
+	StoredSource other = captured;
+	other.key = "b";
+	tapeloop::StoredGops absent(files, other, {});
+	CHECK(stored.read(0) == gops[0]);
+	CHECK_FALSE(stored.read(1));
+
+	const WrittenReplay written = ReplayWriter().write(capture);
+	files->set(written.manifest, std::make_shared<const ReplayIndex>(written.index));
+	const std::shared_ptr<const Gop> fromDisk = stored.read(1);
+	REQUIRE(fromDisk);
+	CHECK(sameGop(*fromDisk, *gops[1]));
+	CHECK(stored.read(0) == gops[0]);
+	CHECK(stored.stats().read == 1);
+	// The files of a replay without the source have none of its GOPs.
+	CHECK_FALSE(absent.read(1));
 }

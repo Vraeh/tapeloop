@@ -44,7 +44,9 @@ std::shared_ptr<const Gop> GopReader::read(const std::filesystem::path &manifest
 		++stats_.live;
 		return held;
 	}
-	if (gop >= source.gops.size() || source.gops[gop].run >= source.runs.size()) {
+	// Without a manifest, the segments' paths would be taken as relative to the working
+	// folder.
+	if (manifest.empty() || gop >= source.gops.size() || source.gops[gop].run >= source.runs.size()) {
 		++stats_.failed;
 		return nullptr;
 	}
@@ -128,12 +130,34 @@ void GopReader::remember(std::string key, std::shared_ptr<const Gop> gop)
 	}
 }
 
+void ReplayFiles::set(std::filesystem::path manifest, std::shared_ptr<const ReplayIndex> index)
+{
+	std::shared_ptr<const Files> files = std::make_shared<Files>(Files{std::move(manifest), std::move(index)});
+	const std::lock_guard lock(mutex_);
+	files_ = std::move(files);
+}
+
+std::shared_ptr<const ReplayFiles::Files> ReplayFiles::get() const
+{
+	const std::lock_guard lock(mutex_);
+	return files_;
+}
+
 StoredGops::StoredGops(std::filesystem::path manifest, StoredSource source, std::vector<std::weak_ptr<const Gop>> live,
 		       size_t cacheBytes)
 	: manifest_(std::move(manifest)),
 	  source_(std::move(source)),
 	  live_(std::move(live)),
 	  reader_(cacheBytes)
+{
+}
+
+StoredGops::StoredGops(std::shared_ptr<const ReplayFiles> files, StoredSource source,
+		       std::vector<std::weak_ptr<const Gop>> live, size_t cacheBytes)
+	: source_(std::move(source)),
+	  live_(std::move(live)),
+	  reader_(cacheBytes),
+	  files_(std::move(files))
 {
 }
 
@@ -150,7 +174,27 @@ std::vector<Nanoseconds> StoredGops::frameTimes() const
 
 std::shared_ptr<const Gop> StoredGops::read(size_t gop)
 {
-	return reader_.read(manifest_, source_, gop, gop < live_.size() ? live_[gop] : std::weak_ptr<const Gop>());
+	if (files_) {
+		takeFiles();
+	}
+	return reader_.read(written_ ? written_->manifest : manifest_, stored_ ? *stored_ : source_, gop,
+			    gop < live_.size() ? live_[gop] : std::weak_ptr<const Gop>());
+}
+
+void StoredGops::takeFiles()
+{
+	std::shared_ptr<const ReplayFiles::Files> files = files_->get();
+	if (!files) {
+		return;
+	}
+	files_.reset();
+	for (const StoredSource &source : files->index->sources) {
+		if (source.key == source_.key) {
+			stored_ = &source;
+			written_ = std::move(files);
+			return;
+		}
+	}
 }
 
 } // namespace tapeloop
