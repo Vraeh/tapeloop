@@ -32,7 +32,7 @@ std::unique_ptr<tapeloop::obs::ManagerDockBackend> dockBackend;
 
 void addDock()
 {
-	dockBackend = std::make_unique<tapeloop::obs::ManagerDockBackend>(bridge->manager());
+	dockBackend = std::make_unique<tapeloop::obs::ManagerDockBackend>(bridge->manager(), &bridge->sequence());
 	auto *dock = new tapeloop::ui::TapeloopDock(*dockBackend, [](const char *key) {
 		return QString::fromUtf8(obs_module_text(key));
 	});

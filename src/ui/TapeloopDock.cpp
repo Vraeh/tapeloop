@@ -11,6 +11,7 @@
 #include <QCheckBox>
 #include <QComboBox>
 #include <QDateTime>
+#include <QDropEvent>
 #include <QFont>
 #include <QFormLayout>
 #include <QHBoxLayout>
@@ -32,6 +33,7 @@
 #include <algorithm>
 #include <chrono>
 #include <cstdint>
+#include <functional>
 #include <limits>
 #include <utility>
 
@@ -39,7 +41,8 @@ namespace tapeloop::ui {
 namespace {
 
 constexpr int kSourceColumn = 0;
-constexpr int kStatusColumn = 1;
+constexpr int kShownColumn = 1;
+constexpr int kStatusColumn = 2;
 // Below this the buffers would keep little more than a keyframe each, which is a slip
 // rather than a budget.
 constexpr int kMinBufferMemoryMiB = 256;
@@ -100,13 +103,56 @@ protected:
 	}
 };
 
+// A row dragged onto another takes its place. The table only asks for the move: Qt's own
+// would move the items and leave the order of the replay behind, so the rows come back
+// from the backend instead.
+class SourceTable : public QTableWidget {
+public:
+	SourceTable(std::function<void(int from, int to)> moved, QWidget *parent)
+		: QTableWidget(0, 3, parent),
+		  moved_(std::move(moved))
+	{
+		setDragEnabled(true);
+		setDragDropMode(QAbstractItemView::InternalMove);
+		setDragDropOverwriteMode(false);
+		setDefaultDropAction(Qt::MoveAction);
+		setDropIndicatorShown(true);
+	}
+
+protected:
+	// In InternalMove mode Qt refuses a drag from anywhere else before it can drop.
+	void dropEvent(QDropEvent *event) override
+	{
+		const int from = currentRow();
+		const int y = event->position().toPoint().y();
+		const int over = rowAt(y);
+		// Where the row goes in the list without it: before the row under the pointer when
+		// over its upper half, after it otherwise, and last below every row.
+		int to = rowCount();
+		if (over >= 0) {
+			to = y < rowViewportPosition(over) + rowHeight(over) / 2 ? over : over + 1;
+		}
+		if (to > from) {
+			--to;
+		}
+		event->setDropAction(Qt::IgnoreAction);
+		event->accept();
+		if (from >= 0 && from != to) {
+			moved_(from, to);
+		}
+	}
+
+private:
+	std::function<void(int from, int to)> moved_;
+};
+
 } // namespace
 
 TapeloopDock::TapeloopDock(DockBackend &backend, TextLookup text, QWidget *parent)
 	: QWidget(parent),
 	  backend_(backend),
 	  text_(std::move(text)),
-	  sources_(new QTableWidget(0, 2, this)),
+	  sources_(new SourceTable([this](int from, int to) { moveSource(from, to); }, this)),
 	  sourceSettings_(new QPushButton(text_("Dock.SourceSettings"), this)),
 	  length_(new QSpinBox(this)),
 	  resolution_(new QComboBox(this)),
@@ -135,8 +181,10 @@ TapeloopDock::TapeloopDock(DockBackend &backend, TextLookup text, QWidget *paren
 	  exportStatus_(new QLabel(this))
 {
 	sources_->setObjectName("sources");
-	sources_->setHorizontalHeaderLabels({text_("Dock.Source"), text_("Dock.Status")});
+	sources_->setHorizontalHeaderLabels({text_("Dock.Source"), text_("Dock.Shown"), text_("Dock.Status")});
+	sources_->horizontalHeaderItem(kShownColumn)->setToolTip(text_("Dock.Shown.Tooltip"));
 	sources_->horizontalHeader()->setSectionResizeMode(kSourceColumn, QHeaderView::Stretch);
+	sources_->horizontalHeader()->setSectionResizeMode(kShownColumn, QHeaderView::ResizeToContents);
 	sources_->horizontalHeader()->setSectionResizeMode(kStatusColumn, QHeaderView::ResizeToContents);
 	sources_->verticalHeader()->hide();
 	sources_->setSelectionBehavior(QAbstractItemView::SelectRows);
@@ -259,22 +307,28 @@ TapeloopDock::TapeloopDock(DockBackend &backend, TextLookup text, QWidget *paren
 	layout->addWidget(exportStatus_);
 
 	connect(sources_, &QTableWidget::itemChanged, this, [this](QTableWidgetItem *item) {
-		if (item->column() != kSourceColumn) {
+		if (item->column() != kSourceColumn && item->column() != kShownColumn) {
 			return;
 		}
 		guarded([&] {
+			const std::string uuid =
+				sources_->item(item->row(), kSourceColumn)->data(Qt::UserRole).toString().toStdString();
+			const bool checked = item->checkState() == Qt::Checked;
+			if (item->column() == kShownColumn) {
+				backend_.setShown(uuid, checked);
+				return;
+			}
 			BufferSettings settings = backend_.settings();
-			settings.sources[item->data(Qt::UserRole).toString().toStdString()].selected =
-				item->checkState() == Qt::Checked;
+			settings.sources[uuid].selected = checked;
 			backend_.setSettings(settings);
 		});
 		refresh();
 	});
-	// The current cell stays on the checkbox, so that Space always toggles it.
+	// The current cell stays on a checkbox, so that Space always toggles one.
 	connect(sources_, &QTableWidget::currentCellChanged, this, [this](int row, int column) {
 		sourceSettings_->setEnabled(row >= 0);
-		if (row >= 0 && column != kSourceColumn) {
-			sources_->setCurrentCell(row, kSourceColumn);
+		if (row >= 0 && column == kStatusColumn) {
+			sources_->setCurrentCell(row, kShownColumn);
 		}
 	});
 	connect(sourceSettings_, &QPushButton::clicked, this, [this] { openSourceSettings(sources_->currentRow()); });
@@ -566,11 +620,16 @@ void TapeloopDock::rebuildSources(const std::vector<DockSource> &sources)
 	for (size_t i = 0; i < sources.size(); ++i) {
 		const int row = static_cast<int>(i);
 		auto *name = new QTableWidgetItem(QString::fromStdString(sources[i].name));
-		name->setFlags(Qt::ItemIsEnabled | Qt::ItemIsSelectable | Qt::ItemIsUserCheckable);
+		name->setFlags(Qt::ItemIsEnabled | Qt::ItemIsSelectable | Qt::ItemIsUserCheckable |
+			       Qt::ItemIsDragEnabled);
 		name->setData(Qt::UserRole, QString::fromStdString(sources[i].uuid));
 		sources_->setItem(row, kSourceColumn, name);
+		auto *shown = new QTableWidgetItem;
+		shown->setFlags(Qt::ItemIsEnabled | Qt::ItemIsSelectable | Qt::ItemIsUserCheckable |
+				Qt::ItemIsDragEnabled);
+		sources_->setItem(row, kShownColumn, shown);
 		auto *status = new QTableWidgetItem;
-		status->setFlags(Qt::ItemIsEnabled | Qt::ItemIsSelectable);
+		status->setFlags(Qt::ItemIsEnabled | Qt::ItemIsSelectable | Qt::ItemIsDragEnabled);
 		sources_->setItem(row, kStatusColumn, status);
 		if (!current.empty() && sources[i].uuid == current) {
 			restored = row;
@@ -593,6 +652,7 @@ void TapeloopDock::updateSources(const std::vector<DockSource> &sources)
 	for (size_t i = 0; i < sources.size() && static_cast<int>(i) < sources_->rowCount(); ++i) {
 		const int row = static_cast<int>(i);
 		sources_->item(row, kSourceColumn)->setCheckState(sources[i].selected ? Qt::Checked : Qt::Unchecked);
+		sources_->item(row, kShownColumn)->setCheckState(sources[i].shown ? Qt::Checked : Qt::Unchecked);
 		QTableWidgetItem *status = sources_->item(row, kStatusColumn);
 		status->setText(statusText(sources[i]));
 		// Left out of activation explains waiting too, so it comes first.
@@ -902,6 +962,20 @@ void TapeloopDock::changeSettings(void (*change)(BufferSettings &, int), int val
 		BufferSettings settings = backend_.settings();
 		change(settings, value);
 		backend_.setSettings(settings);
+	});
+	refresh();
+}
+
+void TapeloopDock::moveSource(int from, int to)
+{
+	if (from < 0 || to < 0 || from >= sources_->rowCount() || to >= sources_->rowCount()) {
+		return;
+	}
+	guarded([&] {
+		const auto uuidAt = [this](int row) {
+			return sources_->item(row, kSourceColumn)->data(Qt::UserRole).toString().toStdString();
+		};
+		backend_.moveSource(uuidAt(from), uuidAt(to));
 	});
 	refresh();
 }

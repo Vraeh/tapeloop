@@ -45,6 +45,8 @@ struct DockSource {
 	// It holds less than its length, as the buffers together need more memory than they
 	// may use.
 	bool budgetLimited = false;
+	// It plays in the replay, in list order.
+	bool shown = true;
 };
 
 // A replay as the dock lists it.
@@ -96,7 +98,14 @@ public:
 	DockBackend(DockBackend &&) = delete;
 	DockBackend &operator=(DockBackend &&) = delete;
 
+	// In the order a replay shows them.
 	virtual std::vector<DockSource> sources() const = 0;
+	// Both act at once, on the replay playing too. False when refused.
+	virtual bool setShown(const std::string &uuid, bool shown) = 0;
+	// Moves a source to the place of `target` in sources(), which moves one place toward
+	// where the source was. Both are UUIDs, as the list the dock shows may be older than
+	// sources().
+	virtual bool moveSource(const std::string &uuid, const std::string &target) = 0;
 	virtual BufferSettings settings() const = 0;
 	virtual void setSettings(const BufferSettings &settings) = 0;
 	virtual std::vector<EncoderChoice> encoderChoices() const = 0;

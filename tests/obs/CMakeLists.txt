@@ -130,6 +130,7 @@ target_sources(
     ClipDecoder.hpp
     DecodeTests.cpp
     DockBackendTests.cpp
+    HotkeyTests.cpp
     LogCounter.hpp
     ManagerTests.cpp
     Mp4Reader.cpp
@@ -142,11 +143,14 @@ target_sources(
     PlayerTests.cpp
     ProfileHotkeyTests.cpp
     ReplaySourceTests.cpp
+    SequencePlayerTests.cpp
     SmokeTests.cpp
     TestEncoders.cpp
     TestEncoders.hpp
     TestPattern.cpp
     TestPattern.hpp
+    UiTasks.cpp
+    UiTasks.hpp
 )
 target_compile_definitions(
   tapeloop-obs-tests
@@ -155,6 +159,7 @@ target_compile_definitions(
     TAPELOOP_OBS_PLUGIN_DATA_DIR="${_obs_plugin_data_dir}"
     TAPELOOP_OBS_GRAPHICS_MODULE="${_obs_graphics_module}"
     TAPELOOP_OBS_MODULE_SUFFIX="${CMAKE_SHARED_MODULE_SUFFIX}"
+    TAPELOOP_LOCALE_FILE="${CMAKE_CURRENT_SOURCE_DIR}/../../data/locale/en-US.ini"
     TAPELOOP_TEST_DATA_DIR="${CMAKE_CURRENT_SOURCE_DIR}/data"
     TAPELOOP_TEST_UNLOAD_MODULE="$<TARGET_FILE:tapeloop-test-unload>"
 )

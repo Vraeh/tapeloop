@@ -7,6 +7,7 @@
 
 #include <exception>
 #include <iterator>
+#include <memory>
 #include <utility>
 
 namespace tapeloop {
@@ -23,11 +24,12 @@ ReplayStore::~ReplayStore()
 	worker_.join();
 }
 
-uint64_t ReplayStore::write(ReplayCapture capture)
+uint64_t ReplayStore::write(ReplayCapture capture, std::shared_ptr<ReplayFiles> files)
 {
 	Job job;
 	job.kind = StoreResult::Kind::Capture;
 	job.capture = std::move(capture);
+	job.files = std::move(files);
 	return enqueue(std::move(job));
 }
 
@@ -109,7 +111,8 @@ void ReplayStore::run() noexcept
 		const bool stopping = stopping_;
 		lock.unlock();
 		job.slot.front() = execute(job, stopping);
-		// The capture's GOPs go outside the lock, and before its result is seen.
+		// The capture's GOPs go outside the lock, after execute() has set its files, and
+		// before its result is seen.
 		job.capture.sources.clear();
 		lock.lock();
 		results_.splice(results_.end(), job.slot);
@@ -127,6 +130,14 @@ StoreResult ReplayStore::execute(const Job &job, bool stopping) noexcept
 		switch (job.kind) {
 		case StoreResult::Kind::Capture:
 			result.written = writer_.write(job.capture);
+			if (job.files) {
+				try {
+					job.files->set(result.written->manifest,
+						       std::make_shared<const ReplayIndex>(result.written->index));
+					// NOLINTNEXTLINE(bugprone-empty-catch): the replay is written all the same, and the library sets its files once it learns so.
+				} catch (...) {
+				}
+			}
 			break;
 		case StoreResult::Kind::Tags:
 			result.manifest = job.path;

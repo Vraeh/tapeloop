@@ -23,6 +23,7 @@
 #include <QFocusEvent>
 #include <QPushButton>
 #include <QListWidget>
+#include <QMimeData>
 #include <QMouseEvent>
 #include <QSpinBox>
 #include <QTableWidget>
@@ -31,6 +32,7 @@
 #include <chrono>
 #include <cstdlib>
 #include <initializer_list>
+#include <memory>
 #include <set>
 #include <string>
 #include <utility>
@@ -58,6 +60,12 @@ void addSources(FakeBackend &backend)
 		{"uuid-scoreboard", "Scoreboard", false, SourceState::Stopped, 0s, 0},
 	};
 }
+
+// Qt hands a drop only to the target of a drag it runs itself, which a test cannot start
+// without blocking in its loop, so the drop goes straight to the table's own handler.
+struct TableDrop : QTableWidget {
+	static constexpr auto handler = &TableDrop::dropEvent;
+};
 
 // The dialog has no Q_OBJECT, so it is found as a QDialog.
 tapeloop::ui::SourceSettingsDialog *sourceDialog(const QWidget &dock)
@@ -116,13 +124,13 @@ TEST_CASE("selected sources show the state of their buffer")
 	TapeloopDock dock(backend, localeText());
 	auto *table = child<QTableWidget>(dock, "sources");
 
-	CHECK(table->item(0, 1)->text() == "42.5 s, 50.0 MB");
-	CHECK(table->item(1, 1)->text() == "Encoder failed");
-	CHECK(table->item(2, 1)->text() == "Stopped");
+	CHECK(table->item(0, 2)->text() == "42.5 s, 50.0 MB");
+	CHECK(table->item(1, 2)->text() == "Encoder failed");
+	CHECK(table->item(2, 2)->text() == "Stopped");
 
 	backend.current.sources["uuid-scoreboard"].selected = false;
 	dock.refresh();
-	CHECK(table->item(2, 1)->text().isEmpty());
+	CHECK(table->item(2, 2)->text().isEmpty());
 }
 
 TEST_CASE("the advanced settings choose the replay encoder and whether other cards may encode")
@@ -385,19 +393,19 @@ TEST_CASE("a source on an encoder path that is not the optimal one says so")
 	}
 	TapeloopDock dock(backend, localeText());
 	auto *table = child<QTableWidget>(dock, "sources");
-	CHECK_FALSE(table->item(0, 1)->icon().isNull());
-	CHECK(table->item(0, 1)->toolTip().contains("x264"));
-	CHECK_FALSE(table->item(1, 1)->icon().isNull());
-	CHECK(table->item(1, 1)->toolTip().contains("read back through memory"));
-	CHECK(table->item(2, 1)->icon().isNull());
-	CHECK(table->item(2, 1)->toolTip().isEmpty());
+	CHECK_FALSE(table->item(0, 2)->icon().isNull());
+	CHECK(table->item(0, 2)->toolTip().contains("x264"));
+	CHECK_FALSE(table->item(1, 2)->icon().isNull());
+	CHECK(table->item(1, 2)->toolTip().contains("read back through memory"));
+	CHECK(table->item(2, 2)->icon().isNull());
+	CHECK(table->item(2, 2)->toolTip().isEmpty());
 
 	// With another note, both show, a paragraph each.
 	backend.shown[0].activationLeftOut = true;
 	dock.refresh();
-	CHECK(table->item(0, 1)->toolTip().contains("unpauses or refreshes when it becomes active"));
-	CHECK(table->item(0, 1)->toolTip().contains("x264"));
-	CHECK(table->item(0, 1)->toolTip().contains("\n\n"));
+	CHECK(table->item(0, 2)->toolTip().contains("unpauses or refreshes when it becomes active"));
+	CHECK(table->item(0, 2)->toolTip().contains("x264"));
+	CHECK(table->item(0, 2)->toolTip().contains("\n\n"));
 
 	// A source read back through memory says why, in plain words.
 	const std::pair<tapeloop::ReadbackReason, const char *> reasons[] = {
@@ -408,7 +416,7 @@ TEST_CASE("a source on an encoder path that is not the optimal one says so")
 	for (const auto &[reason, words] : reasons) {
 		backend.shown[1].readbackReason = reason;
 		dock.refresh();
-		const QString note = table->item(1, 1)->toolTip();
+		const QString note = table->item(1, 2)->toolTip();
 		CHECK(note.contains(words));
 		CHECK(note.contains("read back through memory"));
 		CHECK_FALSE(note.contains("NV12"));
@@ -417,7 +425,7 @@ TEST_CASE("a source on an encoder path that is not the optimal one says so")
 	// Without a reason, as no capture gives, it says no more than it knows.
 	backend.shown[1].readbackReason = tapeloop::ReadbackReason::None;
 	dock.refresh();
-	CHECK(table->item(1, 1)->toolTip() == localeText()("Dock.Status.Readback.Tooltip"));
+	CHECK(table->item(1, 2)->toolTip() == localeText()("Dock.Status.Readback.Tooltip"));
 
 	// An encoder chosen in the advanced settings on another card explains the path it
 	// takes; one OBS gives no textures, or that takes none, would read back in the
@@ -428,31 +436,31 @@ TEST_CASE("a source on an encoder path that is not the optimal one says so")
 		backend.shown[1].readbackReason = reason;
 		dock.refresh();
 		CAPTURE(words);
-		CHECK(table->item(1, 1)->toolTip().endsWith(chosenNote) ==
+		CHECK(table->item(1, 2)->toolTip().endsWith(chosenNote) ==
 		      (reason == tapeloop::ReadbackReason::OtherAdapter));
 	}
 	backend.shown[0].chosenEncoder = true;
 	dock.refresh();
-	CHECK(table->item(0, 1)->toolTip().contains(localeText()("Dock.Status.SoftwareChosen.Tooltip")));
-	CHECK_FALSE(table->item(0, 1)->toolTip().contains("no hardware encoder could take it"));
-	CHECK_FALSE(table->item(0, 1)->toolTip().contains(chosenNote));
+	CHECK(table->item(0, 2)->toolTip().contains(localeText()("Dock.Status.SoftwareChosen.Tooltip")));
+	CHECK_FALSE(table->item(0, 2)->toolTip().contains("no hardware encoder could take it"));
+	CHECK_FALSE(table->item(0, 2)->toolTip().contains(chosenNote));
 	backend.shown[0].chosenEncoder = false;
 	backend.shown[1].chosenEncoder = false;
 
 	// A buffer the memory budget holds to less than its length.
 	backend.shown[2].budgetLimited = true;
 	dock.refresh();
-	CHECK(table->item(2, 1)->toolTip() == localeText()("Dock.Status.BudgetLimited.Tooltip"));
+	CHECK(table->item(2, 2)->toolTip() == localeText()("Dock.Status.BudgetLimited.Tooltip"));
 	backend.shown[2].budgetLimited = false;
 
 	// A choice that could not start, whatever path the encoder after it takes.
 	backend.shown[2].choiceSkipped = true;
 	dock.refresh();
-	CHECK_FALSE(table->item(2, 1)->icon().isNull());
-	CHECK(table->item(2, 1)->toolTip() == localeText()("Dock.Status.ChoiceSkipped.Tooltip"));
+	CHECK_FALSE(table->item(2, 2)->icon().isNull());
+	CHECK(table->item(2, 2)->toolTip() == localeText()("Dock.Status.ChoiceSkipped.Tooltip"));
 	backend.shown[2].state = SourceState::Failed;
 	dock.refresh();
-	CHECK(table->item(2, 1)->toolTip().isEmpty());
+	CHECK(table->item(2, 2)->toolTip().isEmpty());
 	backend.shown[2].state = SourceState::Running;
 	backend.shown[2].choiceSkipped = false;
 
@@ -461,12 +469,12 @@ TEST_CASE("a source on an encoder path that is not the optimal one says so")
 	for (const SourceState state : {SourceState::Stopped, SourceState::Failed, SourceState::Waiting}) {
 		backend.shown[1].state = state;
 		dock.refresh();
-		CHECK_FALSE(table->item(1, 1)->toolTip().contains("read back through memory"));
+		CHECK_FALSE(table->item(1, 2)->toolTip().contains("read back through memory"));
 	}
 	backend.shown[1].state = SourceState::Running;
 	backend.current.sources[backend.shown[1].uuid].selected = false;
 	dock.refresh();
-	CHECK(table->item(1, 1)->toolTip().isEmpty());
+	CHECK(table->item(1, 2)->toolTip().isEmpty());
 }
 
 TEST_CASE("a tag comes off the selected replay, and a deleted one off every replay")
@@ -878,14 +886,14 @@ TEST_CASE("a media source left out of activation says why")
 	backend.shown[0].activationLeftOut = true;
 	backend.current.sources["uuid-camera-1"].selected = true;
 	TapeloopDock dock(backend, localeText());
-	const QTableWidgetItem *status = child<QTableWidget>(dock, "sources")->item(0, 1);
+	const QTableWidgetItem *status = child<QTableWidget>(dock, "sources")->item(0, 2);
 	CHECK_FALSE(status->icon().isNull());
 	CHECK(status->toolTip().contains("unpauses or refreshes when it becomes active"));
 
 	// Unselected, it has nothing to explain.
 	backend.current.sources["uuid-camera-1"].selected = false;
 	dock.refresh();
-	const QTableWidgetItem *refreshed = child<QTableWidget>(dock, "sources")->item(0, 1);
+	const QTableWidgetItem *refreshed = child<QTableWidget>(dock, "sources")->item(0, 2);
 	CHECK(refreshed->icon().isNull());
 	CHECK(refreshed->toolTip().isEmpty());
 }
@@ -898,7 +906,7 @@ TEST_CASE("a source whose HEVC encoder failed says it goes on in H.264")
 	backend.shown[0].hevcFailed = true;
 	backend.current.sources["uuid-camera-1"].selected = true;
 	TapeloopDock dock(backend, localeText());
-	const QTableWidgetItem *status = child<QTableWidget>(dock, "sources")->item(0, 1);
+	const QTableWidgetItem *status = child<QTableWidget>(dock, "sources")->item(0, 2);
 	CHECK(status->text() == localeText()("Dock.Status.Failed"));
 	CHECK_FALSE(status->icon().isNull());
 	CHECK(status->toolTip() == localeText()("Dock.Status.HevcFailed.Tooltip"));
@@ -907,14 +915,14 @@ TEST_CASE("a source whose HEVC encoder failed says it goes on in H.264")
 	backend.shown[0].state = SourceState::Running;
 	backend.shown[0].encoderPath = tapeloop::EncoderPath::Software;
 	dock.refresh();
-	const QString both = child<QTableWidget>(dock, "sources")->item(0, 1)->toolTip();
+	const QString both = child<QTableWidget>(dock, "sources")->item(0, 2)->toolTip();
 	CHECK(both.startsWith(localeText()("Dock.Status.Software.Tooltip")));
 	CHECK(both.endsWith(localeText()("Dock.Status.HevcFallback.Tooltip")));
 
 	// Unticked, it has nothing to say.
 	backend.current.sources["uuid-camera-1"].selected = false;
 	dock.refresh();
-	CHECK(child<QTableWidget>(dock, "sources")->item(0, 1)->toolTip().isEmpty());
+	CHECK(child<QTableWidget>(dock, "sources")->item(0, 2)->toolTip().isEmpty());
 }
 
 TEST_CASE("the activation checkbox follows the settings")
@@ -940,15 +948,15 @@ TEST_CASE("a source waiting for a picture says so with an icon and a tooltip")
 	TapeloopDock dock(backend, localeText());
 	auto *table = child<QTableWidget>(dock, "sources");
 
-	const QTableWidgetItem *status = table->item(0, 1);
+	const QTableWidgetItem *status = table->item(0, 2);
 	CHECK(status->text() == "Waiting for a picture");
 	CHECK_FALSE(status->icon().isNull());
 	CHECK(status->toolTip().contains("starts its buffer as soon as it has one"));
 
 	backend.shown[0].state = SourceState::Running;
 	dock.refresh();
-	CHECK(table->item(0, 1)->icon().isNull());
-	CHECK(table->item(0, 1)->toolTip().isEmpty());
+	CHECK(table->item(0, 2)->icon().isNull());
+	CHECK(table->item(0, 2)->toolTip().isEmpty());
 }
 
 TEST_CASE("the dock picks up sources that come and go")
@@ -1257,17 +1265,115 @@ TEST_CASE("the source list works from the keyboard")
 	auto *table = child<QTableWidget>(dock, "sources");
 	table->setCurrentCell(0, 0);
 
-	QKeyEvent right(QEvent::KeyPress, Qt::Key_Right, Qt::NoModifier);
-	QApplication::sendEvent(table, &right);
-	CHECK(table->currentColumn() == 0);
-
 	QKeyEvent space(QEvent::KeyPress, Qt::Key_Space, Qt::NoModifier, " ");
 	QApplication::sendEvent(table, &space);
 	CHECK(backend.current.sources["uuid-camera-1"].selected);
 
+	QKeyEvent right(QEvent::KeyPress, Qt::Key_Right, Qt::NoModifier);
+	QApplication::sendEvent(table, &right);
+	CHECK(table->currentColumn() == 1);
+	QApplication::sendEvent(table, &space);
+	CHECK_FALSE(backend.shown[0].shown);
+	QApplication::sendEvent(table, &right);
+	CHECK(table->currentColumn() == 1);
+
 	QKeyEvent enter(QEvent::KeyPress, Qt::Key_Return, Qt::NoModifier);
 	QApplication::sendEvent(table, &enter);
 	CHECK(sourceDialog(dock));
+}
+
+TEST_CASE("the dock shows a source in the replay apart from capturing it")
+{
+	FakeBackend backend;
+	addSources(backend);
+	backend.shown[1].shown = false;
+	TapeloopDock dock(backend, localeText());
+	auto *table = child<QTableWidget>(dock, "sources");
+
+	REQUIRE(table->columnCount() == 3);
+	CHECK(table->horizontalHeaderItem(1)->text() == localeText()("Dock.Shown"));
+	CHECK(table->horizontalHeaderItem(1)->toolTip() == localeText()("Dock.Shown.Tooltip"));
+	CHECK(table->item(0, 1)->checkState() == Qt::Checked);
+	CHECK(table->item(1, 1)->checkState() == Qt::Unchecked);
+
+	table->item(0, 1)->setCheckState(Qt::Unchecked);
+	CHECK_FALSE(backend.shown[0].shown);
+	CHECK(backend.settingsChanges == 0);
+	table->item(1, 1)->setCheckState(Qt::Checked);
+	CHECK(backend.shown[1].shown);
+	table->item(2, 0)->setCheckState(Qt::Checked);
+	CHECK(backend.shown[2].shown);
+
+	backend.shown[2].shown = false;
+	dock.refresh();
+	CHECK(table->item(2, 1)->checkState() == Qt::Unchecked);
+	CHECK(table->item(2, 0)->checkState() == Qt::Checked);
+}
+
+TEST_CASE("dragging a source in the dock changes the order of the replay")
+{
+	FakeBackend backend;
+	addSources(backend);
+	TapeloopDock dock(backend, localeText());
+	dock.show();
+	auto *table = child<QTableWidget>(dock, "sources");
+	const auto upperHalf = [&](int row) {
+		return QPoint(5, table->rowViewportPosition(row) + 1);
+	};
+	const auto lowerHalf = [&](int row) {
+		return QPoint(5, table->rowViewportPosition(row) + table->rowHeight(row) - 2);
+	};
+	const auto drop = [&](int from, QPoint point) {
+		table->setCurrentCell(from, 0);
+		const std::unique_ptr<QMimeData> data(table->model()->mimeData({table->model()->index(from, 0)}));
+		QDropEvent event(QPointF(point), Qt::MoveAction, data.get(), Qt::LeftButton, Qt::NoModifier);
+		(table->*TableDrop::handler)(&event);
+		// Anything but a move keeps Qt from taking the dragged items out of the table.
+		CHECK(event.dropAction() == Qt::IgnoreAction);
+	};
+	const auto names = [&] {
+		QStringList listed;
+		for (int row = 0; row < table->rowCount(); ++row) {
+			listed.append(table->item(row, 0)->text());
+		}
+		return listed;
+	};
+
+	drop(0, lowerHalf(2));
+	CHECK(backend.moves == std::vector<std::pair<size_t, size_t>>{{0, 2}});
+	CHECK(names() == QStringList{"Camera 2", "Scoreboard", "Camera 1"});
+	CHECK(table->currentRow() == 2);
+
+	drop(2, upperHalf(0));
+	CHECK(names() == QStringList{"Camera 1", "Camera 2", "Scoreboard"});
+	CHECK(table->currentRow() == 0);
+
+	drop(1, upperHalf(2));
+	drop(1, lowerHalf(0));
+	CHECK(backend.moves.size() == 2);
+
+	drop(0, upperHalf(2));
+	CHECK(names() == QStringList{"Camera 2", "Camera 1", "Scoreboard"});
+	drop(0, QPoint(5, table->rowViewportPosition(2) + table->rowHeight(2) + 5));
+	CHECK(backend.moves.back() == std::pair<size_t, size_t>{0, 2});
+	CHECK(names() == QStringList{"Camera 1", "Scoreboard", "Camera 2"});
+}
+
+TEST_CASE("the dock takes no drag from outside its source list")
+{
+	FakeBackend backend;
+	addSources(backend);
+	TapeloopDock dock(backend, localeText());
+	dock.show();
+	auto *table = child<QTableWidget>(dock, "sources");
+	const QPoint point(5, table->rowViewportPosition(2) + 1);
+	const std::unique_ptr<QMimeData> data(table->model()->mimeData({table->model()->index(0, 0)}));
+
+	// Without a drag of Qt's own, the event has no source, as a drag from another
+	// application.
+	QDragEnterEvent enter(point, Qt::MoveAction, data.get(), Qt::LeftButton, Qt::NoModifier);
+	QApplication::sendEvent(table->viewport(), &enter);
+	CHECK_FALSE(enter.isAccepted());
 }
 
 TEST_CASE("the dock says why the manual control is off")

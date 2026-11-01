@@ -22,10 +22,14 @@ target_sources(
     ProfileHotkeys.hpp
     RenderAdapter.cpp
     RenderAdapter.hpp
+    ReplayHotkeys.cpp
+    ReplayHotkeys.hpp
     ReplayPlayer.cpp
     ReplayPlayer.hpp
     ReplaySource.cpp
     ReplaySource.hpp
+    SequencePlayer.cpp
+    SequencePlayer.hpp
     SettingsData.cpp
     SettingsData.hpp
     SourceCapture.cpp

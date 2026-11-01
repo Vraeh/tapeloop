@@ -12,6 +12,8 @@
 #include <cstdint>
 #include <filesystem>
 #include <map>
+#include <memory>
+#include <mutex>
 #include <optional>
 #include <span>
 #include <string>
@@ -62,6 +64,25 @@ struct WrittenReplay {
 	uint64_t bytesAppended = 0;
 	size_t gopsAppended = 0;
 	size_t gopsShared = 0;
+};
+
+// Where the files of a replay are, for one played while they are being written: set once
+// they are written, and read on the threads that play it.
+class ReplayFiles {
+public:
+	struct Files {
+		std::filesystem::path manifest;
+		std::shared_ptr<const ReplayIndex> index;
+	};
+
+	// The index is the manifest's, and not null.
+	void set(std::filesystem::path manifest, std::shared_ptr<const ReplayIndex> index);
+	// Null until set.
+	std::shared_ptr<const Files> get() const;
+
+private:
+	mutable std::mutex mutex_;
+	std::shared_ptr<const Files> files_;
 };
 
 struct ReplayWriterConfig {

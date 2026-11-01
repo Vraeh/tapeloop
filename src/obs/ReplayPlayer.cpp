@@ -92,7 +92,7 @@ void ReplayPlayer::stop() noexcept
 	}
 }
 
-bool ReplayPlayer::load(std::unique_ptr<GopSource> gops) noexcept
+uint64_t ReplayPlayer::load(std::unique_ptr<GopSource> gops) noexcept
 {
 	std::vector<Nanoseconds> times;
 	try {
@@ -100,7 +100,7 @@ bool ReplayPlayer::load(std::unique_ptr<GopSource> gops) noexcept
 			times = gops->frameTimes();
 		}
 	} catch (...) {
-		return false;
+		return 0;
 	}
 	// In the playhead's order, so that the frame count is the playhead's.
 	std::sort(times.begin(), times.end());
@@ -108,18 +108,20 @@ bool ReplayPlayer::load(std::unique_ptr<GopSource> gops) noexcept
 
 	// A clip no tick or decoder took yet goes once the lock is released.
 	std::unique_ptr<GopSource> superseded;
+	uint64_t clip = 0;
 	{
 		const std::lock_guard lock(mutex_);
-		++loads_;
+		clip = ++loads_;
 		timesPending_ = true;
 		loadAt_ = commandCount_;
 		pendingTimes_.swap(times);
 		gopsPending_ = true;
 		superseded = std::exchange(pendingGops_, std::move(gops));
 		++requests_;
+		ahead_.load({});
 	}
 	wake_.notify_one();
-	return true;
+	return clip;
 }
 
 void ReplayPlayer::play() noexcept
@@ -187,47 +189,48 @@ void ReplayPlayer::command(Control control, int64_t value) noexcept
 	const std::lock_guard lock(mutex_);
 	if (commandCount_ < commands_.size()) {
 		commands_[commandCount_++] = {control, value};
+		apply(ahead_, {control, value});
 	}
 }
 
-void ReplayPlayer::apply(const Command &command) noexcept
+void ReplayPlayer::apply(Playhead &playhead, const Command &command) noexcept
 {
 	switch (command.control) {
 	case Control::Play:
-		playhead_.play();
+		playhead.play();
 		break;
 	case Control::Pause:
-		playhead_.pause();
+		playhead.pause();
 		break;
 	case Control::TogglePause:
-		playhead_.togglePause();
+		playhead.togglePause();
 		break;
 	case Control::Rate:
-		playhead_.setRate(static_cast<int32_t>(command.value));
+		playhead.setRate(static_cast<int32_t>(command.value));
 		break;
 	case Control::Faster:
-		playhead_.setRate(nextPreset(playhead_.rate(), true));
+		playhead.setRate(nextPreset(playhead.rate(), true));
 		break;
 	case Control::Slower:
-		playhead_.setRate(nextPreset(playhead_.rate(), false));
+		playhead.setRate(nextPreset(playhead.rate(), false));
 		break;
 	case Control::NormalSpeed:
-		playhead_.setRate(playhead_.rate() < 0 ? -1000 : 1000);
+		playhead.setRate(playhead.rate() < 0 ? -1000 : 1000);
 		break;
 	case Control::Reverse:
-		playhead_.reverse();
+		playhead.reverse();
 		break;
 	case Control::Step:
-		playhead_.step(static_cast<int>(command.value));
+		playhead.step(static_cast<int>(command.value));
 		break;
 	case Control::Seek:
-		playhead_.seek(Nanoseconds{command.value});
+		playhead.seek(Nanoseconds{command.value});
 		break;
 	case Control::BeginScrub:
-		playhead_.beginScrub(command.value > 0 ? ScrubDirection::Forward : ScrubDirection::Backward);
+		playhead.beginScrub(command.value > 0 ? ScrubDirection::Forward : ScrubDirection::Backward);
 		break;
 	case Control::EndScrub:
-		playhead_.endScrub();
+		playhead.endScrub();
 		break;
 	}
 }
@@ -252,7 +255,12 @@ void ReplayPlayer::tick(Nanoseconds elapsed) noexcept
 
 	// The playhead moves before the controls apply, so that a step or a seek lands
 	// where it was asked and is on screen at once.
+	const bool playingForward = playhead_.playing() && !playhead_.scrubbing() && playhead_.rate() > 0;
 	playhead_.advance(elapsed);
+	// Playing stops by itself only at an end of the clip.
+	if (playingForward && !playhead_.playing()) {
+		ended_ = true;
+	}
 	for (size_t i = 0; i <= count; ++i) {
 		if (loadAt == i) {
 			frames_ = loadingTimes_.size();
@@ -260,11 +268,16 @@ void ReplayPlayer::tick(Nanoseconds elapsed) noexcept
 			// swap.
 			playhead_.load(std::move(loadingTimes_));
 			clip_ = loaded;
+			ended_ = false;
 			onScreen_.reset();
 		}
 		if (i < count) {
-			apply(applying_[i]);
+			apply(playhead_, applying_[i]);
 		}
+	}
+
+	if (playhead_.playing() || playhead_.scrubbing() || !playhead_.atEnd()) {
+		ended_ = false;
 	}
 
 	std::optional<Wanted> wanted;
@@ -289,6 +302,8 @@ void ReplayPlayer::tick(Nanoseconds elapsed) noexcept
 		state_.position = playhead_.position();
 		state_.frame = playhead_.displayedFrame();
 		state_.frames = frames_;
+		state_.clip = clip_;
+		state_.ended = ended_;
 		if (!onScreen_) {
 			state_.drawn.reset();
 		}
@@ -585,6 +600,12 @@ PlayerState ReplayPlayer::state() const noexcept
 {
 	const std::lock_guard lock(mutex_);
 	return state_;
+}
+
+int32_t ReplayPlayer::rateAhead() const noexcept
+{
+	const std::lock_guard lock(mutex_);
+	return ahead_.rate();
 }
 
 } // namespace tapeloop::obs

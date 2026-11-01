@@ -6,6 +6,7 @@
 #include "core/Gop.hpp"
 #include "core/GopSource.hpp"
 #include "core/ReplayFormat.hpp"
+#include "core/ReplayWriter.hpp"
 
 #include <cstddef>
 #include <cstdint>
@@ -71,6 +72,12 @@ public:
 	// live holds the buffer's GOPs by index, and may be shorter than the source's GOPs.
 	StoredGops(std::filesystem::path manifest, StoredSource source, std::vector<std::weak_ptr<const Gop>> live,
 		   size_t cacheBytes = kDefaultGopCacheBytes);
+	// For a replay that may not be stored yet. The store holds the capture's GOPs until it
+	// has set the files, so each is in the buffer or in the files; should it run out of
+	// memory setting them, the library sets them at its next poll. source may be the
+	// capture's, which lists the GOPs the files list.
+	StoredGops(std::shared_ptr<const ReplayFiles> files, StoredSource source,
+		   std::vector<std::weak_ptr<const Gop>> live, size_t cacheBytes = kDefaultGopCacheBytes);
 
 	size_t gopCount() const noexcept override { return source_.gops.size(); }
 	size_t packetCount(size_t gop) const noexcept override { return source_.gops[gop].packetCount; }
@@ -81,10 +88,18 @@ public:
 	const GopReader::Stats &stats() const noexcept { return reader_.stats(); }
 
 private:
+	// Takes the files of the replay, if they are set by now.
+	void takeFiles();
+
 	std::filesystem::path manifest_;
 	StoredSource source_;
 	std::vector<std::weak_ptr<const Gop>> live_;
 	GopReader reader_;
+	// Null once the files are taken, or when the manifest was known from the start.
+	std::shared_ptr<const ReplayFiles> files_;
+	// Once taken: the files, and the source as their index lists it.
+	std::shared_ptr<const ReplayFiles::Files> written_;
+	const StoredSource *stored_ = nullptr;
 };
 
 } // namespace tapeloop

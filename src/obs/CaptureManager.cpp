@@ -390,7 +390,7 @@ uint64_t CaptureManager::captureReplay()
 		// the capture: the replay would be marked not saved while it is written. Tickets
 		// start at 1.
 		auto entry = writing_.extract(writing_.try_emplace(0, id).first);
-		entry.key() = store_.write(std::move(capture));
+		entry.key() = store_.write(std::move(capture), library_.find(id)->files);
 		writing_.insert(std::move(entry));
 	} catch (...) {
 		blog(LOG_WARNING, "[tapeloop] Replay %llu could not be saved: it could not be handed to the writer",

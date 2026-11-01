@@ -44,7 +44,9 @@ std::shared_ptr<const Gop> GopReader::read(const std::filesystem::path &manifest
 		++stats_.live;
 		return held;
 	}
-	if (gop >= source.gops.size() || source.gops[gop].run >= source.runs.size()) {
+	// Without a manifest, the segments' paths would be taken as relative to the working
+	// folder.
+	if (manifest.empty() || gop >= source.gops.size() || source.gops[gop].run >= source.runs.size()) {
 		++stats_.failed;
 		return nullptr;
 	}
@@ -137,6 +139,15 @@ StoredGops::StoredGops(std::filesystem::path manifest, StoredSource source, std:
 {
 }
 
+StoredGops::StoredGops(std::shared_ptr<const ReplayFiles> files, StoredSource source,
+		       std::vector<std::weak_ptr<const Gop>> live, size_t cacheBytes)
+	: source_(std::move(source)),
+	  live_(std::move(live)),
+	  reader_(cacheBytes),
+	  files_(std::move(files))
+{
+}
+
 std::vector<Nanoseconds> StoredGops::frameTimes() const
 {
 	std::vector<Nanoseconds> times;
@@ -150,7 +161,31 @@ std::vector<Nanoseconds> StoredGops::frameTimes() const
 
 std::shared_ptr<const Gop> StoredGops::read(size_t gop)
 {
-	return reader_.read(manifest_, source_, gop, gop < live_.size() ? live_[gop] : std::weak_ptr<const Gop>());
+	const std::weak_ptr<const Gop> live = gop < live_.size() ? live_[gop] : std::weak_ptr<const Gop>();
+	// Held until the reader has it, so the GOP cannot go between the look at the files and
+	// the read. The store holds the capture's GOPs until it has set the files, so a GOP
+	// already gone finds them set, unless the store ran out of memory setting them.
+	const std::shared_ptr<const Gop> held = live.lock();
+	if (files_ && !held) {
+		takeFiles();
+	}
+	return reader_.read(written_ ? written_->manifest : manifest_, stored_ ? *stored_ : source_, gop, live);
+}
+
+void StoredGops::takeFiles()
+{
+	std::shared_ptr<const ReplayFiles::Files> files = files_->get();
+	if (!files) {
+		return;
+	}
+	files_.reset();
+	for (const StoredSource &source : files->index->sources) {
+		if (source.key == source_.key) {
+			stored_ = &source;
+			written_ = std::move(files);
+			return;
+		}
+	}
 }
 
 } // namespace tapeloop

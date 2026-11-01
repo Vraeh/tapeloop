@@ -4,6 +4,7 @@
 #include "core/ReplayLibrary.hpp"
 
 #include <algorithm>
+#include <memory>
 #include <ranges>
 #include <utility>
 
@@ -107,6 +108,7 @@ uint64_t ReplayLibrary::addCaptured(const ReplayCapture &capture, std::string br
 		replay.sources.push_back({source.key, source.name});
 	}
 	replay.index = std::make_shared<const ReplayIndex>(std::move(index));
+	replay.files = std::make_shared<ReplayFiles>();
 	const uint64_t id = add(std::move(replay));
 	picked_ = 0;
 	lastCaptured_ = id;
@@ -150,7 +152,19 @@ bool ReplayLibrary::stored(uint64_t id, std::filesystem::path manifest, ReplayIn
 		return false;
 	}
 	Replay &replay = found->second;
-	replay.index = std::make_shared<const ReplayIndex>(std::move(index));
+	const std::shared_ptr<const ReplayFiles::Files> files = replay.files ? replay.files->get() : nullptr;
+	std::shared_ptr<const ReplayIndex> shared;
+	if (files) {
+		// The store set them with the same index, which need not be kept twice.
+		shared = files->index;
+	} else {
+		shared = std::make_shared<const ReplayIndex>(std::move(index));
+		if (replay.files) {
+			// The store could not set them.
+			replay.files->set(manifest, shared);
+		}
+	}
+	replay.index = std::move(shared);
 	replay.manifest = std::move(manifest);
 	replay.state = ReplayState::Stored;
 	return true;
@@ -199,6 +213,7 @@ size_t ReplayLibrary::releaseExpired()
 		if (!held) {
 			replay.index.reset();
 			replay.live = {};
+			replay.files.reset();
 			++released;
 		}
 	}

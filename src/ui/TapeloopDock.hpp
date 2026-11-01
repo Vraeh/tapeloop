@@ -49,6 +49,7 @@ private:
 	void updateMemory(int64_t settingMiB);
 	void updateEncoders(const std::string &chosen);
 	void changeSettings(void (*change)(BufferSettings &, int), int value);
+	void moveSource(int from, int to);
 	void openSourceSettings(int row);
 	void applySourceSettings(const std::string &uuid, const SourceSettings &chosen);
 

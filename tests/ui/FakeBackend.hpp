@@ -6,6 +6,7 @@
 #include "ui/DockBackend.hpp"
 
 #include <algorithm>
+#include <cstddef>
 #include <string>
 #include <utility>
 #include <vector>
@@ -37,6 +38,8 @@ public:
 	// What the dock asked to export, and what it is shown of the exports.
 	std::vector<std::pair<uint64_t, ExportFormat>> exported;
 	std::vector<tapeloop::ui::DockExport> exportList;
+	// The rows of the sources the dock asked to move, and of the ones whose places they take.
+	std::vector<std::pair<size_t, size_t>> moves;
 
 	std::vector<tapeloop::ui::DockSource> sources() const override
 	{
@@ -46,6 +49,42 @@ public:
 			source.selected = found != current.sources.end() && found->second.selected;
 		}
 		return sources;
+	}
+
+	bool setShown(const std::string &uuid, bool flag) override
+	{
+		for (auto &source : shown) {
+			if (source.uuid == uuid) {
+				source.shown = flag;
+				return true;
+			}
+		}
+		return false;
+	}
+
+	bool moveSource(const std::string &uuid, const std::string &target) override
+	{
+		const auto indexOf = [&](const std::string &key) {
+			return static_cast<size_t>(
+				std::find_if(shown.begin(), shown.end(),
+					     [&](const auto &source) { return source.uuid == key; }) -
+				shown.begin());
+		};
+		const size_t from = indexOf(uuid);
+		const size_t to = indexOf(target);
+		if (from >= shown.size() || to >= shown.size()) {
+			return false;
+		}
+		const auto first = shown.begin();
+		if (from < to) {
+			std::rotate(first + static_cast<ptrdiff_t>(from), first + static_cast<ptrdiff_t>(from) + 1,
+				    first + static_cast<ptrdiff_t>(to) + 1);
+		} else {
+			std::rotate(first + static_cast<ptrdiff_t>(to), first + static_cast<ptrdiff_t>(from),
+				    first + static_cast<ptrdiff_t>(from) + 1);
+		}
+		moves.emplace_back(from, to);
+		return true;
 	}
 
 	BufferSettings settings() const override { return current; }

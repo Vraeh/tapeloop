@@ -1692,9 +1692,18 @@ TEST_CASE_METHOD(ObsFixture, "a replay is saved in its broadcast folder and read
 	const uint64_t id = manager.captureReplay();
 	REQUIRE(id != 0);
 	CHECK(manager.library().find(id)->state == ReplayState::Writing);
+	// A source playing the replay finds its files as soon as they are written, with no
+	// poll, before the store lets go of the capture's GOPs.
+	const std::shared_ptr<const tapeloop::ReplayFiles> files = manager.library().find(id)->files;
+	REQUIRE(files);
+	CHECK(waitFor([&] { return files->get() != nullptr; }, 10s));
+	CHECK(manager.library().find(id)->state == ReplayState::Writing);
 	manager.finishWrites();
 	const Replay *replay = manager.library().find(id);
 	REQUIRE(replay->state == ReplayState::Stored);
+	REQUIRE(files->get());
+	CHECK(files->get()->manifest == replay->manifest);
+	CHECK(files->get()->index == replay->index);
 	CHECK(replay->manifest.parent_path() == folder);
 	CHECK(replay->broadcast == tapeloop::utf8FromPath(folder.filename()));
 	const std::optional<tapeloop::ReplayIndex> onDisk = tapeloop::readReplayIndex(replay->manifest);

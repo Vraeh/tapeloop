@@ -41,6 +41,10 @@ struct Replay {
 	// Per source of the index and per GOP, the buffer's own GOP until the buffer lets go of
 	// it. Empty for a replay found on disk.
 	std::vector<std::vector<std::weak_ptr<const Gop>>> live;
+	// For a replay captured since OBS started, until it lets go of live: where its files
+	// are, set by the store's thread as soon as they are written, for the sources playing
+	// it to switch to before the buffers let go of its GOPs. Null for one found on disk.
+	std::shared_ptr<ReplayFiles> files;
 	// Sorted.
 	std::vector<std::string> tags;
 	// Why it was not saved.
@@ -64,13 +68,14 @@ public:
 	// captured since OBS started. Nothing changes when it throws.
 	uint64_t addFound(const FoundReplay &found);
 	// What became of a replay being written. False for one that is not being written.
+	// Its files take the manifest and index unless the store has set them already.
 	bool stored(uint64_t id, std::filesystem::path manifest, ReplayIndex index);
 	bool notSaved(uint64_t id, std::string error);
 	bool remove(uint64_t id);
 	void clear();
 	// Lets go of what a stored or unsaved replay keeps for playing from the buffers once
-	// they hold none of its GOPs: its frame index and the references. A stored replay's
-	// manifest has the index again. Returns how many replays it let go of.
+	// they hold none of its GOPs: its frame index, the references and its files. A stored
+	// replay's manifest has the index again. Returns how many replays it let go of.
 	size_t releaseExpired();
 
 	// Newest first, by capture time; with a tag, only the replays that carry it.

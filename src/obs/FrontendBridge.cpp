@@ -3,8 +3,6 @@
 
 #include "obs/FrontendBridge.hpp"
 
-#include "obs/ProfileHotkeys.hpp"
-
 #ifdef TAPELOOP_FFMPEG
 #include "decode/Mp4Writer.hpp"
 #endif
@@ -41,30 +39,27 @@ void runTask(void *param) noexcept
 	}
 }
 
-// The profile keeps its bindings under this name, as OBS keeps those of its own hotkeys.
-constexpr const char *kCaptureHotkeyName = "tapeloop.capture_replay";
-
 } // namespace
 
 FrontendBridge::FrontendBridge()
-	: manager_(std::make_unique<CaptureManager>(static_cast<CaptureHost &>(*this), mp4Writers()))
+	: manager_(std::make_unique<CaptureManager>(static_cast<CaptureHost &>(*this), mp4Writers())),
+	  sequence_(std::make_unique<SequencePlayer>(manager_->library())),
+	  // A hotkey pressed now runs on a later pass of the UI thread, once all of this is
+	  // built.
+	  hotkeys_(std::make_unique<ReplayHotkeys>(
+		  [this](HotkeyAction action, bool pressed) { runHotkey(action, pressed, *manager_, *sequence_); },
+		  obs_module_text))
 {
 	obs_frontend_add_event_callback(handleEvent, this);
 	obs_frontend_add_save_callback(handleSave, this);
 	obs_add_tick_callback(handleTick, this);
-	// Registered last: the hotkey can fire at once, and its handler reads alive_, which
-	// the initializer list would not have built yet.
-	// NOLINTNEXTLINE(cppcoreguidelines-prefer-member-initializer)
-	captureHotkey_ = obs_hotkey_register_frontend(kCaptureHotkeyName, obs_module_text("Hotkey.CaptureReplay"),
-						      handleCaptureHotkey, this);
 }
 
 FrontendBridge::~FrontendBridge()
 {
 	obs_remove_tick_callback(handleTick, this);
-	if (captureHotkey_ != OBS_INVALID_HOTKEY_ID) {
-		obs_hotkey_unregister(captureHotkey_);
-	}
+	hotkeys_.reset();
+	sequence_.reset();
 	removeFrontendCallbacks();
 	manager_.reset();
 }
@@ -113,13 +108,6 @@ void FrontendBridge::requestSave()
 	obs_frontend_save();
 }
 
-void FrontendBridge::loadCaptureHotkey() noexcept
-{
-	if (captureHotkey_ != OBS_INVALID_HOTKEY_ID) {
-		loadProfileHotkey(captureHotkey_, kCaptureHotkeyName, obs_frontend_get_profile_config());
-	}
-}
-
 void FrontendBridge::handleEvent(obs_frontend_event event, void *data) noexcept
 {
 	auto &bridge = *static_cast<FrontendBridge *>(data);
@@ -139,16 +127,23 @@ void FrontendBridge::handleEvent(obs_frontend_event event, void *data) noexcept
 			manager.onRecording(false);
 			break;
 		case OBS_FRONTEND_EVENT_SCENE_COLLECTION_CLEANUP:
+			bridge.sequence_->close();
 			manager.onSceneCollectionCleanup();
 			break;
+		case OBS_FRONTEND_EVENT_SCENE_COLLECTION_CHANGED:
+			// OBS sends it after every collection it loads, the first one included;
+			// FINISHED_LOADING comes only once.
+			bridge.sequence_->open();
+			break;
 		case OBS_FRONTEND_EVENT_FINISHED_LOADING:
-			bridge.loadCaptureHotkey();
+			bridge.hotkeys_->load(obs_frontend_get_profile_config());
 			manager.loadLibrary();
 			break;
 		case OBS_FRONTEND_EVENT_PROFILE_CHANGED:
-			bridge.loadCaptureHotkey();
+			bridge.hotkeys_->load(obs_frontend_get_profile_config());
 			break;
 		case OBS_FRONTEND_EVENT_EXIT:
+			bridge.sequence_->close();
 			manager.onExit();
 			bridge.removeFrontendCallbacks();
 			break;
@@ -186,16 +181,6 @@ void FrontendBridge::handleTick(void *data, float seconds) noexcept
 	}
 	bridge.sincePoll_ = 0.0f;
 	bridge.onUiThread([](CaptureManager &manager) { manager.poll(); });
-}
-
-void FrontendBridge::handleCaptureHotkey(void *data, obs_hotkey_id, obs_hotkey_t *, bool pressed) noexcept
-{
-	// libobs calls hotkeys on its own thread unless the frontend routes them to its UI
-	// thread, as OBS does; queuing is right either way.
-	if (pressed) {
-		static_cast<FrontendBridge *>(data)->onUiThread(
-			[](CaptureManager &manager) { manager.captureReplay(); });
-	}
 }
 
 void FrontendBridge::onUiThread(void (*work)(CaptureManager &)) noexcept

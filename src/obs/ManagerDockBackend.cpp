@@ -9,7 +9,9 @@
 
 #include <algorithm>
 #include <cctype>
+#include <optional>
 #include <span>
+#include <utility>
 
 namespace tapeloop::obs {
 namespace {
@@ -72,7 +74,62 @@ std::vector<ui::DockSource> ManagerDockBackend::sources() const
 							    return std::tolower(x) < std::tolower(y);
 						    });
 	});
+	if (!sequence_) {
+		return sources;
+	}
+
+	const ReplaySequence &order = sequence_->state().sequence();
+	const std::span<const SequenceEntry> entries = order.entries();
+	std::vector<std::pair<size_t, ui::DockSource>> placed;
+	placed.reserve(sources.size());
+	for (ui::DockSource &source : sources) {
+		const size_t place = order.indexOf(source.uuid).value_or(entries.size());
+		source.shown = place == entries.size() || entries[place].shown;
+		placed.emplace_back(place, std::move(source));
+	}
+	std::stable_sort(placed.begin(), placed.end(), [](const auto &a, const auto &b) { return a.first < b.first; });
+	for (size_t i = 0; i < placed.size(); ++i) {
+		sources[i] = std::move(placed[i].second);
+	}
 	return sources;
+}
+
+bool ManagerDockBackend::setShown(const std::string &uuid, bool shown)
+{
+	if (!sequence_) {
+		return false;
+	}
+	enlist(sources());
+	return sequence_->setShown(uuid, shown);
+}
+
+bool ManagerDockBackend::moveSource(const std::string &uuid, const std::string &target)
+{
+	if (!sequence_) {
+		return false;
+	}
+	enlist(sources());
+	// Sources the dock does not list keep their places in the sequence, and the one moved
+	// lands just past the one whose place it takes, as it does in the list.
+	const ReplaySequence &order = sequence_->state().sequence();
+	const std::optional<size_t> moving = order.indexOf(uuid);
+	const std::optional<size_t> place = order.indexOf(target);
+	return moving && place && sequence_->move(*moving, *place);
+}
+
+void ManagerDockBackend::enlist(const std::vector<ui::DockSource> &listed)
+{
+	const ReplaySequence &order = sequence_->state().sequence();
+	const std::span<const SequenceEntry> known = order.entries();
+	std::vector<SequenceEntry> entries(known.begin(), known.end());
+	for (const ui::DockSource &source : listed) {
+		if (!order.indexOf(source.uuid)) {
+			entries.push_back({source.uuid, true});
+		}
+	}
+	if (entries.size() != known.size()) {
+		sequence_->setEntries(std::move(entries));
+	}
 }
 
 void ManagerDockBackend::setSettings(const BufferSettings &settings)

@@ -45,6 +45,12 @@ struct PlayerState {
 	// The size of the picture last drawn.
 	uint32_t width = 0;
 	uint32_t height = 0;
+	// The number load() gave the clip the playhead holds, zero before the first.
+	uint64_t clip = 0;
+	// The clip played forward to its last frame and stopped there, and nothing moved it
+	// since. Reaching the first frame backwards, or the last one by stepping, scrubbing
+	// or seeking, is not an end: whoever did it is still at the controls.
+	bool ended = false;
 };
 
 // Plays one clip at a time. tick() moves the playhead by the elapsed time it is given,
@@ -97,9 +103,10 @@ public:
 	void stop() noexcept;
 
 	// Starts over with another clip, paused on its first frame at the speed the
-	// previous one had. Null leaves nothing to show. False, with nothing changed, when
+	// previous one had. Null leaves nothing to show. Returns the clip's number, which
+	// state() reports once a tick took the clip in, or zero, with nothing changed, when
 	// memory for the clip's frame times runs out.
-	bool load(std::unique_ptr<GopSource> gops) noexcept;
+	uint64_t load(std::unique_ptr<GopSource> gops) noexcept;
 
 	void play() noexcept;
 	void pause() noexcept;
@@ -128,6 +135,9 @@ public:
 	bool decodeNext() noexcept;
 
 	PlayerState state() const noexcept;
+	// The rate once the next tick has applied the controls given so far, which state()
+	// reports only after it.
+	int32_t rateAhead() const noexcept;
 
 private:
 	enum class Control {
@@ -186,7 +196,7 @@ private:
 	static constexpr size_t kMaxCommands = 64;
 
 	void command(Control control, int64_t value) noexcept;
-	void apply(const Command &command) noexcept;
+	static void apply(Playhead &playhead, const Command &command) noexcept;
 	bool takeRequest(Request &request, bool wait) noexcept;
 	void decode(Request &request) noexcept;
 	// Copies a picture in memory for render(), or publishes one on the GPU; false when
@@ -222,6 +232,9 @@ private:
 	uint64_t requests_ = 0;
 	bool stopping_ = false;
 	PlayerState state_;
+	// Takes every control and load as it is given, without a clip, so its rate is the one
+	// the playhead will have once a tick applies them.
+	Playhead ahead_;
 
 	// The thread of tick() and render() only.
 	Playhead playhead_;
@@ -229,6 +242,7 @@ private:
 	std::vector<Nanoseconds> loadingTimes_;
 	uint64_t clip_ = 0;
 	size_t frames_ = 0;
+	bool ended_ = false;
 	std::optional<Wanted> posted_;
 	// The frame the renderer or the GpuPictures holds, while it is of the current clip.
 	std::optional<Shown> onScreen_;

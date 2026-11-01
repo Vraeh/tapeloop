@@ -4,17 +4,26 @@
 #pragma once
 
 #include "obs/CaptureManager.hpp"
+#include "obs/SequencePlayer.hpp"
 #include "ui/DockBackend.hpp"
 
 namespace tapeloop::obs {
 
-// The dock's view of the capture manager: the video inputs of the scene collection,
-// sorted by name regardless of case, with their selection and capture state.
+// The dock's view of the capture manager and the sequence player: the video inputs of the
+// scene collection with their selection and capture state, in the order of the sequence
+// and then, for those it does not list yet, by name regardless of case. Without a
+// sequence player every source is shown, they stay sorted by name and neither changes.
 class ManagerDockBackend : public ui::DockBackend {
 public:
-	explicit ManagerDockBackend(CaptureManager &manager) : manager_(manager) {}
+	explicit ManagerDockBackend(CaptureManager &manager, SequencePlayer *sequence = nullptr)
+		: manager_(manager),
+		  sequence_(sequence)
+	{
+	}
 
 	std::vector<ui::DockSource> sources() const override;
+	bool setShown(const std::string &uuid, bool shown) override;
+	bool moveSource(const std::string &uuid, const std::string &target) override;
 	BufferSettings settings() const override { return manager_.settings(); }
 	void setSettings(const BufferSettings &settings) override;
 	std::vector<ui::EncoderChoice> encoderChoices() const override;
@@ -39,7 +48,12 @@ public:
 	std::vector<ui::DockExport> exports() const override;
 
 private:
+	// Adds the listed sources the sequence does not have yet after its own, in the order
+	// listed, which is where sources() puts them.
+	void enlist(const std::vector<ui::DockSource> &listed);
+
 	CaptureManager &manager_;
+	SequencePlayer *sequence_;
 };
 
 } // namespace tapeloop::obs
