@@ -73,8 +73,14 @@ jobs:
         run: cmake --preset linux-obs-tidy
 
       # The Windows-only code is not in the database: SharedPictures.cpp and the _WIN32
-      # parts of FFmpegDecoder.cpp.
+      # parts of FFmpegDecoder.cpp. An empty list means the database is broken, not clean.
       - name: Run clang-tidy on the decoder and the OBS glue
         run: |
+          files="$RUNNER_TEMP/tidy-glue-files"
           jq -r '.[].file' build_tests/linux-obs-tidy/compile_commands.json | grep -E '/src/(decode|obs)/' |
-            sort -u | xargs -P "$(nproc)" -n 1 clang-tidy-18 -p build_tests/linux-obs-tidy --quiet
+            sort -u > "$files"
+          if [ "$(wc -l < "$files")" -eq 0 ]; then
+            echo "::error::No decoder or OBS glue file in the compile database"
+            exit 1
+          fi
+          xargs -P "$(nproc)" -n 1 clang-tidy-18 -p build_tests/linux-obs-tidy --quiet < "$files"
