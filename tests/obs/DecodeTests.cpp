@@ -32,9 +32,11 @@ extern "C" {
 
 #include <algorithm>
 #include <chrono>
+#include <cstdarg>
 #include <cstddef>
 #include <cstdint>
 #include <cstdio>
+#include <cstring>
 #include <filesystem>
 #include <fstream>
 #include <functional>
@@ -615,6 +617,37 @@ H264Picture flatH264Picture(uint32_t mbWidth, uint32_t mbHeight)
 	return picture;
 }
 
+// Counts the lines FFmpeg logs whose format holds `text`, and passes every line on to its
+// own printer. FFmpeg has one callback and gives it no pointer of ours, so only one
+// counter can be alive at a time.
+struct FFmpegLogCounter {
+	const char *text;
+	int lines = 0;
+
+	explicit FFmpegLogCounter(const char *counted) : text(counted)
+	{
+		active = this;
+		av_log_set_callback(count);
+	}
+	~FFmpegLogCounter()
+	{
+		av_log_set_callback(av_log_default_callback);
+		active = nullptr;
+	}
+	FFmpegLogCounter(const FFmpegLogCounter &) = delete;
+	FFmpegLogCounter &operator=(const FFmpegLogCounter &) = delete;
+
+	static void count(void *object, int level, const char *format, va_list args) noexcept
+	{
+		if (std::strstr(format, active->text)) {
+			++active->lines;
+		}
+		av_log_default_callback(object, level, format, args);
+	}
+
+	static inline FFmpegLogCounter *active = nullptr;
+};
+
 } // namespace
 
 TEST_CASE("the FFmpeg decoder takes pictures up to 8K and refuses larger ones", "[decode]")
@@ -645,6 +678,8 @@ TEST_CASE("the FFmpeg decoder takes pictures up to 8K and refuses larger ones", 
 
 TEST_CASE("the FFmpeg decoder refuses larger pictures mid-run each time", "[decode]")
 {
+	// FFmpeg's H.264 decoder logs this each time it sizes its tables for the pictures.
+	FFmpegLogCounter sized("Reinit context");
 	FFmpegDecoder decoder;
 	DecodedFrame frame;
 	const H264Picture largest = flatH264Picture(512, 270);
@@ -652,17 +687,22 @@ TEST_CASE("the FFmpeg decoder refuses larger pictures mid-run each time", "[deco
 	REQUIRE(decoder.send(largest.keyframe, 0, 0) == DecodeStatus::Ok);
 	REQUIRE(decoder.receive(frame) == DecodeStatus::Ok);
 	decoder.release(frame);
+	REQUIRE(sized.lines == 1);
 
-	// After a picture it decoded, FFmpeg's H.264 decoder would ask for the format of the
-	// larger pictures only the first time and size its tables for them the second.
+	// After a picture it decoded, FFmpeg's H.264 decoder asks for the format of larger
+	// pictures only while it has none. Otherwise the next slice that needs them, the
+	// second of this packet or the first of the next, would size the tables for them.
 	const H264Picture taller = flatH264Picture(512, 271);
 	std::vector<uint8_t> keyframe = taller.config;
-	keyframe.insert(keyframe.end(), taller.keyframe.begin(), taller.keyframe.end());
+	for (int slice = 0; slice < 2; ++slice) {
+		keyframe.insert(keyframe.end(), taller.keyframe.begin(), taller.keyframe.end());
+	}
 	for (int64_t pts = 1; pts <= 2; ++pts) {
 		CHECK(decoder.send(keyframe, pts, pts) == DecodeStatus::Unsupported);
 		CHECK(decoder.receive(frame) != DecodeStatus::Ok);
 		decoder.reset();
 	}
+	CHECK(sized.lines == 1);
 	CHECK(decoder.heldFrames() == 0);
 }
 

@@ -145,6 +145,10 @@ AVPixelFormat chooseFormat(AVCodecContext *context, const AVPixelFormat *formats
 {
 	if (int64_t{context->coded_width} * context->coded_height > kMaxPixels) {
 		*static_cast<bool *>(context->opaque) = true;
+		// H.264 asks again only when it has no format. Otherwise, after a picture it
+		// decoded, the next slice of these parameter sets, in this packet or a later
+		// one, would skip the question and size its tables for them.
+		context->pix_fmt = AV_PIX_FMT_NONE;
 		return AV_PIX_FMT_NONE;
 	}
 #ifdef _WIN32
@@ -418,10 +422,6 @@ bool FFmpegDecoder::refusedSize() noexcept
 		return false;
 	}
 	sizeRefused_ = false;
-	// H.264 asks for the format again only when it has none. Otherwise, after a picture
-	// it decoded, the next slice of the refused parameter sets would skip the question
-	// and size its tables for them.
-	context_->pix_fmt = AV_PIX_FMT_NONE;
 	return true;
 }
 
