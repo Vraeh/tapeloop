@@ -50,15 +50,13 @@ using tapeloop::ui::TapeloopDock;
 
 namespace {
 
-FakeBackend backendWithSources()
+void addSources(FakeBackend &backend)
 {
-	FakeBackend backend;
 	backend.shown = {
 		{"uuid-camera-1", "Camera 1", false, SourceState::Stopped, 0s, 0},
 		{"uuid-camera-2", "Camera 2", false, SourceState::Stopped, 0s, 0},
 		{"uuid-scoreboard", "Scoreboard", false, SourceState::Stopped, 0s, 0},
 	};
-	return backend;
 }
 
 // The dialog has no Q_OBJECT, so it is found as a QDialog.
@@ -78,7 +76,8 @@ template<typename Widget> Widget *child(const QWidget &parent, const char *name)
 
 TEST_CASE("the dock lists every source with its selection")
 {
-	FakeBackend backend = backendWithSources();
+	FakeBackend backend;
+	addSources(backend);
 	backend.current.sources["uuid-camera-2"].selected = true;
 	TapeloopDock dock(backend, localeText());
 
@@ -92,7 +91,8 @@ TEST_CASE("the dock lists every source with its selection")
 
 TEST_CASE("checking a source in the dock selects it")
 {
-	FakeBackend backend = backendWithSources();
+	FakeBackend backend;
+	addSources(backend);
 	TapeloopDock dock(backend, localeText());
 	auto *table = child<QTableWidget>(dock, "sources");
 
@@ -104,7 +104,8 @@ TEST_CASE("checking a source in the dock selects it")
 
 TEST_CASE("selected sources show the state of their buffer")
 {
-	FakeBackend backend = backendWithSources();
+	FakeBackend backend;
+	addSources(backend);
 	backend.shown[0].state = SourceState::Running;
 	backend.shown[0].buffered = 42'500ms;
 	backend.shown[0].bytes = 50'000'000;
@@ -126,7 +127,8 @@ TEST_CASE("selected sources show the state of their buffer")
 
 TEST_CASE("the advanced settings choose the replay encoder and whether other cards may encode")
 {
-	FakeBackend backend = backendWithSources();
+	FakeBackend backend;
+	addSources(backend);
 	TapeloopDock dock(backend, localeText());
 	dock.show();
 	auto *advanced = child<QCheckBox>(dock, "advanced");
@@ -205,7 +207,8 @@ TEST_CASE("the advanced settings choose the replay encoder and whether other car
 
 TEST_CASE("the advanced settings set the memory the buffers may use")
 {
-	FakeBackend backend = backendWithSources();
+	FakeBackend backend;
+	addSources(backend);
 	backend.current.showAdvanced = true;
 	TapeloopDock dock(backend, localeText());
 	dock.show();
@@ -249,7 +252,8 @@ TEST_CASE("the advanced settings set the memory the buffers may use")
 
 TEST_CASE("the memory for buffers steps in large amounts and never to almost nothing")
 {
-	FakeBackend backend = backendWithSources();
+	FakeBackend backend;
+	addSources(backend);
 	backend.current.showAdvanced = true;
 	TapeloopDock dock(backend, localeText());
 	auto *memory = child<QSpinBox>(dock, "bufferMemory");
@@ -267,7 +271,8 @@ TEST_CASE("the memory for buffers steps in large amounts and never to almost not
 
 TEST_CASE("a wheel over the memory for buffers changes it only once it has the focus")
 {
-	FakeBackend backend = backendWithSources();
+	FakeBackend backend;
+	addSources(backend);
 	backend.current.showAdvanced = true;
 	TapeloopDock dock(backend, localeText());
 	dock.show();
@@ -299,7 +304,8 @@ TEST_CASE("a wheel over the memory for buffers changes it only once it has the f
 
 TEST_CASE("a memory for buffers being typed in the dock is not overwritten")
 {
-	FakeBackend backend = backendWithSources();
+	FakeBackend backend;
+	addSources(backend);
 	backend.current.showAdvanced = true;
 	TapeloopDock dock(backend, localeText());
 	dock.show();
@@ -329,7 +335,8 @@ TEST_CASE("a memory for buffers being typed in the dock is not overwritten")
 
 TEST_CASE("a memory for buffers set on a computer with more memory shows as it is")
 {
-	FakeBackend backend = backendWithSources();
+	FakeBackend backend;
+	addSources(backend);
 	backend.current.showAdvanced = true;
 	backend.current.bufferMemoryMiB = 65536;
 	TapeloopDock dock(backend, localeText());
@@ -346,7 +353,8 @@ TEST_CASE("a memory for buffers set on a computer with more memory shows as it i
 
 TEST_CASE("the encoder list holds still while it is open")
 {
-	FakeBackend backend = backendWithSources();
+	FakeBackend backend;
+	addSources(backend);
 	TapeloopDock dock(backend, localeText());
 	dock.show();
 	child<QCheckBox>(dock, "advanced")->setChecked(true);
@@ -365,7 +373,8 @@ TEST_CASE("the encoder list holds still while it is open")
 
 TEST_CASE("a source on an encoder path that is not the optimal one says so")
 {
-	FakeBackend backend = backendWithSources();
+	FakeBackend backend;
+	addSources(backend);
 	backend.shown[0].state = SourceState::Running;
 	backend.shown[0].encoderPath = tapeloop::EncoderPath::Software;
 	backend.shown[1].state = SourceState::Running;
@@ -462,7 +471,8 @@ TEST_CASE("a source on an encoder path that is not the optimal one says so")
 
 TEST_CASE("a tag comes off the selected replay, and a deleted one off every replay")
 {
-	FakeBackend backend = backendWithSources();
+	FakeBackend backend;
+	addSources(backend);
 	backend.captureReplay();
 	backend.captureReplay();
 	REQUIRE(backend.tagReplay(1, "goal"));
@@ -526,7 +536,8 @@ TEST_CASE("a tag comes off the selected replay, and a deleted one off every repl
 
 TEST_CASE("the dock captures replays and picks the one that goes on air")
 {
-	FakeBackend backend = backendWithSources();
+	FakeBackend backend;
+	addSources(backend);
 	TapeloopDock dock(backend, localeText());
 	auto *capture = child<QPushButton>(dock, "captureReplay");
 	auto *list = child<QListWidget>(dock, "replays");
@@ -635,7 +646,8 @@ TEST_CASE("the dock captures replays and picks the one that goes on air")
 TEST_CASE("the dock groups replays by broadcast and says what became of each")
 {
 	using tapeloop::ReplayState;
-	FakeBackend backend = backendWithSources();
+	FakeBackend backend;
+	addSources(backend);
 	const auto at = std::chrono::system_clock::now();
 	backend.captured = {
 		{5, at, 3, {}, "Copa 2026-10-10 18-30", ReplayState::Stored, "2026-10-10 18-41-02"},
@@ -709,7 +721,8 @@ TEST_CASE("the dock groups replays by broadcast and says what became of each")
 
 TEST_CASE("a press on a replay picks that replay, whatever the list does meanwhile")
 {
-	FakeBackend backend = backendWithSources();
+	FakeBackend backend;
+	addSources(backend);
 	TapeloopDock dock(backend, localeText());
 	dock.show();
 	auto *capture = child<QPushButton>(dock, "captureReplay");
@@ -755,7 +768,8 @@ TEST_CASE("a press on a replay picks that replay, whatever the list does meanwhi
 
 TEST_CASE("a double click, a drag or a capture during a press does not pick another replay")
 {
-	FakeBackend backend = backendWithSources();
+	FakeBackend backend;
+	addSources(backend);
 	TapeloopDock dock(backend, localeText());
 	dock.show();
 	auto *capture = child<QPushButton>(dock, "captureReplay");
@@ -858,7 +872,8 @@ TEST_CASE("a double click, a drag or a capture during a press does not pick anot
 
 TEST_CASE("a media source left out of activation says why")
 {
-	FakeBackend backend = backendWithSources();
+	FakeBackend backend;
+	addSources(backend);
 	backend.shown[0].state = SourceState::Waiting;
 	backend.shown[0].activationLeftOut = true;
 	backend.current.sources["uuid-camera-1"].selected = true;
@@ -877,7 +892,8 @@ TEST_CASE("a media source left out of activation says why")
 
 TEST_CASE("a source whose HEVC encoder failed says it goes on in H.264")
 {
-	FakeBackend backend = backendWithSources();
+	FakeBackend backend;
+	addSources(backend);
 	backend.shown[0].state = SourceState::Failed;
 	backend.shown[0].hevcFailed = true;
 	backend.current.sources["uuid-camera-1"].selected = true;
@@ -903,7 +919,8 @@ TEST_CASE("a source whose HEVC encoder failed says it goes on in H.264")
 
 TEST_CASE("the activation checkbox follows the settings")
 {
-	FakeBackend backend = backendWithSources();
+	FakeBackend backend;
+	addSources(backend);
 	TapeloopDock dock(backend, localeText());
 	auto *activate = child<QCheckBox>(dock, "activateOffAir");
 	CHECK_FALSE(activate->isChecked());
@@ -916,7 +933,8 @@ TEST_CASE("the activation checkbox follows the settings")
 
 TEST_CASE("a source waiting for a picture says so with an icon and a tooltip")
 {
-	FakeBackend backend = backendWithSources();
+	FakeBackend backend;
+	addSources(backend);
 	backend.shown[0].state = SourceState::Waiting;
 	backend.current.sources["uuid-camera-1"].selected = true;
 	TapeloopDock dock(backend, localeText());
@@ -935,7 +953,8 @@ TEST_CASE("a source waiting for a picture says so with an icon and a tooltip")
 
 TEST_CASE("the dock picks up sources that come and go")
 {
-	FakeBackend backend = backendWithSources();
+	FakeBackend backend;
+	addSources(backend);
 	TapeloopDock dock(backend, localeText());
 	auto *table = child<QTableWidget>(dock, "sources");
 
@@ -951,7 +970,8 @@ TEST_CASE("the dock picks up sources that come and go")
 TEST_CASE("Home and End reach the first and last replay that can be picked")
 {
 	using tapeloop::ReplayState;
-	FakeBackend backend = backendWithSources();
+	FakeBackend backend;
+	addSources(backend);
 	const auto at = std::chrono::system_clock::now();
 	backend.captured = {
 		{3, at, 1, {}, "Copa 2026-10-10 18-30", ReplayState::Stored, "2026-10-10 18-41-02"},
@@ -988,7 +1008,8 @@ TEST_CASE("Home and End reach the first and last replay that can be picked")
 
 TEST_CASE("the start and stop button follows the buffer lifecycle")
 {
-	FakeBackend backend = backendWithSources();
+	FakeBackend backend;
+	addSources(backend);
 	TapeloopDock dock(backend, localeText());
 	auto *button = child<QPushButton>(dock, "startStop");
 
@@ -1006,7 +1027,8 @@ TEST_CASE("the start and stop button follows the buffer lifecycle")
 
 TEST_CASE("the global settings in the dock reach the backend")
 {
-	FakeBackend backend = backendWithSources();
+	FakeBackend backend;
+	addSources(backend);
 	TapeloopDock dock(backend, localeText());
 
 	auto *length = child<QSpinBox>(dock, "length");
@@ -1080,7 +1102,8 @@ TEST_CASE("the source settings dialog sets and clears a source's own settings")
 
 TEST_CASE("every control of the dock can be reached with the keyboard")
 {
-	FakeBackend backend = backendWithSources();
+	FakeBackend backend;
+	addSources(backend);
 	TapeloopDock dock(backend, localeText());
 	size_t controls = 0;
 	for (QWidget *widget : dock.findChildren<QWidget *>()) {
@@ -1101,7 +1124,8 @@ TEST_CASE("every control of the dock can be reached with the keyboard")
 
 TEST_CASE("every string the dock asks for is in the locale file")
 {
-	FakeBackend backend = backendWithSources();
+	FakeBackend backend;
+	addSources(backend);
 	backend.shown[0].state = SourceState::Running;
 	backend.shown[1].state = SourceState::Failed;
 	backend.shown[2].state = SourceState::Waiting;
@@ -1140,7 +1164,8 @@ TEST_CASE("every string the dock asks for is in the locale file")
 
 TEST_CASE("refreshing the dock changes nothing")
 {
-	FakeBackend backend = backendWithSources();
+	FakeBackend backend;
+	addSources(backend);
 	backend.current.sources["uuid-camera-1"].selected = true;
 	backend.current.length = 120s;
 	backend.current.resolution = {ResolutionMode::Fixed, 480};
@@ -1157,7 +1182,8 @@ TEST_CASE("refreshing the dock changes nothing")
 
 TEST_CASE("the dock's source settings change only that source's own settings")
 {
-	FakeBackend backend = backendWithSources();
+	FakeBackend backend;
+	addSources(backend);
 	backend.current.sources["uuid-scoreboard"].selected = true;
 	TapeloopDock dock(backend, localeText());
 	auto *table = child<QTableWidget>(dock, "sources");
@@ -1187,7 +1213,8 @@ TEST_CASE("the dock's source settings change only that source's own settings")
 
 TEST_CASE("the dock drops a source's settings once the source is gone")
 {
-	FakeBackend backend = backendWithSources();
+	FakeBackend backend;
+	addSources(backend);
 	TapeloopDock dock(backend, localeText());
 	child<QTableWidget>(dock, "sources")->setCurrentCell(1, 0);
 	child<QPushButton>(dock, "sourceSettings")->click();
@@ -1205,7 +1232,8 @@ TEST_CASE("the dock drops a source's settings once the source is gone")
 
 TEST_CASE("the current row of the dock follows its source")
 {
-	FakeBackend backend = backendWithSources();
+	FakeBackend backend;
+	addSources(backend);
 	TapeloopDock dock(backend, localeText());
 	auto *table = child<QTableWidget>(dock, "sources");
 	table->setCurrentCell(2, 0);
@@ -1223,7 +1251,8 @@ TEST_CASE("the current row of the dock follows its source")
 
 TEST_CASE("the source list works from the keyboard")
 {
-	FakeBackend backend = backendWithSources();
+	FakeBackend backend;
+	addSources(backend);
 	TapeloopDock dock(backend, localeText());
 	auto *table = child<QTableWidget>(dock, "sources");
 	table->setCurrentCell(0, 0);
@@ -1243,7 +1272,8 @@ TEST_CASE("the source list works from the keyboard")
 
 TEST_CASE("the dock says why the manual control is off")
 {
-	FakeBackend backend = backendWithSources();
+	FakeBackend backend;
+	addSources(backend);
 	backend.manualEnabled = false;
 	TapeloopDock dock(backend, localeText());
 	dock.show();
@@ -1258,7 +1288,8 @@ TEST_CASE("the dock says why the manual control is off")
 
 TEST_CASE("a length being typed in the dock is not overwritten")
 {
-	FakeBackend backend = backendWithSources();
+	FakeBackend backend;
+	addSources(backend);
 	TapeloopDock dock(backend, localeText());
 	dock.show();
 	dock.activateWindow();
@@ -1288,7 +1319,8 @@ TEST_CASE("dock screenshots", "[.screenshots]")
 		CHECK(dock.grab().save(out.filePath("dock-empty.png")));
 	}
 
-	FakeBackend backend = backendWithSources();
+	FakeBackend backend;
+	addSources(backend);
 	backend.current.sources["uuid-camera-1"].selected = true;
 	backend.current.sources["uuid-scoreboard"].selected = true;
 	{
@@ -1340,7 +1372,8 @@ TEST_CASE("dock screenshots", "[.screenshots]")
 
 TEST_CASE("every kind of edit in the dock writes the settings once")
 {
-	FakeBackend backend = backendWithSources();
+	FakeBackend backend;
+	addSources(backend);
 	TapeloopDock dock(backend, localeText());
 	auto *table = child<QTableWidget>(dock, "sources");
 
@@ -1369,7 +1402,8 @@ TEST_CASE("every kind of edit in the dock writes the settings once")
 
 TEST_CASE("typing a length in the dock writes the settings once, when it is entered")
 {
-	FakeBackend backend = backendWithSources();
+	FakeBackend backend;
+	addSources(backend);
 	TapeloopDock dock(backend, localeText());
 	auto *length = child<QSpinBox>(dock, "length");
 	const int before = backend.settingsChanges;
@@ -1389,7 +1423,8 @@ TEST_CASE("typing a length in the dock writes the settings once, when it is ente
 
 TEST_CASE("the dock exports the replay that goes on air next")
 {
-	FakeBackend backend = backendWithSources();
+	FakeBackend backend;
+	addSources(backend);
 	TapeloopDock dock(backend, localeText());
 	dock.show();
 	auto *mp4 = child<QPushButton>(dock, "exportMp4");
@@ -1416,7 +1451,8 @@ TEST_CASE("the dock exports the replay that goes on air next")
 
 TEST_CASE("without MP4 the dock offers only the replay file")
 {
-	FakeBackend backend = backendWithSources();
+	FakeBackend backend;
+	addSources(backend);
 	backend.mp4 = false;
 	TapeloopDock dock(backend, localeText());
 	dock.show();
@@ -1429,7 +1465,8 @@ TEST_CASE("without MP4 the dock offers only the replay file")
 TEST_CASE("the dock says how the exports go")
 {
 	using tapeloop::ui::DockExport;
-	FakeBackend backend = backendWithSources();
+	FakeBackend backend;
+	addSources(backend);
 	TapeloopDock dock(backend, localeText());
 	dock.show();
 	auto *status = child<QLabel>(dock, "exportStatus");
