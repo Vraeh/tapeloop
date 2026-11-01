@@ -101,6 +101,9 @@ private:
 	std::shared_ptr<const ReplayIndex> index_;
 	std::vector<std::vector<std::weak_ptr<const Gop>>> live_;
 	// Set while a source plays, so that the graphics thread looks for its end only then.
+	// Relaxed is enough: the flag only gates a look at the player's state, which the
+	// player's own lock orders. A stale value costs a tick's delay, or an end that the UI
+	// thread checks again and ignores.
 	std::atomic<bool> watching_{false};
 	// The graphics thread only: the clip and end it saw last.
 	uint64_t seenClip_ = 0;
