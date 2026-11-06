@@ -3,12 +3,14 @@
 
 #pragma once
 
+#include "core/BufferSettings.hpp"
 #include "core/Gop.hpp"
 #include "core/ReplayFormat.hpp"
 #include "core/ReplayLibrary.hpp"
 #include "core/ReplayPlayerState.hpp"
 #include "core/ReplaySequence.hpp"
 #include "core/ReplayWriter.hpp"
+#include "obs/AirComposition.hpp"
 #include "obs/ReplayPlayer.hpp"
 
 #include <obs.h>
@@ -26,16 +28,18 @@ namespace tapeloop::obs {
 // Plays the shown sources of one replay after another through a replay source of its
 // own, as a ReplayPlayerState decides: each source from the first frame of its clip at
 // the speed the last one had, the next one once the clip played forward to its end, and
-// back to live, with nothing loaded, after the last. Everything here runs on the UI
-// thread except the player's controls, which may come from anywhere. A clip's end is
-// seen on the graphics thread and handed to the UI thread, which ignores it once the
-// source it was for is no longer on air or someone moved the playhead off the end.
-class SequencePlayer {
+// back to live after the last, with nothing loaded once the way back is over. An
+// AirComposition shows each part on air: the intro and outro when there are any, the
+// replay source in between, and the way back. Everything here runs on the UI thread
+// except the player's controls, which may come from anywhere. A clip's end is seen on
+// the graphics thread and handed to the UI thread, which ignores it once the source it
+// was for is no longer on air or someone moved the playhead off the end.
+class SequencePlayer : private AirListener {
 public:
 	// Plays the library's replays, and the library outlives it. Creates the replay source;
 	// source() is null when that fails, and nothing plays.
 	explicit SequencePlayer(const ReplayLibrary &library);
-	~SequencePlayer();
+	~SequencePlayer() override;
 
 	SequencePlayer(const SequencePlayer &) = delete;
 	SequencePlayer &operator=(const SequencePlayer &) = delete;
@@ -47,6 +51,12 @@ public:
 	// For the controls of the replay on air; null without a source.
 	ReplayPlayer *player() const noexcept { return player_; }
 	const ReplayPlayerState &state() const noexcept { return state_; }
+	const AirComposition &air() const noexcept { return air_; }
+
+	// How the next replay goes on air and back, as AirComposition's setSettings() says.
+	void setAir(const AirSettings &settings) { air_.setSettings(settings); }
+	// The user's transitions; null, or one that outlives the sequence player.
+	void setTransitions(const TransitionCatalog *catalog) noexcept { air_.setCatalog(catalog); }
 
 	// As ReplayPlayerState's, live while a replay plays.
 	void setEntries(std::vector<SequenceEntry> entries);
@@ -55,23 +65,35 @@ public:
 
 	// Puts the library's replay on air. Its sources the list does not have yet join it at
 	// the end, shown, by name. A source with fewer than two frames has nothing to play and
-	// is left out. False while closed or a replay is on air, for an unknown or damaged
-	// replay or one whose index cannot be read, and when none of its shown sources has a
-	// clip.
+	// is left out. False while closed or a replay is on air, while another source holds
+	// the channel the replay goes on air through or takes it during this call, for an
+	// unknown or damaged replay or one whose index cannot be read, and when none of its
+	// shown sources has a clip.
 	bool putOnAir(uint64_t replay);
+	// What the last putOnAir() found, kept for a dock that is not looking when a hotkey
+	// asks. None once a later one is not refused for one of these reasons, and on close().
+	AirRefusal airRefusal() const noexcept { return refusal_; }
 	// Takes the replay off air early, as ReplayPlayerState's cutShort() says.
 	void takeOffAir();
 	// Ends the part on air as if it had played out.
 	void skip();
+	// For a program already black: takes the replay off air at once, without an outro or a
+	// way back, so that the whole output is black. The list stays, for the next replay.
+	void programWentBlack();
 
 	// For a scene collection that goes away: takes the replay off air at once, without
-	// an outro, and forgets the list, whose sources were that collection's. Nothing goes
-	// on air again until open().
+	// an outro or a way back, and forgets the list, whose sources were that collection's.
+	// Nothing goes on air again until open().
 	void close();
-	void open() noexcept { closed_ = false; }
+	void open() noexcept { closed_ = destroyed_; }
 	bool closed() const noexcept { return closed_; }
+	// For OBS shutting down: closes for good, open() included, and releases the sources
+	// the composition made, which belong to other modules and must go before those are
+	// unloaded.
+	void destroyAir();
 
 private:
+	void refuseChannel(uint64_t replay);
 	// What follows the state's part on air, if it changed: the clip of a source, or else
 	// nothing loaded.
 	void follow();
@@ -81,6 +103,8 @@ private:
 	// change sources.
 	void keepRate() noexcept;
 	void onEnded(uint64_t clip);
+	void partEnded() override;
+	void wentOffAir() override;
 	static void handleTick(void *data, float seconds) noexcept;
 	static void runEnded(void *param) noexcept;
 
@@ -88,7 +112,10 @@ private:
 	obs_source_t *source_ = nullptr;
 	ReplayPlayer *player_ = nullptr;
 	ReplayPlayerState state_;
+	AirComposition air_;
 	bool closed_ = false;
+	bool destroyed_ = false;
+	AirRefusal refusal_ = AirRefusal::None;
 	// The token of the part follow() last set up, and the clip it loaded for a source.
 	uint64_t token_ = 0;
 	uint64_t clip_ = 0;

@@ -9,6 +9,51 @@
 
 namespace tapeloop::obs {
 
+namespace {
+
+void setMedia(obs_data_t *data, const std::string &prefix, const SavedMedia &media)
+{
+	obs_data_set_string(data, prefix.c_str(), media.kind.c_str());
+	obs_data_set_string(data, (prefix + "_file").c_str(), media.path.c_str());
+	obs_data_set_int(data, (prefix + "_image_ms").c_str(), media.imageMs);
+}
+
+void setTransition(obs_data_t *data, const std::string &prefix, const SavedTransition &transition)
+{
+	obs_data_set_string(data, prefix.c_str(), transition.name.c_str());
+	obs_data_set_int(data, (prefix + "_ms").c_str(), transition.durationMs);
+}
+
+// Settings saved before these keys existed keep the defaults of the saved structures.
+void readString(obs_data_t *data, const std::string &key, std::string &value)
+{
+	if (obs_data_has_user_value(data, key.c_str())) {
+		value = obs_data_get_string(data, key.c_str());
+	}
+}
+
+void readInt(obs_data_t *data, const std::string &key, int64_t &value)
+{
+	if (obs_data_has_user_value(data, key.c_str())) {
+		value = obs_data_get_int(data, key.c_str());
+	}
+}
+
+void readMedia(obs_data_t *data, const std::string &prefix, SavedMedia &media)
+{
+	readString(data, prefix, media.kind);
+	readString(data, prefix + "_file", media.path);
+	readInt(data, prefix + "_image_ms", media.imageMs);
+}
+
+void readTransition(obs_data_t *data, const std::string &prefix, SavedTransition &transition)
+{
+	readString(data, prefix, transition.name);
+	readInt(data, prefix + "_ms", transition.durationMs);
+}
+
+} // namespace
+
 obs_data_t *createSettingsData(const SavedSettings &saved)
 {
 	OBSDataAutoRelease data = obs_data_create();
@@ -47,6 +92,11 @@ obs_data_t *createSettingsData(const SavedSettings &saved)
 		obs_data_array_push_back(sources, entry);
 	}
 	obs_data_set_array(data, "sources", sources);
+
+	setMedia(data, "intro", saved.intro);
+	setTransition(data, "intro_transition", saved.into);
+	setMedia(data, "outro", saved.outro);
+	setTransition(data, "back_transition", saved.back);
 	obs_data_addref(data);
 	return data;
 }
@@ -89,6 +139,11 @@ SavedSettings readSettingsData(obs_data_t *data)
 		}
 		saved.sources.push_back(std::move(source));
 	}
+
+	readMedia(data, "intro", saved.intro);
+	readTransition(data, "intro_transition", saved.into);
+	readMedia(data, "outro", saved.outro);
+	readTransition(data, "back_transition", saved.back);
 	return saved;
 }
 

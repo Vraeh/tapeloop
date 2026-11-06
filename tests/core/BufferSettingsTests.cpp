@@ -12,6 +12,7 @@
 #include <vector>
 
 using namespace std::chrono_literals;
+using tapeloop::AirMediaKind;
 using tapeloop::BufferSettings;
 using tapeloop::ReplayResolution;
 using tapeloop::ResolutionMode;
@@ -135,6 +136,66 @@ TEST_CASE("loaded settings are brought back into range")
 	CHECK(tapeloop::loadSettings(saved)->length == 300s);
 	saved.lengthSeconds = INT64_MIN;
 	CHECK(tapeloop::loadSettings(saved)->length == 10s);
+}
+
+TEST_CASE("a replay goes on air with a fade and no intro or outro by default")
+{
+	const BufferSettings settings;
+	CHECK_FALSE(settings.air.intro.present());
+	CHECK_FALSE(settings.air.outro.present());
+	CHECK(settings.air.into.name.empty());
+	CHECK(settings.air.into.duration == 300ms);
+	CHECK(settings.air.back.name.empty());
+	CHECK(settings.air.back.duration == 300ms);
+
+	// A kind without its file shows nothing.
+	tapeloop::AirMedia media{AirMediaKind::Video, "", 3s};
+	CHECK_FALSE(media.present());
+	media.path = "intro.mp4";
+	CHECK(media.present());
+}
+
+TEST_CASE("on-air settings survive a save and a load")
+{
+	BufferSettings settings;
+	settings.air.intro = {AirMediaKind::Video, "C:/Clips/intro.mov", 3s};
+	settings.air.into = {"Stinger", 1200ms};
+	settings.air.outro = {AirMediaKind::Image, "C:/Clips/sponsor.png", 4500ms};
+	settings.air.back = {"Luma Wipe", 800ms};
+
+	const SavedSettings saved = tapeloop::saveSettings(settings);
+	CHECK(saved.intro.kind == "video");
+	CHECK(saved.intro.path == "C:/Clips/intro.mov");
+	CHECK(saved.into.name == "Stinger");
+	CHECK(saved.into.durationMs == 1200);
+	CHECK(saved.outro.kind == "image");
+	CHECK(saved.outro.imageMs == 4500);
+	CHECK(saved.back.durationMs == 800);
+
+	const std::optional<BufferSettings> loaded = tapeloop::loadSettings(saved);
+	REQUIRE(loaded);
+	CHECK(loaded->air == settings.air);
+
+	CHECK(tapeloop::saveSettings(BufferSettings{}).intro.kind == "none");
+}
+
+TEST_CASE("loaded on-air settings are brought back into range")
+{
+	SavedSettings saved;
+	saved.intro = {"slideshow", "show.json", 3000};
+	saved.into = {"Fade", 0};
+	saved.outro = {"image", "logo.png", INT64_MAX};
+	saved.back = {"Cut", INT64_MAX};
+
+	const std::optional<BufferSettings> loaded = tapeloop::loadSettings(saved);
+	REQUIRE(loaded);
+	CHECK(loaded->air.intro.kind == AirMediaKind::None);
+	CHECK(loaded->air.into.duration == 50ms);
+	CHECK(loaded->air.outro.imageTime == 60s);
+	CHECK(loaded->air.back.duration == 20s);
+
+	saved.outro.imageMs = -5;
+	CHECK(tapeloop::loadSettings(saved)->air.outro.imageTime == 500ms);
 }
 
 TEST_CASE("buffer lengths and fixed heights stay within what the dock offers")

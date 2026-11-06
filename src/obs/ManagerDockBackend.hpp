@@ -27,6 +27,7 @@ public:
 	BufferSettings settings() const override { return manager_.settings(); }
 	void setSettings(const BufferSettings &settings) override;
 	std::vector<ui::EncoderChoice> encoderChoices() const override;
+	std::vector<std::string> transitions() const override;
 
 	bool running() const override { return manager_.running(); }
 	bool manualControlEnabled() const override { return manager_.manualControlEnabled(); }
@@ -43,6 +44,15 @@ public:
 	uint64_t currentReplay() const override { return manager_.library().current(); }
 	uint64_t lastCapture() const override { return manager_.library().lastCaptured(); }
 	void pickReplay(uint64_t id) override { manager_.pickReplay(id); }
+	AirRefusal airRefusal() const override { return sequence_ ? sequence_->airRefusal() : AirRefusal::None; }
+	std::string missingIntro() const override
+	{
+		return sequence_ ? sequence_->air().missingIntro() : std::string();
+	}
+	std::string missingOutro() const override
+	{
+		return sequence_ ? sequence_->air().missingOutro() : std::string();
+	}
 	bool canExport(ExportFormat format) const override { return manager_.canExport(format); }
 	bool exportReplay(uint64_t id, ExportFormat format) override { return manager_.exportReplay(id, format); }
 	std::vector<ui::DockExport> exports() const override;

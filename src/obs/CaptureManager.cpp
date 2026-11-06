@@ -655,6 +655,7 @@ void CaptureManager::reconcile()
 	if (exiting_) {
 		return;
 	}
+	const bool stopped = wasRunning_ && !lifecycle_.running();
 	if (lifecycle_.running() && !wasRunning_) {
 		nameBroadcast();
 	}
@@ -675,6 +676,9 @@ void CaptureManager::reconcile()
 			stop(uuid, *entry);
 		}
 		applyBudget();
+		if (stopped) {
+			host_.buffersStopped();
+		}
 		return;
 	}
 	std::optional<std::vector<EncoderInfo>> candidates;

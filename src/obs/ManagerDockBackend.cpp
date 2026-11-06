@@ -135,6 +135,9 @@ void ManagerDockBackend::enlist(const std::vector<ui::DockSource> &listed)
 void ManagerDockBackend::setSettings(const BufferSettings &settings)
 {
 	manager_.setSettings(settings);
+	if (sequence_) {
+		sequence_->setAir(manager_.settings().air);
+	}
 }
 
 std::vector<ui::DockExport> ManagerDockBackend::exports() const
@@ -207,6 +210,14 @@ std::vector<std::string> ManagerDockBackend::replayTags() const
 {
 	const std::span<const std::string> tags = manager_.library().tags();
 	return {tags.begin(), tags.end()};
+}
+
+std::vector<std::string> ManagerDockBackend::transitions() const
+{
+	if (!sequence_) {
+		return {};
+	}
+	return sequence_->air().transitionNames();
 }
 
 std::vector<ui::EncoderChoice> ManagerDockBackend::encoderChoices() const

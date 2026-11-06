@@ -18,6 +18,7 @@ class FakeBackend : public tapeloop::ui::DockBackend {
 public:
 	std::vector<tapeloop::ui::DockSource> shown;
 	BufferSettings current;
+	std::vector<std::string> transitionNames;
 	bool isRunning = false;
 	bool manualEnabled = true;
 	int toggles = 0;
@@ -40,6 +41,9 @@ public:
 	std::vector<tapeloop::ui::DockExport> exportList;
 	// The rows of the sources the dock asked to move, and of the ones whose places they take.
 	std::vector<std::pair<size_t, size_t>> moves;
+	tapeloop::AirRefusal refusal = tapeloop::AirRefusal::None;
+	std::string introMissing;
+	std::string outroMissing;
 
 	std::vector<tapeloop::ui::DockSource> sources() const override
 	{
@@ -96,6 +100,7 @@ public:
 	}
 
 	std::vector<tapeloop::ui::EncoderChoice> encoderChoices() const override { return choices; }
+	std::vector<std::string> transitions() const override { return transitionNames; }
 
 	bool running() const override { return isRunning; }
 	bool manualControlEnabled() const override { return manualEnabled; }
@@ -174,6 +179,9 @@ public:
 		return true;
 	}
 	std::vector<tapeloop::ui::DockExport> exports() const override { return exportList; }
+	tapeloop::AirRefusal airRefusal() const override { return refusal; }
+	std::string missingIntro() const override { return introMissing; }
+	std::string missingOutro() const override { return outroMissing; }
 	void pickReplay(uint64_t id) override
 	{
 		++picks;

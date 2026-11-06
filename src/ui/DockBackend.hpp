@@ -6,6 +6,7 @@
 #include "core/BufferSettings.hpp"
 #include "core/EncoderPolicy.hpp"
 #include "core/ReplayExport.hpp"
+#include "core/ReplayPlayerState.hpp"
 #include "core/ReplayState.hpp"
 
 #include <chrono>
@@ -109,6 +110,8 @@ public:
 	virtual BufferSettings settings() const = 0;
 	virtual void setSettings(const BufferSettings &settings) = 0;
 	virtual std::vector<EncoderChoice> encoderChoices() const = 0;
+	// The names of the transitions the user has in OBS, in no particular order.
+	virtual std::vector<std::string> transitions() const = 0;
 	// The computer's memory in bytes, zero when it cannot be read.
 	virtual uint64_t physicalMemory() const = 0;
 	// What the selected sources need for their buffer lengths at their bitrates, and what
@@ -141,6 +144,12 @@ public:
 	// The replay captured last, from the dock or by the hotkey; zero before the first.
 	virtual uint64_t lastCapture() const = 0;
 	virtual void pickReplay(uint64_t id) = 0;
+	// Why the last try to put a replay on air did not go through.
+	virtual AirRefusal airRefusal() const = 0;
+	// The file of an intro or outro the settings ask for and replays go on air without,
+	// empty when there is none.
+	virtual std::string missingIntro() const = 0;
+	virtual std::string missingOutro() const = 0;
 
 	virtual bool canExport(ExportFormat format) const = 0;
 	// Exports a stored replay in the background. False when refused.

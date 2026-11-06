@@ -6,6 +6,7 @@
 #include "ObsFixture.hpp"
 #include "TestEncoders.hpp"
 #include "TestPattern.hpp"
+#include "UiTasks.hpp"
 
 #include "core/FileIo.hpp"
 #include "core/ReplayWriter.hpp"
@@ -21,10 +22,14 @@
 #include <chrono>
 #include <cstdint>
 #include <filesystem>
+#include <fstream>
+#include <optional>
 #include <string>
 #include <tuple>
 #include <vector>
 
+using tapeloop::AirMediaKind;
+using tapeloop::AirRefusal;
 using tapeloop::BufferSettings;
 using tapeloop::obs::CaptureManager;
 using tapeloop::SequenceEntry;
@@ -43,6 +48,7 @@ public:
 	void requestSave() override { ++saves; }
 	std::string recordingFolder() const override { return tapeloop::utf8FromPath(dir.path()); }
 	std::string sceneCollectionName() const override { return "Liga"; }
+	void buffersStopped() override {}
 
 	int saves = 0;
 	tapeloop::test::TempDirectory dir;
@@ -204,6 +210,171 @@ TEST_CASE_METHOD(ObsFixture, "every settings change from the dock asks the host 
 	CHECK(host.saves == 4);
 	REQUIRE(backend.toggleRunning());
 	CHECK(host.saves == 4);
+}
+
+TEST_CASE_METHOD(ObsFixture, "the dock is offered the transitions the sequence knows of", "[obs][dock][air]")
+{
+	class Catalog final : public tapeloop::obs::TransitionCatalog {
+	public:
+		std::optional<tapeloop::obs::TransitionTemplate> find(const std::string &) const override
+		{
+			return std::nullopt;
+		}
+		std::vector<std::string> names() const override { return {"Swipe", "Ghost"}; }
+	};
+
+	tapeloop::obs::registerReplaySource({});
+	OfflineHost host;
+	CaptureManager manager(host);
+	CHECK(ManagerDockBackend(manager).transitions().empty());
+
+	SequencePlayer sequence(manager.library());
+	const ManagerDockBackend backend(manager, &sequence);
+	CHECK(backend.transitions().empty());
+
+	const Catalog catalog;
+	sequence.setTransitions(&catalog);
+	CHECK(backend.transitions() == std::vector<std::string>{"Swipe", "Ghost"});
+	sequence.setTransitions(nullptr);
+}
+
+TEST_CASE_METHOD(ObsFixture, "how a replay goes on air reaches the sequence from the dock", "[obs][dock][air]")
+{
+	tapeloop::obs::registerReplaySource({});
+	OfflineHost host;
+	CaptureManager manager(host);
+	SequencePlayer sequence(manager.library());
+	ManagerDockBackend backend(manager, &sequence);
+	const std::filesystem::path outro = host.dir.path() / "outro.png";
+	std::ofstream(outro) << "unread";
+
+	BufferSettings settings = backend.settings();
+	settings.air.outro.kind = AirMediaKind::Image;
+	settings.air.outro.path = tapeloop::utf8FromPath(outro);
+	backend.setSettings(settings);
+	CHECK(sequence.air().hasOutro());
+	CHECK(host.saves == 1);
+
+	settings.air.outro = {};
+	backend.setSettings(settings);
+	CHECK_FALSE(sequence.air().hasOutro());
+}
+
+TEST_CASE_METHOD(ObsFixture, "why a replay did not go on air reaches the dock", "[obs][dock][air]")
+{
+	tapeloop::obs::registerReplaySource({});
+	OfflineHost host;
+	const std::filesystem::path broadcast = host.dir.path() / "Tapeloop" / "Liga 2026-10-09 21-00";
+	std::filesystem::create_directories(broadcast);
+	tapeloop::File(broadcast / "broken.tplp", tapeloop::File::Mode::CreateNew)
+		.writeAt(0, std::vector<uint8_t>(100, 1));
+	CaptureManager manager(host);
+	manager.loadLibrary();
+	manager.finishWrites();
+	SequencePlayer sequence(manager.library());
+	ManagerDockBackend backend(manager, &sequence);
+	const auto replays = backend.replays();
+	REQUIRE(replays.size() == 1);
+
+	CHECK(backend.airRefusal() == AirRefusal::None);
+	CHECK_FALSE(sequence.putOnAir(replays[0].id));
+	CHECK(backend.airRefusal() == AirRefusal::Damaged);
+	// Without a sequence nothing goes on air, so nothing is refused.
+	CHECK(ManagerDockBackend(manager).airRefusal() == AirRefusal::None);
+}
+
+TEST_CASE_METHOD(ObsFixture, "an intro or outro whose file is missing reaches the dock", "[obs][dock][air]")
+{
+	tapeloop::obs::registerReplaySource({});
+	OfflineHost host;
+	CaptureManager manager(host);
+	SequencePlayer sequence(manager.library());
+	ManagerDockBackend backend(manager, &sequence);
+	const std::filesystem::path intro = host.dir.path() / "intro.png";
+	const std::filesystem::path outro = host.dir.path() / "outro.png";
+	CHECK(backend.missingIntro().empty());
+	CHECK(backend.missingOutro().empty());
+
+	BufferSettings settings = backend.settings();
+	settings.air.intro.kind = AirMediaKind::Image;
+	settings.air.intro.path = tapeloop::utf8FromPath(intro);
+	settings.air.outro.kind = AirMediaKind::Image;
+	settings.air.outro.path = tapeloop::utf8FromPath(outro);
+	backend.setSettings(settings);
+	CHECK(backend.missingIntro() == settings.air.intro.path);
+	CHECK(backend.missingOutro() == settings.air.outro.path);
+	// Without a sequence nothing goes on air, so nothing is missing.
+	CHECK(ManagerDockBackend(manager).missingIntro().empty());
+	CHECK(ManagerDockBackend(manager).missingOutro().empty());
+
+	std::ofstream(intro) << "unread";
+	backend.setSettings(settings);
+	CHECK(backend.missingIntro().empty());
+	CHECK(backend.missingOutro() == settings.air.outro.path);
+
+	std::ofstream(outro) << "unread";
+	backend.setSettings(settings);
+	CHECK(backend.missingOutro().empty());
+
+	std::filesystem::remove(intro);
+	std::filesystem::remove(outro);
+	// A path left under no kind asks for nothing, so its file is not missing.
+	settings.air.intro.kind = AirMediaKind::None;
+	settings.air.outro.kind = AirMediaKind::None;
+	backend.setSettings(settings);
+	CHECK(backend.missingIntro().empty());
+	CHECK(backend.missingOutro().empty());
+
+	settings.air.intro.kind = AirMediaKind::Image;
+	settings.air.outro.kind = AirMediaKind::Image;
+	backend.setSettings(settings);
+	REQUIRE_FALSE(backend.missingIntro().empty());
+	REQUIRE_FALSE(backend.missingOutro().empty());
+	// With the composition gone, nothing goes on air any more.
+	sequence.destroyAir();
+	CHECK(backend.missingIntro().empty());
+	CHECK(backend.missingOutro().empty());
+}
+
+TEST_CASE_METHOD(ObsFixture, "a dock edit waits for the replay on air to go off air", "[obs][dock][air]")
+{
+	tapeloop::obs::registerReplaySource({});
+	const tapeloop::test::UiTasks ui;
+	OBSSourceAutoRelease camera = createTestPattern(320, 180, "Camera");
+	OfflineHost host;
+	CaptureManager manager(host);
+	SequencePlayer sequence(manager.library());
+	ManagerDockBackend backend(manager, &sequence);
+	BufferSettings settings = backend.settings();
+	settings.startWithOutputs = false;
+	settings.sources[obs_source_get_uuid(camera)].selected = true;
+	backend.setSettings(settings);
+	REQUIRE(backend.toggleRunning());
+	REQUIRE(tapeloop::test::waitFor(
+		[&] {
+			const tapeloop::SourceBuffer *buffer = manager.buffer(obs_source_get_uuid(camera));
+			return buffer && buffer->stats().gopCount >= 2;
+		},
+		std::chrono::seconds(60)));
+	const uint64_t replay = backend.captureReplay();
+	REQUIRE(replay != 0);
+	REQUIRE(sequence.putOnAir(replay));
+	REQUIRE(sequence.air().onAir());
+
+	const std::filesystem::path outro = host.dir.path() / "outro.png";
+	std::ofstream(outro) << "unread";
+	settings.air.outro.kind = AirMediaKind::Image;
+	settings.air.outro.path = tapeloop::utf8FromPath(outro);
+	backend.setSettings(settings);
+	CHECK_FALSE(sequence.air().hasOutro());
+	CHECK(backend.settings().air.outro.kind == AirMediaKind::Image);
+
+	sequence.takeOffAir();
+	CHECK_FALSE(sequence.air().onAir());
+	CHECK(sequence.air().hasOutro());
+
+	REQUIRE(backend.toggleRunning());
+	manager.finishWrites();
 }
 
 TEST_CASE_METHOD(ObsFixture, "the dock captures replays through the manager", "[obs][dock][replay]")

@@ -61,7 +61,8 @@ size_t framesOf(const StoredSource &source)
 
 SequencePlayer::SequencePlayer(const ReplayLibrary &library)
 	: library_(library),
-	  source_(createReplaySource("Tapeloop replay"))
+	  source_(createReplaySource("Tapeloop replay")),
+	  air_(source_, *this)
 {
 	if (source_) {
 		player_ = replayPlayer(source_);
@@ -101,13 +102,22 @@ bool SequencePlayer::setShown(std::string_view sourceKey, bool shown)
 
 bool SequencePlayer::putOnAir(uint64_t id)
 {
+	refusal_ = AirRefusal::None;
 	const Replay *replay = library_.find(id);
-	if (closed_ || !player_ || state_.phase() != AirPhase::Live || !replay ||
-	    replay->state == ReplayState::Damaged) {
+	if (closed_ || !player_ || state_.phase() != AirPhase::Live || !replay) {
+		return false;
+	}
+	if (replay->state == ReplayState::Damaged) {
+		refusal_ = AirRefusal::Damaged;
+		return false;
+	}
+	if (!air_.channelFree()) {
+		refuseChannel(id);
 		return false;
 	}
 	std::shared_ptr<const ReplayIndex> index = indexOf(*replay);
 	if (!index) {
+		refusal_ = AirRefusal::Unreadable;
 		blog(LOG_WARNING, "[tapeloop] Replay %llu cannot be read, so it cannot go on air",
 		     static_cast<unsigned long long>(id));
 		return false;
@@ -144,6 +154,8 @@ bool SequencePlayer::putOnAir(uint64_t id)
 		}
 		state_.setEntries(std::move(entries));
 	}
+	air_.prepare();
+	state_.setConfig({air_.hasIntro(), air_.hasOutro()});
 	if (!state_.start(std::move(sources))) {
 		return false;
 	}
@@ -152,7 +164,20 @@ bool SequencePlayer::putOnAir(uint64_t id)
 	index_ = std::move(index);
 	live_ = replay->live;
 	follow();
+	// The look above can be a transition's wait old. Whoever took the channel since has the
+	// replay off air by the next tick at the latest, and only this press can say why.
+	if (!air_.channelFree()) {
+		refuseChannel(id);
+		return false;
+	}
 	return true;
+}
+
+void SequencePlayer::refuseChannel(uint64_t id)
+{
+	refusal_ = AirRefusal::ChannelBusy;
+	blog(LOG_WARNING, "[tapeloop] Another source is on the replay's channel, so replay %llu cannot go on air",
+	     static_cast<unsigned long long>(id));
 }
 
 void SequencePlayer::takeOffAir()
@@ -171,25 +196,54 @@ void SequencePlayer::skip()
 	follow();
 }
 
+void SequencePlayer::programWentBlack()
+{
+	air_.cut();
+	wentOffAir();
+}
+
 void SequencePlayer::close()
 {
 	closed_ = true;
+	refusal_ = AirRefusal::None;
+	// Off air first, so that nothing below shows the outro or starts the way back.
+	air_.cut();
 	// cutShort() goes to the outro when there is one; cut short again, the replay is live.
 	while (state_.phase() != AirPhase::Live) {
 		state_.cutShort();
 	}
 	state_.setEntries({});
 	follow();
+	// The last frame a way back under way kept loaded goes too.
+	if (player_) {
+		player_->load(nullptr);
+	}
+}
+
+void SequencePlayer::destroyAir()
+{
+	destroyed_ = true;
+	try {
+		close();
+	} catch (...) {
+		// What the composition made still goes before the modules it came from, and whoever
+		// called this is told.
+		air_.destroy();
+		throw;
+	}
+	air_.destroy();
 }
 
 void SequencePlayer::follow()
 {
 	while (state_.token() != token_) {
 		token_ = state_.token();
-		if (state_.phase() == AirPhase::Source) {
+		const AirPhase phase = state_.phase();
+		if (phase == AirPhase::Source) {
 			clip_ = play(state_.source());
 			if (clip_ != 0) {
 				watching_.store(true, std::memory_order_relaxed);
+				air_.show(phase);
 				return;
 			}
 			// A source that cannot play ends at once, and the next one gets its turn.
@@ -198,14 +252,21 @@ void SequencePlayer::follow()
 		}
 		watching_.store(false, std::memory_order_relaxed);
 		clip_ = 0;
-		if (player_) {
-			player_->load(nullptr);
-		}
-		if (state_.phase() == AirPhase::Live) {
+		if (phase == AirPhase::Live) {
+			// The way back fades out the last frame of the replay, which stays loaded until
+			// wentOffAir().
+			if (!air_.leave() && player_) {
+				player_->load(nullptr);
+			}
 			replay_ = 0;
 			files_.reset();
 			index_.reset();
 			live_.clear();
+			continue;
+		}
+		air_.show(phase);
+		if (player_) {
+			player_->load(nullptr);
 		}
 	}
 }
@@ -260,6 +321,29 @@ void SequencePlayer::onEnded(uint64_t clip)
 	}
 	keepRate();
 	state_.ended(token_);
+	follow();
+}
+
+void SequencePlayer::partEnded()
+{
+	state_.ended(token_);
+	follow();
+}
+
+void SequencePlayer::wentOffAir()
+{
+	if (state_.phase() == AirPhase::Live) {
+		// The way back is over.
+		if (player_) {
+			player_->load(nullptr);
+		}
+		return;
+	}
+	// Another source took the channel: the replay is over, with nothing more to show.
+	keepRate();
+	while (state_.phase() != AirPhase::Live) {
+		state_.cutShort();
+	}
 	follow();
 }
 

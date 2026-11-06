@@ -5,6 +5,7 @@
 
 #include "core/BufferBudget.hpp"
 
+#include "ui/AirSettingsDialog.hpp"
 #include "ui/SourceSettingsDialog.hpp"
 
 #include <QAbstractItemView>
@@ -12,6 +13,7 @@
 #include <QComboBox>
 #include <QDateTime>
 #include <QDropEvent>
+#include <QFileInfo>
 #include <QFont>
 #include <QFormLayout>
 #include <QHBoxLayout>
@@ -25,6 +27,7 @@
 #include <QPushButton>
 #include <QSignalBlocker>
 #include <QSpinBox>
+#include <QStringList>
 #include <QStyle>
 #include <QTableWidget>
 #include <QTimer>
@@ -166,6 +169,7 @@ TapeloopDock::TapeloopDock(DockBackend &backend, TextLookup text, QWidget *paren
 	  bufferMemory_(new QSpinBox(this)),
 	  memoryWarning_(new QLabel(text_("Dock.BufferMemory.Unsafe"), this)),
 	  memoryShort_(new QLabel(this)),
+	  airSettings_(new QPushButton(text_("Dock.AirSettings"), this)),
 	  note_(new QLabel(text_("Dock.ApplyNote"), this)),
 	  startStop_(new QPushButton(this)),
 	  followsOutputs_(new QLabel(text_("Dock.FollowsOutputs"), this)),
@@ -178,7 +182,8 @@ TapeloopDock::TapeloopDock(DockBackend &backend, TextLookup text, QWidget *paren
 	  removeTag_(new QPushButton(text_("Dock.RemoveTag"), this)),
 	  exportMp4_(new QPushButton(text_("Dock.ExportMp4"), this)),
 	  exportReplay_(new QPushButton(text_("Dock.ExportReplay"), this)),
-	  exportStatus_(new QLabel(this))
+	  exportStatus_(new QLabel(this)),
+	  airStatus_(new QLabel(this))
 {
 	sources_->setObjectName("sources");
 	sources_->setHorizontalHeaderLabels({text_("Dock.Source"), text_("Dock.Shown"), text_("Dock.Status")});
@@ -214,6 +219,7 @@ TapeloopDock::TapeloopDock(DockBackend &backend, TextLookup text, QWidget *paren
 	advanced_->setToolTip(text_("Dock.Advanced.Tooltip"));
 	advancedSettings_->setObjectName("advancedSettings");
 	advancedSettings_->hide();
+	airSettings_->setObjectName("airSettings");
 	replayEncoder_->setObjectName("replayEncoder");
 	replayEncoder_->setToolTip(text_("Dock.ReplayEncoder.Tooltip"));
 	otherAdapters_->setObjectName("otherAdapters");
@@ -260,6 +266,11 @@ TapeloopDock::TapeloopDock(DockBackend &backend, TextLookup text, QWidget *paren
 	// Names and errors come from files and the system, and are shown as they are.
 	exportStatus_->setTextFormat(Qt::PlainText);
 	exportStatus_->hide();
+	airStatus_->setObjectName("airStatus");
+	airStatus_->setWordWrap(true);
+	// It may name a file.
+	airStatus_->setTextFormat(Qt::PlainText);
+	airStatus_->hide();
 	followsOutputs_->setObjectName("followsOutputs");
 	followsOutputs_->setWordWrap(true);
 	followsOutputs_->hide();
@@ -285,6 +296,7 @@ TapeloopDock::TapeloopDock(DockBackend &backend, TextLookup text, QWidget *paren
 	layout->addWidget(sourceSettings_);
 	layout->addLayout(form);
 	layout->addWidget(advancedSettings_);
+	layout->addWidget(airSettings_);
 	layout->addWidget(note_);
 	layout->addWidget(memoryShort_);
 	layout->addWidget(startStop_);
@@ -304,6 +316,7 @@ TapeloopDock::TapeloopDock(DockBackend &backend, TextLookup text, QWidget *paren
 	exporting->addWidget(exportMp4_);
 	exporting->addWidget(exportReplay_);
 	layout->addLayout(exporting);
+	layout->addWidget(airStatus_);
 	layout->addWidget(exportStatus_);
 
 	connect(sources_, &QTableWidget::itemChanged, this, [this](QTableWidgetItem *item) {
@@ -366,7 +379,9 @@ TapeloopDock::TapeloopDock(DockBackend &backend, TextLookup text, QWidget *paren
 	setTabOrder(replayEncoder_, otherAdapters_);
 	setTabOrder(otherAdapters_, forceH264_);
 	setTabOrder(forceH264_, bufferMemory_);
-	setTabOrder(bufferMemory_, startStop_);
+	setTabOrder(bufferMemory_, airSettings_);
+	setTabOrder(airSettings_, startStop_);
+	connect(airSettings_, &QPushButton::clicked, this, [this] { openAirSettings(); });
 	connect(bufferMemory_, &QSpinBox::valueChanged, this, [this](int value) {
 		const int mib = value == 0 ? 0 : std::max(value, kMinBufferMemoryMiB);
 		if (mib != value) {
@@ -540,6 +555,7 @@ void TapeloopDock::refresh()
 
 		updateReplays();
 		updateExports();
+		updateAirStatus();
 
 		startStop_->setText(backend_.running() ? text_("Dock.Stop") : text_("Dock.Start"));
 		const bool enabled = backend_.manualControlEnabled();
@@ -927,6 +943,40 @@ void TapeloopDock::updateExports()
 	}
 }
 
+void TapeloopDock::updateAirStatus()
+{
+	QStringList lines;
+	switch (backend_.airRefusal()) {
+	case AirRefusal::None:
+		break;
+	case AirRefusal::ChannelBusy:
+		lines << text_("Dock.Air.ChannelBusy");
+		break;
+	case AirRefusal::Unreadable:
+		lines << text_("Dock.Air.Unreadable");
+		break;
+	case AirRefusal::Damaged:
+		lines << text_("Dock.Air.Damaged");
+		break;
+	}
+	const auto fileName = [](const std::string &path) {
+		return QFileInfo(QString::fromStdString(path)).fileName();
+	};
+	const std::string intro = backend_.missingIntro();
+	if (!intro.empty()) {
+		lines << text_("Dock.Air.IntroMissing").arg(fileName(intro));
+	}
+	const std::string outro = backend_.missingOutro();
+	if (!outro.empty()) {
+		lines << text_("Dock.Air.OutroMissing").arg(fileName(outro));
+	}
+	const QString text = lines.join('\n');
+	airStatus_->setVisible(!text.isEmpty());
+	if (airStatus_->text() != text) {
+		airStatus_->setText(text);
+	}
+}
+
 void TapeloopDock::updateEncoders(const std::string &chosen)
 {
 	// Not while its list is open, which would move the user off the row they are on.
@@ -1019,6 +1069,36 @@ void TapeloopDock::applySourceSettings(const std::string &uuid, const SourceSett
 		source.activateOffAir = chosen.activateOffAir;
 		backend_.setSettings(settings);
 	});
+	refresh();
+}
+
+void TapeloopDock::openAirSettings()
+{
+	guarded([&] {
+		const AirSettings opened = backend_.settings().air;
+		auto *dialog = new AirSettingsDialog(opened, backend_.transitions(), text_, this);
+		dialog->setObjectName("airSettingsDialog");
+		dialog->setAttribute(Qt::WA_DeleteOnClose);
+		connect(dialog, &QDialog::accepted, this,
+			[this, dialog, opened] { guarded([&] { applyAirSettings(opened, dialog->chosen()); }); });
+		dialog->open();
+	});
+}
+
+void TapeloopDock::applyAirSettings(const AirSettings &opened, const AirSettings &chosen)
+{
+	// Every write saves the scene collection, so a dialog left as it was writes nothing.
+	if (chosen == opened) {
+		return;
+	}
+	BufferSettings settings = backend_.settings();
+	// The scene collection can change while the dialog is open, and what the dialog shows
+	// is then another collection's.
+	if (settings.air != opened) {
+		return;
+	}
+	settings.air = chosen;
+	backend_.setSettings(settings);
 	refresh();
 }
 

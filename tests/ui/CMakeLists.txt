@@ -29,6 +29,8 @@ add_executable(tapeloop-ui-tests)
 target_sources(
   tapeloop-ui-tests
   PRIVATE
+    ../../src/ui/AirSettingsDialog.cpp
+    ../../src/ui/AirSettingsDialog.hpp
     ../../src/ui/DockBackend.hpp
     ../../src/ui/DockText.cpp
     ../../src/ui/DockText.hpp

@@ -45,6 +45,7 @@ private:
 	void updateSources(const std::vector<DockSource> &sources);
 	void updateReplays();
 	void updateExports();
+	void updateAirStatus();
 	QString statusText(const DockSource &source) const;
 	void updateMemory(int64_t settingMiB);
 	void updateEncoders(const std::string &chosen);
@@ -52,6 +53,8 @@ private:
 	void moveSource(int from, int to);
 	void openSourceSettings(int row);
 	void applySourceSettings(const std::string &uuid, const SourceSettings &chosen);
+	void openAirSettings();
+	void applyAirSettings(const AirSettings &opened, const AirSettings &chosen);
 
 	DockBackend &backend_;
 	TextLookup text_;
@@ -73,6 +76,7 @@ private:
 	QSpinBox *bufferMemory_;
 	QLabel *memoryWarning_;
 	QLabel *memoryShort_;
+	QPushButton *airSettings_;
 	QLabel *note_;
 	QPushButton *startStop_;
 	QLabel *followsOutputs_;
@@ -86,6 +90,7 @@ private:
 	QPushButton *exportMp4_;
 	QPushButton *exportReplay_;
 	QLabel *exportStatus_;
+	QLabel *airStatus_;
 	// The ids the replay list shows, newest first, zero for the rows naming a broadcast,
 	// and the text and tooltip of each.
 	std::vector<uint64_t> shownReplays_;
