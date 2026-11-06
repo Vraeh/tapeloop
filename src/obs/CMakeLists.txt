@@ -9,6 +9,8 @@ target_sources(
   PRIVATE
     AirComposition.cpp
     AirComposition.hpp
+    AirEvents.cpp
+    AirEvents.hpp
     CaptureManager.cpp
     CaptureManager.hpp
     CaptureOutput.cpp

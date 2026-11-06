@@ -18,6 +18,7 @@
 #include "core/ReplayWriter.hpp"
 #include "decode/Mp4Writer.hpp"
 #include "obs/AirComposition.hpp"
+#include "obs/AirEvents.hpp"
 #include "obs/CaptureManager.hpp"
 #include "obs/ManagerDockBackend.hpp"
 #include "obs/ReplaySource.hpp"
@@ -227,9 +228,8 @@ TEST_CASE_METHOD(ObsFixture, "a replay on air goes back to live when the buffers
 	manager.setSettings(settings);
 	std::optional<SequencePlayer> sequence(std::in_place, manager.library());
 	REQUIRE(sequence->player());
-	// As the frontend bridge does.
 	host.onStop = [&] {
-		sequence->takeOffAir();
+		tapeloop::obs::handleAirEvent(tapeloop::obs::AirEvent::BuffersStopped, *sequence, manager);
 	};
 	REQUIRE(manager.manualStart());
 	REQUIRE(waitFor([&] { return hasGops(manager, uuid, 2); }, 60s));

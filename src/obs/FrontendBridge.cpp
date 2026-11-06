@@ -3,6 +3,8 @@
 
 #include "obs/FrontendBridge.hpp"
 
+#include "obs/AirEvents.hpp"
+
 #ifdef TAPELOOP_FFMPEG
 #include "decode/Mp4Writer.hpp"
 #endif
@@ -135,8 +137,7 @@ void FrontendBridge::requestSave()
 
 void FrontendBridge::buffersStopped()
 {
-	// The program goes on, so the replay goes back to live the way the user takes it off.
-	sequence_->takeOffAir();
+	handleAirEvent(AirEvent::BuffersStopped, *sequence_, *manager_);
 }
 
 std::optional<TransitionTemplate> FrontendBridge::find(const std::string &name) const
@@ -186,23 +187,16 @@ void FrontendBridge::handleEvent(obs_frontend_event event, void *data) noexcept
 			manager.onRecording(false);
 			break;
 		case OBS_FRONTEND_EVENT_SCENE_COLLECTION_CHANGING:
+			handleAirEvent(AirEvent::CollectionChanging, *bridge.sequence_, manager);
+			break;
 		case OBS_FRONTEND_EVENT_SCRIPTING_SHUTDOWN:
-			// The last the frontend says before it empties every channel, which would
-			// look like another source taking the replay's.
-			bridge.sequence_->close();
+			handleAirEvent(AirEvent::ScriptingShutdown, *bridge.sequence_, manager);
 			break;
 		case OBS_FRONTEND_EVENT_SCENE_COLLECTION_CLEANUP:
-			// Duplicating or renaming a collection says nothing before this.
-			bridge.sequence_->close();
-			manager.onSceneCollectionCleanup();
-			// A collection with no file yet loads nothing, so it starts from what the
-			// cleanup left.
-			bridge.sequence_->setAir(manager.settings().air);
+			handleAirEvent(AirEvent::CollectionCleanup, *bridge.sequence_, manager);
 			break;
 		case OBS_FRONTEND_EVENT_SCENE_COLLECTION_CHANGED:
-			// OBS sends it after every collection it loads, the first one included;
-			// FINISHED_LOADING comes only once.
-			bridge.sequence_->open();
+			handleAirEvent(AirEvent::CollectionChanged, *bridge.sequence_, manager);
 			break;
 		case OBS_FRONTEND_EVENT_FINISHED_LOADING:
 			bridge.hotkeys_->load(obs_frontend_get_profile_config());
@@ -212,10 +206,7 @@ void FrontendBridge::handleEvent(obs_frontend_event event, void *data) noexcept
 			bridge.hotkeys_->load(obs_frontend_get_profile_config());
 			break;
 		case OBS_FRONTEND_EVENT_EXIT:
-			// OBS unloads its modules before it destroys the sources still held, so
-			// those the composition made from other modules go now.
-			bridge.sequence_->destroyAir();
-			manager.onExit();
+			handleAirEvent(AirEvent::Exit, *bridge.sequence_, manager);
 			bridge.removeFrontendCallbacks();
 			break;
 		default:

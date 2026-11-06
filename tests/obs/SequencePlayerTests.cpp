@@ -16,6 +16,8 @@
 #include "core/ReplayWriter.hpp"
 #include "decode/PictureDecoder.hpp"
 #include "obs/AirComposition.hpp"
+#include "obs/AirEvents.hpp"
+#include "obs/CaptureManager.hpp"
 #include "obs/ReplayPlayer.hpp"
 #include "obs/ReplaySource.hpp"
 #include "obs/SequencePlayer.hpp"
@@ -55,6 +57,10 @@ using tapeloop::SequenceEntry;
 using tapeloop::VideoCodec;
 using tapeloop::decode::Picture;
 using tapeloop::decode::PictureDecoder;
+using tapeloop::obs::AirEvent;
+using tapeloop::obs::CaptureHost;
+using tapeloop::obs::CaptureManager;
+using tapeloop::obs::handleAirEvent;
 using tapeloop::obs::kAirChannel;
 using tapeloop::obs::PlayerState;
 using tapeloop::obs::registerReplaySource;
@@ -531,6 +537,48 @@ struct AirSetup {
 	ReplayLibrary library;
 	const Captured captured{library, {"a"}, 120};
 	std::optional<SequencePlayer> sequence;
+};
+
+// Stands in for the frontend, which the harness does not load.
+class EventHost final : public CaptureHost {
+public:
+	bool streamingActive() const override { return false; }
+	bool recordingActive() const override { return false; }
+	void requestSave() override {}
+	std::string recordingFolder() const override { return {}; }
+	std::string sceneCollectionName() const override { return "Tests"; }
+	void buffersStopped() override { ++stops; }
+
+	int stops = 0;
+};
+
+// A replay with an outro on air, and a manager with no buffers, to answer an event.
+struct EventSetup : AirSetup {
+	EventSetup()
+	{
+		settings.air.outro = {AirMediaKind::Image, fileIn(folder, "outro.png"), 20000ms};
+		// No such source, of the length libobs reads whatever the key's size.
+		settings.sources["00000000-0000-0000-0000-000000000000"].selected = true;
+		manager.setSettings(settings);
+		sequence->setAir(settings.air);
+		putOnAir();
+		REQUIRE(phase() == AirPhase::Source);
+		REQUIRE(sequence->air().hasOutro());
+	}
+
+	void answer(AirEvent event) { handleAirEvent(event, *sequence, manager); }
+
+	// Off air at once, with no outro and no way back.
+	void checkCut() const
+	{
+		CHECK(phase() == AirPhase::Live);
+		CHECK_FALSE(sequence->air().onAir());
+		CHECK(channelName().empty());
+	}
+
+	tapeloop::BufferSettings settings;
+	EventHost host;
+	CaptureManager manager{host};
 };
 
 // Whether a source was active at every change of the replay's channel, which libobs signals
@@ -2143,4 +2191,84 @@ TEST_CASE_METHOD(ObsFixture, "a replay on air changes nothing in OBS's lists", "
 	// The main canvas keeps its scenes until they are removed, as the frontend does before
 	// shutting down.
 	obs_source_remove(obs_scene_get_source(scene));
+}
+
+TEST_CASE_METHOD(ObsFixture, "a collection changing cuts a replay on air and keeps the next one off",
+		 "[obs][sequence][air]")
+{
+	registerFade();
+	EventSetup setup;
+	setup.answer(AirEvent::CollectionChanging);
+	setup.checkCut();
+	CHECK(setup.sequence->closed());
+	CHECK(setup.sequence->state().sequence().entries().empty());
+	CHECK_FALSE(setup.sequence->putOnAir(setup.captured.id()));
+}
+
+TEST_CASE_METHOD(ObsFixture, "scripting shutting down cuts a replay on air and keeps the next one off",
+		 "[obs][sequence][air]")
+{
+	registerFade();
+	EventSetup setup;
+	setup.answer(AirEvent::ScriptingShutdown);
+	setup.checkCut();
+	CHECK(setup.sequence->closed());
+	CHECK_FALSE(setup.sequence->putOnAir(setup.captured.id()));
+}
+
+TEST_CASE_METHOD(ObsFixture, "a collection's cleanup cuts a replay on air and starts from what it leaves",
+		 "[obs][sequence][air]")
+{
+	registerFade();
+	EventSetup setup;
+	setup.answer(AirEvent::CollectionCleanup);
+	setup.checkCut();
+	CHECK(setup.sequence->closed());
+	CHECK(setup.manager.settings().sources.empty());
+	CHECK_FALSE(setup.sequence->air().hasOutro());
+}
+
+TEST_CASE_METHOD(ObsFixture, "a collection change in the order OBS sends it leaves the next replay ready",
+		 "[obs][sequence][air]")
+{
+	registerFade();
+	EventSetup setup;
+	setup.answer(AirEvent::CollectionChanging);
+	setup.checkCut();
+	setup.answer(AirEvent::CollectionCleanup);
+	setup.checkCut();
+	REQUIRE(setup.sequence->closed());
+
+	setup.answer(AirEvent::CollectionChanged);
+	CHECK_FALSE(setup.sequence->closed());
+	CHECK(setup.sequence->putOnAir(setup.captured.id()));
+	CHECK(setup.phase() == AirPhase::Source);
+}
+
+TEST_CASE_METHOD(ObsFixture, "OBS exiting lets go of what the composition made and ends the manager",
+		 "[obs][sequence][air]")
+{
+	registerFade();
+	EventSetup setup;
+	setup.manager.onStreaming(true);
+	REQUIRE(setup.manager.running());
+
+	setup.answer(AirEvent::Exit);
+	setup.checkCut();
+	CHECK(setup.sequence->air().partSource(AirPhase::Outro) == nullptr);
+	setup.answer(AirEvent::CollectionChanged);
+	CHECK(setup.sequence->closed());
+	// A manager that exited says nothing of the buffers stopping.
+	setup.manager.onStreaming(false);
+	CHECK(setup.host.stops == 0);
+}
+
+TEST_CASE_METHOD(ObsFixture, "buffers stopping takes a replay off air the way the user does", "[obs][sequence][air]")
+{
+	registerFade();
+	EventSetup setup;
+	setup.answer(AirEvent::BuffersStopped);
+	CHECK(setup.phase() == AirPhase::Outro);
+	CHECK(setup.sequence->air().onAir());
+	CHECK_FALSE(setup.sequence->closed());
 }
