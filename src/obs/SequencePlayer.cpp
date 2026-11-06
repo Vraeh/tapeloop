@@ -223,7 +223,14 @@ void SequencePlayer::close()
 void SequencePlayer::destroyAir()
 {
 	destroyed_ = true;
-	close();
+	try {
+		close();
+	} catch (...) {
+		// What the composition made still goes before the modules it came from, and whoever
+		// called this is told.
+		air_.destroy();
+		throw;
+	}
 	air_.destroy();
 }
 

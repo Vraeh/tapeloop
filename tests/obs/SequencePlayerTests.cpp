@@ -2171,15 +2171,19 @@ TEST_CASE_METHOD(ObsFixture, "a transition whose video never opens holds a repla
 		REQUIRE(runUntil([&] { return !sequence->air().onAir(); }));
 	};
 
+	const tapeloop::test::LogCounter gaveUp("A transition is not ready yet");
 	const auto first = timePutOnAir();
 	CHECK(first < 1s);
+	CHECK(gaveUp.lines == 1);
 	CHECK(shownName() == "Tapeloop replay");
 	// With no length to go by, it runs out at once as OBS's own does.
 	CHECK(runUntil([] { return timeOnChannel() >= 1.0f; }));
 	comeOff();
 
-	const auto second = timePutOnAir();
-	CHECK(second < first);
+	// Counted and not timed: this video never opens, so a wait always says so, while a loaded
+	// machine can stall a press that waits for nothing by as long as the wait.
+	timePutOnAir();
+	CHECK(gaveUp.lines == 1);
 	comeOff();
 
 	// One with no video at all has nothing to wait for.
@@ -2302,6 +2306,44 @@ TEST_CASE_METHOD(ObsFixture, "a sequence lets go of what it made for air before 
 
 	sequence.reset();
 	obs_wait_for_destroy_queue();
+}
+
+TEST_CASE_METHOD(ObsFixture, "a replay out of memory as OBS exits still lets go of what it made",
+		 "[obs][sequence][air]")
+{
+	if (!tapeloop::test::kAllocationFailures) {
+		SKIP("allocations cannot be made to fail in this build");
+	}
+	bool threwOnce = false;
+	for (size_t skip = 0;; ++skip) {
+		CAPTURE(skip);
+		AirSetup setup;
+		setup.putOnAir();
+		// Waits for the replay to go off air, where making it can run out of memory.
+		AirSettings air;
+		air.intro = {AirMediaKind::Image, fileIn(setup.folder, "intro.png"), 20000ms};
+		setup.sequence->setAir(air);
+
+		bool threw = false;
+		bool triggered = false;
+		{
+			const tapeloop::test::AllocationFailure failure(skip);
+			try {
+				setup.sequence->destroyAir();
+			} catch (const std::bad_alloc &) {
+				threw = true;
+			}
+			triggered = failure.triggered();
+		}
+		threwOnce = threwOnce || threw;
+		CHECK(setup.sequence->air().partSource(AirPhase::Source) == nullptr);
+		CHECK_FALSE(setup.sequence->air().onAir());
+		CHECK(channelName().empty());
+		if (!triggered) {
+			break;
+		}
+	}
+	CHECK(threwOnce);
 }
 
 TEST_CASE_METHOD(ObsFixture, "a video intro that never says it started gives way after the wait for it",
@@ -2851,6 +2893,43 @@ TEST_CASE_METHOD(ObsFixture, "a program gone black during a way back lets go of 
 	setup.sequence->programWentBlack();
 	CHECK_FALSE(setup.sequence->air().onAir());
 	CHECK(playerUntil(*setup.sequence, [](const PlayerState &state) { return !state.loaded; }));
+}
+
+TEST_CASE_METHOD(ObsFixture, "a program gone black during an intro or an outro ends the replay", "[obs][sequence][air]")
+{
+	registerFade();
+	AirSetup setup;
+	AirSettings air;
+	air.intro = {AirMediaKind::Image, fileIn(setup.folder, "intro.png"), 20000ms};
+	air.outro = {AirMediaKind::Image, fileIn(setup.folder, "outro.png"), 20000ms};
+	setup.sequence->setAir(air);
+	setup.putOnAir();
+	REQUIRE(setup.phase() == AirPhase::Intro);
+	SECTION("in the intro") {}
+	SECTION("in the outro")
+	{
+		setup.sequence->skip();
+		REQUIRE(setup.phase() == AirPhase::Source);
+		setup.sequence->takeOffAir();
+		REQUIRE(setup.phase() == AirPhase::Outro);
+	}
+
+	const auto isOff = [&] {
+		return setup.phase() == AirPhase::Live && !setup.sequence->air().onAir() && !setup.leaving() &&
+		       channelName().empty();
+	};
+	setup.sequence->programWentBlack();
+	CHECK(isOff());
+	CHECK(playerUntil(*setup.sequence, [](const PlayerState &state) { return !state.loaded; }));
+	// Black again, with nothing on air to end.
+	setup.sequence->programWentBlack();
+	CHECK(isOff());
+	CHECK(holdsFor(300ms, isOff));
+
+	setup.putOnAir();
+	CHECK(setup.phase() == AirPhase::Intro);
+	CHECK(setup.sequence->air().onAir());
+	CHECK_FALSE(channelName().empty());
 }
 
 TEST_CASE_METHOD(ObsFixture, "a transition to another scene leaves a replay on air", "[obs][sequence][air]")
