@@ -102,12 +102,17 @@ bool SequencePlayer::setShown(std::string_view sourceKey, bool shown)
 
 bool SequencePlayer::putOnAir(uint64_t id)
 {
+	refusal_ = AirRefusal::None;
 	const Replay *replay = library_.find(id);
-	if (closed_ || !player_ || state_.phase() != AirPhase::Live || !replay ||
-	    replay->state == ReplayState::Damaged) {
+	if (closed_ || !player_ || state_.phase() != AirPhase::Live || !replay) {
+		return false;
+	}
+	if (replay->state == ReplayState::Damaged) {
+		refusal_ = AirRefusal::Damaged;
 		return false;
 	}
 	if (!air_.channelFree()) {
+		refusal_ = AirRefusal::ChannelBusy;
 		blog(LOG_WARNING,
 		     "[tapeloop] Another source is on the replay's channel, so replay %llu cannot go on air",
 		     static_cast<unsigned long long>(id));
@@ -115,6 +120,7 @@ bool SequencePlayer::putOnAir(uint64_t id)
 	}
 	std::shared_ptr<const ReplayIndex> index = indexOf(*replay);
 	if (!index) {
+		refusal_ = AirRefusal::Unreadable;
 		blog(LOG_WARNING, "[tapeloop] Replay %llu cannot be read, so it cannot go on air",
 		     static_cast<unsigned long long>(id));
 		return false;
@@ -189,6 +195,7 @@ void SequencePlayer::programWentBlack()
 void SequencePlayer::close()
 {
 	closed_ = true;
+	refusal_ = AirRefusal::None;
 	// Off air first, so that nothing below shows the outro or starts the way back.
 	air_.cut();
 	// cutShort() goes to the outro when there is one; cut short again, the replay is live.

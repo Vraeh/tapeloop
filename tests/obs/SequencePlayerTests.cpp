@@ -50,6 +50,7 @@
 using namespace std::chrono_literals;
 using tapeloop::AirMediaKind;
 using tapeloop::AirPhase;
+using tapeloop::AirRefusal;
 using tapeloop::AirSettings;
 using tapeloop::DecodedFrame;
 using tapeloop::DecodeStatus;
@@ -981,6 +982,55 @@ TEST_CASE_METHOD(ObsFixture, "a sequence leaves out what has nothing to play", "
 
 	sequence.reset();
 	obs_wait_for_destroy_queue();
+}
+
+TEST_CASE_METHOD(ObsFixture, "a replay that did not go on air says why until the next try", "[obs][sequence][air]")
+{
+	AirSetup setup;
+	const auto refusalOf = [&](uint64_t id) {
+		CHECK_FALSE(setup.sequence->putOnAir(id));
+		return setup.sequence->airRefusal();
+	};
+	CHECK(setup.sequence->airRefusal() == AirRefusal::None);
+
+	const OBSSourceAutoRelease other =
+		obs_source_create_private(tapeloop::test::kTestPatternId, "Another plugin", nullptr);
+	obs_set_output_source(kAirChannel, other);
+	CHECK(refusalOf(setup.captured.id()) == AirRefusal::ChannelBusy);
+	obs_set_output_source(kAirChannel, nullptr);
+
+	tapeloop::FoundReplay found;
+	found.manifest = "missing.tlr";
+	found.broadcast = "Broadcast";
+	found.intact = true;
+	found.id = tapeloop::newReplayId();
+	found.sources = {{"a", "Camera a"}};
+	const uint64_t unreadable = setup.library.addFound(found);
+	REQUIRE(unreadable != 0);
+	CHECK(refusalOf(unreadable) == AirRefusal::Unreadable);
+
+	found.manifest =
+		tapeloop::ReplayWriter().write(captureOf(setup.folder.path(), {sourceOf("a", makeGops(2))})).manifest;
+	found.intact = false;
+	const uint64_t damaged = setup.library.addFound(found);
+	REQUIRE(damaged != 0);
+	CHECK(refusalOf(damaged) == AirRefusal::Damaged);
+
+	// No replay at all is not a refusal to explain.
+	CHECK(refusalOf(0) == AirRefusal::None);
+
+	// A collection going away leaves nothing to say, and nothing goes on air until opened.
+	CHECK(refusalOf(damaged) == AirRefusal::Damaged);
+	setup.sequence->close();
+	CHECK(setup.sequence->airRefusal() == AirRefusal::None);
+	CHECK(refusalOf(damaged) == AirRefusal::None);
+	setup.sequence->open();
+
+	CHECK(refusalOf(damaged) == AirRefusal::Damaged);
+	setup.putOnAir();
+	CHECK(setup.sequence->airRefusal() == AirRefusal::None);
+	// With a replay on air, the press does nothing whatever it names.
+	CHECK(refusalOf(damaged) == AirRefusal::None);
 }
 
 TEST_CASE_METHOD(ObsFixture, "a closed sequence goes back to live and forgets its list until opened", "[obs][sequence]")

@@ -29,6 +29,7 @@
 #include <vector>
 
 using tapeloop::AirMediaKind;
+using tapeloop::AirRefusal;
 using tapeloop::BufferSettings;
 using tapeloop::obs::CaptureManager;
 using tapeloop::SequenceEntry;
@@ -257,6 +258,29 @@ TEST_CASE_METHOD(ObsFixture, "how a replay goes on air reaches the sequence from
 	settings.air.outro = {};
 	backend.setSettings(settings);
 	CHECK_FALSE(sequence.air().hasOutro());
+}
+
+TEST_CASE_METHOD(ObsFixture, "why a replay did not go on air reaches the dock", "[obs][dock][air]")
+{
+	tapeloop::obs::registerReplaySource({});
+	OfflineHost host;
+	const std::filesystem::path broadcast = host.dir.path() / "Tapeloop" / "Liga 2026-10-09 21-00";
+	std::filesystem::create_directories(broadcast);
+	tapeloop::File(broadcast / "broken.tplp", tapeloop::File::Mode::CreateNew)
+		.writeAt(0, std::vector<uint8_t>(100, 1));
+	CaptureManager manager(host);
+	manager.loadLibrary();
+	manager.finishWrites();
+	SequencePlayer sequence(manager.library());
+	ManagerDockBackend backend(manager, &sequence);
+	const auto replays = backend.replays();
+	REQUIRE(replays.size() == 1);
+
+	CHECK(backend.airRefusal() == AirRefusal::None);
+	CHECK_FALSE(sequence.putOnAir(replays[0].id));
+	CHECK(backend.airRefusal() == AirRefusal::Damaged);
+	// Without a sequence nothing goes on air, so nothing is refused.
+	CHECK(ManagerDockBackend(manager).airRefusal() == AirRefusal::None);
 }
 
 TEST_CASE_METHOD(ObsFixture, "a dock edit waits for the replay on air to go off air", "[obs][dock][air]")

@@ -69,6 +69,9 @@ public:
 	// the channel the replay goes on air through, for an unknown or damaged replay or one
 	// whose index cannot be read, and when none of its shown sources has a clip.
 	bool putOnAir(uint64_t replay);
+	// What the last putOnAir() found, kept for a dock that is not looking when a hotkey
+	// asks. None once a later one is not refused for one of these reasons, and on close().
+	AirRefusal airRefusal() const noexcept { return refusal_; }
 	// Takes the replay off air early, as ReplayPlayerState's cutShort() says.
 	void takeOffAir();
 	// Ends the part on air as if it had played out.
@@ -110,6 +113,7 @@ private:
 	AirComposition air_;
 	bool closed_ = false;
 	bool destroyed_ = false;
+	AirRefusal refusal_ = AirRefusal::None;
 	// The token of the part follow() last set up, and the clip it loaded for a source.
 	uint64_t token_ = 0;
 	uint64_t clip_ = 0;

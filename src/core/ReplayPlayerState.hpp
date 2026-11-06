@@ -17,6 +17,9 @@ namespace tapeloop {
 
 enum class AirPhase { Live, Intro, Source, Outro };
 
+// Why a replay did not go on air, for what the user can act on.
+enum class AirRefusal { None, ChannelBusy, Unreadable, Damaged };
+
 struct AirConfig {
 	bool intro = false;
 	bool outro = false;

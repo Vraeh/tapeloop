@@ -6,6 +6,7 @@
 #include "core/BufferSettings.hpp"
 #include "core/EncoderPolicy.hpp"
 #include "core/ReplayExport.hpp"
+#include "core/ReplayPlayerState.hpp"
 #include "core/ReplayState.hpp"
 
 #include <chrono>
@@ -143,6 +144,8 @@ public:
 	// The replay captured last, from the dock or by the hotkey; zero before the first.
 	virtual uint64_t lastCapture() const = 0;
 	virtual void pickReplay(uint64_t id) = 0;
+	// Why the last try to put a replay on air did not go through.
+	virtual AirRefusal airRefusal() const = 0;
 
 	virtual bool canExport(ExportFormat format) const = 0;
 	// Exports a stored replay in the background. False when refused.

@@ -45,6 +45,7 @@ private:
 	void updateSources(const std::vector<DockSource> &sources);
 	void updateReplays();
 	void updateExports();
+	void updateAirStatus();
 	QString statusText(const DockSource &source) const;
 	void updateMemory(int64_t settingMiB);
 	void updateEncoders(const std::string &chosen);
@@ -89,6 +90,7 @@ private:
 	QPushButton *exportMp4_;
 	QPushButton *exportReplay_;
 	QLabel *exportStatus_;
+	QLabel *airStatus_;
 	// The ids the replay list shows, newest first, zero for the rows naming a broadcast,
 	// and the text and tooltip of each.
 	std::vector<uint64_t> shownReplays_;

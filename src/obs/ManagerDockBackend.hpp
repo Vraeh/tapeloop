@@ -44,6 +44,7 @@ public:
 	uint64_t currentReplay() const override { return manager_.library().current(); }
 	uint64_t lastCapture() const override { return manager_.library().lastCaptured(); }
 	void pickReplay(uint64_t id) override { manager_.pickReplay(id); }
+	AirRefusal airRefusal() const override { return sequence_ ? sequence_->airRefusal() : AirRefusal::None; }
 	bool canExport(ExportFormat format) const override { return manager_.canExport(format); }
 	bool exportReplay(uint64_t id, ExportFormat format) override { return manager_.exportReplay(id, format); }
 	std::vector<ui::DockExport> exports() const override;

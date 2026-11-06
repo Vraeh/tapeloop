@@ -45,6 +45,7 @@
 
 using namespace std::chrono_literals;
 using tapeloop::AirMediaKind;
+using tapeloop::AirRefusal;
 using tapeloop::AirSettings;
 using tapeloop::BufferSettings;
 using tapeloop::ExportFormat;
@@ -1984,4 +1985,32 @@ TEST_CASE("the dock says how the exports go")
 	dock.refresh();
 	CHECK(status->text().endsWith(oddError));
 	CHECK(status->text() == localeText()("Dock.Export.Failed").arg(odd, oddError));
+}
+
+TEST_CASE("the dock says why a replay did not go on air")
+{
+	FakeBackend backend;
+	addSources(backend);
+	TapeloopDock dock(backend, localeText());
+	dock.show();
+	auto *status = child<QLabel>(dock, "airStatus");
+	CHECK_FALSE(status->isVisible());
+
+	backend.refusal = AirRefusal::ChannelBusy;
+	dock.refresh();
+	CHECK(status->isVisible());
+	CHECK(status->text() == localeText()("Dock.Air.ChannelBusy"));
+
+	backend.refusal = AirRefusal::Unreadable;
+	dock.refresh();
+	CHECK(status->text() == localeText()("Dock.Air.Unreadable"));
+
+	backend.refusal = AirRefusal::Damaged;
+	dock.refresh();
+	CHECK(status->text() == localeText()("Dock.Air.Damaged"));
+
+	backend.refusal = AirRefusal::None;
+	dock.refresh();
+	CHECK_FALSE(status->isVisible());
+	CHECK(status->text().isEmpty());
 }

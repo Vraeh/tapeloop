@@ -180,7 +180,8 @@ TapeloopDock::TapeloopDock(DockBackend &backend, TextLookup text, QWidget *paren
 	  removeTag_(new QPushButton(text_("Dock.RemoveTag"), this)),
 	  exportMp4_(new QPushButton(text_("Dock.ExportMp4"), this)),
 	  exportReplay_(new QPushButton(text_("Dock.ExportReplay"), this)),
-	  exportStatus_(new QLabel(this))
+	  exportStatus_(new QLabel(this)),
+	  airStatus_(new QLabel(this))
 {
 	sources_->setObjectName("sources");
 	sources_->setHorizontalHeaderLabels({text_("Dock.Source"), text_("Dock.Shown"), text_("Dock.Status")});
@@ -263,6 +264,9 @@ TapeloopDock::TapeloopDock(DockBackend &backend, TextLookup text, QWidget *paren
 	// Names and errors come from files and the system, and are shown as they are.
 	exportStatus_->setTextFormat(Qt::PlainText);
 	exportStatus_->hide();
+	airStatus_->setObjectName("airStatus");
+	airStatus_->setWordWrap(true);
+	airStatus_->hide();
 	followsOutputs_->setObjectName("followsOutputs");
 	followsOutputs_->setWordWrap(true);
 	followsOutputs_->hide();
@@ -308,6 +312,7 @@ TapeloopDock::TapeloopDock(DockBackend &backend, TextLookup text, QWidget *paren
 	exporting->addWidget(exportMp4_);
 	exporting->addWidget(exportReplay_);
 	layout->addLayout(exporting);
+	layout->addWidget(airStatus_);
 	layout->addWidget(exportStatus_);
 
 	connect(sources_, &QTableWidget::itemChanged, this, [this](QTableWidgetItem *item) {
@@ -546,6 +551,7 @@ void TapeloopDock::refresh()
 
 		updateReplays();
 		updateExports();
+		updateAirStatus();
 
 		startStop_->setText(backend_.running() ? text_("Dock.Stop") : text_("Dock.Start"));
 		const bool enabled = backend_.manualControlEnabled();
@@ -930,6 +936,28 @@ void TapeloopDock::updateExports()
 	exportStatus_->setVisible(!text.isEmpty());
 	if (exportStatus_->text() != text) {
 		exportStatus_->setText(text);
+	}
+}
+
+void TapeloopDock::updateAirStatus()
+{
+	QString text;
+	switch (backend_.airRefusal()) {
+	case AirRefusal::None:
+		break;
+	case AirRefusal::ChannelBusy:
+		text = text_("Dock.Air.ChannelBusy");
+		break;
+	case AirRefusal::Unreadable:
+		text = text_("Dock.Air.Unreadable");
+		break;
+	case AirRefusal::Damaged:
+		text = text_("Dock.Air.Damaged");
+		break;
+	}
+	airStatus_->setVisible(!text.isEmpty());
+	if (airStatus_->text() != text) {
+		airStatus_->setText(text);
 	}
 }
 
