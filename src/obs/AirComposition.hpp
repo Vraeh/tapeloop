@@ -198,6 +198,8 @@ private:
 	obs_source_t *onChannel_ = nullptr;
 	AirPhase shown_ = AirPhase::Live;
 	bool leaving_ = false;
+	// libobs may not have seen what went off air go inactive before this tick.
+	uint64_t goneSeenAtTick_ = 0;
 	// A transition was made and going on air has not yet waited for it.
 	bool settling_ = false;
 	uint64_t madeAtTick_ = 0;

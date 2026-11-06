@@ -138,10 +138,11 @@ void AirComposition::show(AirPhase part)
 	}
 
 	if (!onChannel_ || leaving_) {
-		if (video && leaving_) {
-			// Held by the way back, or let go less than a tick ago, it never goes inactive
-			// as libobs sees it, so going on air would not start it over. Should it have
-			// gone inactive, it starts a tick apart, of which the watch sees the first.
+		if (video && (leaving_ || ticks_ < goneSeenAtTick_)) {
+			// Held by the way back, or let go before a source pass could see it, it never
+			// goes inactive as libobs sees it, so going on air would not start it over.
+			// Should it have gone inactive, it starts a tick apart, of which the watch sees
+			// the first.
 			obs_source_media_restart(target);
 		}
 		if (in_) {
@@ -473,6 +474,7 @@ void AirComposition::watch(obs_source_t *media, obs_source_t *transition, uint64
 
 void AirComposition::offAir(bool emptyChannel)
 {
+	const bool wasOnAir = onChannel_ != nullptr;
 	watch(nullptr, nullptr, 0);
 	{
 		const std::lock_guard lock(mutex_);
@@ -490,6 +492,11 @@ void AirComposition::offAir(bool emptyChannel)
 	}
 	if (out_) {
 		endTransition(out_, nullptr);
+	}
+	if (wasOnAir) {
+		// Read once the parts are let go. A tick reaches this callback before the sources,
+		// so a source pass that saw them go has run only after the second.
+		goneSeenAtTick_ = ticks_ + 2;
 	}
 	shown_ = AirPhase::Live;
 	leaving_ = false;

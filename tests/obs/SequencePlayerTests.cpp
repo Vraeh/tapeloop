@@ -207,6 +207,82 @@ private:
 	bool released_ = false;
 };
 
+// Returns once libobs has run this many whole passes over the sources, as a task on the
+// graphics thread runs after the sources' ticks of its pass.
+void waitForPasses(int count)
+{
+	for (int i = 0; i <= count; ++i) {
+		const TicksHeld held;
+	}
+}
+
+// Keeps one tick waiting after the sequence's tick callbacks and ahead of the sources'
+// ticks. libobs walks its tick callbacks oldest first, so this is made after the sequence.
+class SourcesHeld {
+public:
+	SourcesHeld() { obs_add_tick_callback(tick, this); }
+
+	~SourcesHeld()
+	{
+		{
+			const std::lock_guard lock(mutex_);
+			condition_ = nullptr;
+		}
+		release();
+		obs_remove_tick_callback(tick, this);
+	}
+
+	SourcesHeld(const SourcesHeld &) = delete;
+	SourcesHeld &operator=(const SourcesHeld &) = delete;
+	SourcesHeld(SourcesHeld &&) = delete;
+	SourcesHeld &operator=(SourcesHeld &&) = delete;
+
+	// The next tick at which the condition holds waits for release(). Given during a hold,
+	// it is first asked at the tick after the one held.
+	void holdWhen(std::function<bool()> condition)
+	{
+		const std::lock_guard lock(mutex_);
+		condition_ = std::move(condition);
+	}
+
+	bool waitHeld()
+	{
+		std::unique_lock lock(mutex_);
+		return changed_.wait_for(lock, 10s, [this] { return holding_; });
+	}
+
+	void release()
+	{
+		std::unique_lock lock(mutex_);
+		released_ = true;
+		changed_.notify_all();
+		changed_.wait(lock, [this] { return !holding_; });
+	}
+
+private:
+	static void tick(void *param, float) noexcept
+	{
+		auto &self = *static_cast<SourcesHeld *>(param);
+		std::unique_lock lock(self.mutex_);
+		if (!self.condition_ || !self.condition_()) {
+			return;
+		}
+		self.condition_ = nullptr;
+		self.holding_ = true;
+		self.released_ = false;
+		self.changed_.notify_all();
+		self.changed_.wait(lock, [&] { return self.released_; });
+		self.holding_ = false;
+		self.changed_.notify_all();
+	}
+
+	std::mutex mutex_;
+	std::condition_variable changed_;
+	std::function<bool()> condition_;
+	bool holding_ = false;
+	bool released_ = false;
+};
+
 // The source on air once the player has its clip and plays it.
 std::string playing(SequencePlayer &sequence)
 {
@@ -1531,6 +1607,148 @@ TEST_CASE_METHOD(ObsFixture, "a video intro put on air just as the way back ends
 	started.reset();
 	sequence.reset();
 	obs_wait_for_destroy_queue();
+}
+
+// A replay with a video intro too long to end by itself, ready to go on air.
+struct VideoIntroSetup : AirSetup {
+	VideoIntroSetup()
+	{
+		AirSettings air;
+		air.intro = {AirMediaKind::Video, fileIn(folder, "intro.mp4")};
+		air.into.duration = 100ms;
+		air.back.duration = 100ms;
+		sequence->setAir(air);
+		intro = sequence->air().partSource(AirPhase::Intro);
+		REQUIRE(intro);
+		setLength(intro, 10000);
+		started.emplace(intro, "media_started");
+	}
+
+	void playIntro()
+	{
+		putOnAir();
+		REQUIRE(runUntil([&] { return started->value() == 1; }));
+	}
+
+	bool startedTwice()
+	{
+		return runUntil([&] { return started->value() == 2; });
+	}
+
+	obs_source_t *intro = nullptr;
+	std::optional<SignalCount> started;
+};
+
+TEST_CASE_METHOD(ObsFixture, "a video intro put on air in the same tick as a cut starts over and plays out",
+		 "[obs][sequence][air]")
+{
+	registerFade();
+	VideoIntroSetup setup;
+	setup.playIntro();
+	{
+		// No tick sees it go off air and come back.
+		const TicksHeld held;
+		setup.sequence->takeOffAir();
+		setup.sequence->programWentBlack();
+		REQUIRE_FALSE(setup.sequence->air().onAir());
+		setup.putOnAir();
+	}
+	REQUIRE(setup.startedTwice());
+	// Past the wait for a video that never starts, and short of its length.
+	CHECK(holdsFor(5500ms, [&] { return setup.phase() == AirPhase::Intro; }));
+
+	obs_source_media_ended(setup.intro);
+	CHECK(runUntil([&] { return setup.phase() == AirPhase::Source; }));
+}
+
+TEST_CASE_METHOD(ObsFixture,
+		 "a video intro put on air after a cut, with the tick past but not the sources, starts over",
+		 "[obs][sequence][air]")
+{
+	registerFade();
+	VideoIntroSetup setup;
+	SourcesHeld sources;
+	setup.playIntro();
+	{
+		const TicksHeld held;
+		setup.sequence->takeOffAir();
+		setup.sequence->programWentBlack();
+		sources.holdWhen([] { return true; });
+	}
+	REQUIRE(sources.waitHeld());
+	setup.putOnAir();
+	sources.release();
+	CHECK(setup.startedTwice());
+}
+
+TEST_CASE_METHOD(ObsFixture, "a video intro put on air as soon as a way back that held it is over starts over",
+		 "[obs][sequence][air]")
+{
+	registerFade();
+	VideoIntroSetup setup;
+	OBSSourceAutoRelease out;
+	SourcesHeld sources;
+	setup.playIntro();
+	{
+		// So that the way back cannot end before the hold is set.
+		const TicksHeld held;
+		setup.sequence->takeOffAir();
+		REQUIRE(setup.leaving());
+		out = obs_get_output_source(kAirChannel);
+		sources.holdWhen(
+			[&] { return !OBSSourceAutoRelease(obs_transition_get_source(out, OBS_TRANSITION_SOURCE_A)); });
+	}
+
+	// The tick that hands the end to the UI thread has yet to reach the intro's own.
+	REQUIRE(sources.waitHeld());
+	REQUIRE(runUntil([&] { return !setup.leaving(); }));
+	setup.putOnAir();
+	sources.release();
+	REQUIRE(setup.startedTwice());
+	CHECK(holdsFor(5500ms, [&] { return setup.phase() == AirPhase::Intro; }));
+}
+
+TEST_CASE_METHOD(ObsFixture, "a video intro put on air two ticks after a cut, which libobs saw, starts once",
+		 "[obs][sequence][air]")
+{
+	registerFade();
+	VideoIntroSetup setup;
+	SourcesHeld sources;
+	setup.playIntro();
+	sources.holdWhen([] { return true; });
+	REQUIRE(sources.waitHeld());
+	setup.sequence->programWentBlack();
+	sources.holdWhen([passes = 0]() mutable { return ++passes == 2; });
+	sources.release();
+	REQUIRE(sources.waitHeld());
+	setup.putOnAir();
+	sources.release();
+	REQUIRE(runUntil([&] { return setup.started->value() >= 2; }));
+	waitForPasses(2);
+	CHECK(setup.started->value() == 2);
+}
+
+TEST_CASE_METHOD(ObsFixture, "a video intro starts once when libobs saw nothing, or saw it go", "[obs][sequence][air]")
+{
+	registerFade();
+	VideoIntroSetup setup;
+	{
+		// Nothing was on air for libobs to miss.
+		const TicksHeld held;
+		setup.sequence->programWentBlack();
+		setup.putOnAir();
+	}
+	REQUIRE(runUntil([&] { return setup.started->value() >= 1; }));
+	waitForPasses(2);
+	CHECK(setup.started->value() == 1);
+
+	setup.sequence->takeOffAir();
+	setup.sequence->programWentBlack();
+	waitForPasses(2);
+	setup.putOnAir();
+	REQUIRE(runUntil([&] { return setup.started->value() >= 2; }));
+	waitForPasses(2);
+	CHECK(setup.started->value() == 2);
 }
 
 TEST_CASE_METHOD(ObsFixture, "a replay goes on air with copies of the user's transitions, or else fades",
