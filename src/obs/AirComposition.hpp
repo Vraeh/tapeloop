@@ -60,7 +60,7 @@ public:
 	// The intro or outro on air played out.
 	virtual void partEnded() = 0;
 	// The composition is off air: the way back finished, or another source took the
-	// channel.
+	// channel, which show() can find as well, so this may come from inside that call.
 	virtual void wentOffAir() = 0;
 };
 
@@ -108,11 +108,13 @@ public:
 	bool channelFree() const;
 
 	// Puts the part on air. Never Live, and an intro or outro only if hasIntro() or hasOutro()
-	// said so before the replay started: those change only once nothing is on air.
+	// said so before the replay started: those change only once nothing is on air. When
+	// another source took the channel the composition goes off air instead, and the
+	// listener hears wentOffAir().
 	void show(AirPhase part);
 	// Starts the way back to live, after which the listener hears wentOffAir(). False when
-	// nothing is on air, and when there is no transition to go back with, in which case
-	// the composition is taken off at once.
+	// nothing is on air, and when there is no transition to go back with or another source
+	// took the channel, in which case the composition is taken off at once.
 	bool leave();
 	// Takes the composition off air at once. The listener hears nothing.
 	void cut();
@@ -151,6 +153,11 @@ private:
 	void releaseMedia(obs_source_t *&media);
 	void applyMedia();
 	bool holdsChannel() const;
+	// Whether the channel holds anything but what the composition put there, in which case
+	// the composition goes off air and leaves it. Checked before each write, so that the
+	// tick that would tell is not waited for. libobs cannot write a channel only if it is
+	// unchanged, so a source that takes it right after this is still overwritten.
+	bool channelLost();
 	void takeChannel(obs_source_t *source);
 	// Leaves the transition showing that source, or nothing, and ends a run it was on as
 	// running out would, so a watch still on it sees the stop.

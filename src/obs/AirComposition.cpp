@@ -119,6 +119,10 @@ void AirComposition::show(AirPhase part)
 	if (onChannel_ && !leaving_ && part == shown_) {
 		return;
 	}
+	if (channelLost()) {
+		listener_.wentOffAir();
+		return;
+	}
 
 	obs_source_t *target = partSource(part);
 	// Watched before it goes on air, as a video says it started from the next tick on.
@@ -163,7 +167,7 @@ void AirComposition::show(AirPhase part)
 
 bool AirComposition::leave()
 {
-	if (!onChannel_) {
+	if (!onChannel_ || channelLost()) {
 		return false;
 	}
 	// Nothing is shown during a way back. A replay put on air in one comes here only if it
@@ -412,6 +416,18 @@ bool AirComposition::holdsChannel() const
 	return held;
 }
 
+bool AirComposition::channelLost()
+{
+	obs_source_t *current = obs_get_output_source(kAirChannel);
+	const bool lost = current != onChannel_;
+	obs_source_release(current);
+	if (lost) {
+		blog(LOG_INFO, "[tapeloop] Another source took the replay's channel, so the replay is off air");
+		offAir(false);
+	}
+	return lost;
+}
+
 void AirComposition::takeChannel(obs_source_t *source)
 {
 	{
@@ -483,9 +499,7 @@ void AirComposition::offAir(bool emptyChannel)
 void AirComposition::onTask(const Task &task)
 {
 	// The channel's signal may come from anywhere, so it is checked against the channel.
-	if (task.lost && onChannel_ && !holdsChannel()) {
-		blog(LOG_INFO, "[tapeloop] Another source took the replay's channel, so the replay is off air");
-		offAir(false);
+	if (task.lost && onChannel_ && channelLost()) {
 		listener_.wentOffAir();
 		return;
 	}

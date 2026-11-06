@@ -60,7 +60,9 @@ using tapeloop::SequenceEntry;
 using tapeloop::VideoCodec;
 using tapeloop::decode::Picture;
 using tapeloop::decode::PictureDecoder;
+using tapeloop::obs::AirComposition;
 using tapeloop::obs::AirEvent;
+using tapeloop::obs::AirListener;
 using tapeloop::obs::CaptureHost;
 using tapeloop::obs::CaptureManager;
 using tapeloop::obs::exitInOrder;
@@ -2109,6 +2111,132 @@ TEST_CASE_METHOD(ObsFixture, "a replay cut off air just after another source too
 	CHECK(setup.phase() == AirPhase::Live);
 	CHECK(channelName() == "Another plugin");
 	obs_set_output_source(kAirChannel, nullptr);
+}
+
+// Another plugin writes the channel, and the UI thread acts on the replay before the task
+// that would tell it runs.
+TEST_CASE_METHOD(ObsFixture,
+		 "a replay faded off air just after another source took its channel leaves that source there",
+		 "[obs][sequence][air]")
+{
+	registerFade();
+	AirSetup setup;
+	setup.putOnAir();
+	CHECK(playing(*setup.sequence) == "a");
+	const tapeloop::test::LogCounter said("Another source took the replay's channel");
+	const OBSSourceAutoRelease other =
+		obs_source_create_private(tapeloop::test::kTestPatternId, "Another plugin", nullptr);
+	REQUIRE(other);
+	obs_set_output_source(kAirChannel, other);
+	REQUIRE(waitFor([] { return UiTasks::pending() > 0; }, 5000ms));
+
+	setup.sequence->takeOffAir();
+	CHECK(setup.phase() == AirPhase::Live);
+	CHECK_FALSE(setup.leaving());
+	CHECK_FALSE(setup.sequence->air().onAir());
+	CHECK(channelName() == "Another plugin");
+	CHECK(playerUntil(*setup.sequence, [](const PlayerState &state) { return !state.loaded; }));
+	CHECK(holdsFor(100ms, [] { return channelName() == "Another plugin"; }));
+	// The task that was waiting finds nothing left to do.
+	CHECK(said.lines == 1);
+	obs_set_output_source(kAirChannel, nullptr);
+}
+
+TEST_CASE_METHOD(ObsFixture, "an outro just after another source took the channel leaves that source there",
+		 "[obs][sequence][air]")
+{
+	AirSetup setup;
+	AirSettings air;
+	air.outro = {AirMediaKind::Image, fileIn(setup.folder, "outro.png"), 20000ms};
+	setup.sequence->setAir(air);
+	setup.putOnAir();
+	CHECK(playing(*setup.sequence) == "a");
+	const OBSSourceAutoRelease other =
+		obs_source_create_private(tapeloop::test::kTestPatternId, "Another plugin", nullptr);
+	REQUIRE(other);
+	obs_set_output_source(kAirChannel, other);
+	REQUIRE(waitFor([] { return UiTasks::pending() > 0; }, 5000ms));
+
+	setup.sequence->takeOffAir();
+	CHECK(setup.phase() == AirPhase::Live);
+	CHECK_FALSE(setup.sequence->air().onAir());
+	CHECK(channelName() == "Another plugin");
+	CHECK(playerUntil(*setup.sequence, [](const PlayerState &state) { return !state.loaded; }));
+	CHECK(holdsFor(100ms, [] { return channelName() == "Another plugin"; }));
+	obs_set_output_source(kAirChannel, nullptr);
+}
+
+TEST_CASE_METHOD(ObsFixture, "a skip by a cut just after another source took the channel leaves that source there",
+		 "[obs][sequence][air]")
+{
+	AirSetup setup;
+	AirSettings air;
+	air.intro = {AirMediaKind::Image, fileIn(setup.folder, "intro.png"), 20000ms};
+	setup.sequence->setAir(air);
+	setup.putOnAir();
+	REQUIRE(setup.phase() == AirPhase::Intro);
+	const OBSSourceAutoRelease other =
+		obs_source_create_private(tapeloop::test::kTestPatternId, "Another plugin", nullptr);
+	REQUIRE(other);
+	obs_set_output_source(kAirChannel, other);
+	REQUIRE(waitFor([] { return UiTasks::pending() > 0; }, 5000ms));
+
+	setup.sequence->skip();
+	CHECK(setup.phase() == AirPhase::Live);
+	CHECK_FALSE(setup.sequence->air().onAir());
+	CHECK(channelName() == "Another plugin");
+	CHECK(playerUntil(*setup.sequence, [](const PlayerState &state) { return !state.loaded; }));
+	CHECK(holdsFor(100ms, [] { return channelName() == "Another plugin"; }));
+	obs_set_output_source(kAirChannel, nullptr);
+}
+
+TEST_CASE_METHOD(ObsFixture, "a skip by a cut just after another plugin emptied the channel leaves it empty",
+		 "[obs][sequence][air]")
+{
+	AirSetup setup;
+	AirSettings air;
+	air.intro = {AirMediaKind::Image, fileIn(setup.folder, "intro.png"), 20000ms};
+	setup.sequence->setAir(air);
+	setup.putOnAir();
+	REQUIRE(setup.phase() == AirPhase::Intro);
+	obs_set_output_source(kAirChannel, nullptr);
+
+	setup.sequence->skip();
+	CHECK(setup.phase() == AirPhase::Live);
+	CHECK_FALSE(setup.sequence->air().onAir());
+	CHECK(channelName().empty());
+}
+
+TEST_CASE_METHOD(ObsFixture, "a first part leaves a source that took the channel there", "[obs][sequence][air]")
+{
+	// Put on air checks the channel and reads the replay before its first part, a gap the
+	// sequence offers no way into, so the composition is driven on its own here.
+	struct Listener final : AirListener {
+		void partEnded() override {}
+		void wentOffAir() override { ++off; }
+		int off = 0;
+	};
+	const UiTasks ui;
+	const OBSSourceAutoRelease replay =
+		obs_source_create_private(tapeloop::test::kTestPatternId, "A replay", nullptr);
+	const OBSSourceAutoRelease other =
+		obs_source_create_private(tapeloop::test::kTestPatternId, "Another plugin", nullptr);
+	REQUIRE(replay);
+	REQUIRE(other);
+	Listener listener;
+	AirComposition air(replay, listener);
+
+	obs_set_output_source(kAirChannel, other);
+	air.show(AirPhase::Source);
+	CHECK(listener.off == 1);
+	CHECK_FALSE(air.onAir());
+	CHECK(channelName() == "Another plugin");
+
+	obs_set_output_source(kAirChannel, nullptr);
+	air.show(AirPhase::Source);
+	CHECK(listener.off == 1);
+	CHECK(air.onAir());
+	CHECK(channelName() == "A replay");
 }
 
 TEST_CASE_METHOD(ObsFixture, "a channel given back before the UI thread looks keeps the replay on air",
