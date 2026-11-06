@@ -20,7 +20,8 @@ namespace tapeloop::test {
 // plays only while active.
 inline constexpr const char *kTestPatternId = "tapeloop_test_pattern";
 // The same pattern under the id of OBS's media source, which the harness does not load,
-// with its "restart_on_activate" setting, on by default as there.
+// with its "restart_on_activate" setting, on by default as there, after which it says it
+// started each time it goes on air. Its "duration_ms" setting is the length it gives.
 inline constexpr const char *kMediaStandInId = "ffmpeg_source";
 // The same under the ids of OBS's VLC source, image slideshow and image source, with
 // the defaults of the VLC source's and the slideshow's playback behavior.

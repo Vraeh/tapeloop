@@ -30,6 +30,8 @@ struct TestPattern {
 	std::atomic<uint32_t> height{0};
 	std::atomic<bool> sizeOnlyWhenShown{false};
 	std::atomic<bool> sizeOnlyWhenActive{false};
+	std::atomic<bool> restartOnActivate{false};
+	std::atomic<int64_t> durationMs{0};
 	uint32_t frame = 0;
 
 	bool hidden() const noexcept
@@ -66,6 +68,8 @@ void update(void *data, obs_data_t *settings) noexcept
 	pattern->height = static_cast<uint32_t>(std::max<long long>(obs_data_get_int(settings, "height"), 0));
 	pattern->sizeOnlyWhenShown = obs_data_get_bool(settings, "size_only_when_shown");
 	pattern->sizeOnlyWhenActive = obs_data_get_bool(settings, "size_only_when_active");
+	pattern->restartOnActivate = obs_data_get_bool(settings, "restart_on_activate");
+	pattern->durationMs = obs_data_get_int(settings, "duration_ms");
 }
 
 const char *mediaName(void *) noexcept
@@ -76,6 +80,20 @@ const char *mediaName(void *) noexcept
 void mediaDefaults(obs_data_t *settings) noexcept
 {
 	obs_data_set_default_bool(settings, "restart_on_activate", true);
+}
+
+// As OBS's media source, which starts over from the beginning when it goes on air.
+void mediaActivate(void *data) noexcept
+{
+	auto *pattern = static_cast<TestPattern *>(data);
+	if (pattern->restartOnActivate) {
+		obs_source_media_started(pattern->source);
+	}
+}
+
+int64_t mediaDuration(void *data) noexcept
+{
+	return static_cast<TestPattern *>(data)->durationMs;
 }
 
 void browserDefaults(obs_data_t *settings) noexcept
@@ -263,6 +281,9 @@ void registerTestPattern()
 	media.id = kMediaStandInId;
 	media.get_name = mediaName;
 	media.get_defaults = mediaDefaults;
+	media.output_flags |= OBS_SOURCE_CONTROLLABLE_MEDIA;
+	media.activate = mediaActivate;
+	media.media_get_duration = mediaDuration;
 	obs_register_source(&media);
 
 	struct StandIn {

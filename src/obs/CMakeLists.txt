@@ -7,6 +7,8 @@ add_library(tapeloop-obs STATIC)
 target_sources(
   tapeloop-obs
   PRIVATE
+    AirComposition.cpp
+    AirComposition.hpp
     CaptureManager.cpp
     CaptureManager.hpp
     CaptureOutput.cpp

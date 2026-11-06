@@ -143,7 +143,9 @@ void FrontendBridge::handleEvent(obs_frontend_event event, void *data) noexcept
 			bridge.hotkeys_->load(obs_frontend_get_profile_config());
 			break;
 		case OBS_FRONTEND_EVENT_EXIT:
-			bridge.sequence_->close();
+			// OBS unloads its modules before it destroys the sources still held, so
+			// those the composition made from other modules go now.
+			bridge.sequence_->destroyAir();
 			manager.onExit();
 			bridge.removeFrontendCallbacks();
 			break;

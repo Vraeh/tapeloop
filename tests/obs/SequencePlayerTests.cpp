@@ -5,26 +5,32 @@
 #include "../core/StoredReplays.hpp"
 #include "../core/TempDirectory.hpp"
 #include "ObsFixture.hpp"
+#include "TestPattern.hpp"
 #include "UiTasks.hpp"
 
+#include "core/BufferSettings.hpp"
 #include "core/ReplayLibrary.hpp"
 #include "core/ReplayPlayerState.hpp"
 #include "core/ReplaySequence.hpp"
 #include "core/ReplayStore.hpp"
 #include "core/ReplayWriter.hpp"
 #include "decode/PictureDecoder.hpp"
+#include "obs/AirComposition.hpp"
 #include "obs/ReplayPlayer.hpp"
 #include "obs/ReplaySource.hpp"
 #include "obs/SequencePlayer.hpp"
 
 #include <catch2/catch_test_macros.hpp>
 #include <obs.h>
+#include <obs.hpp>
 
 #include <atomic>
 #include <chrono>
 #include <condition_variable>
 #include <cstddef>
 #include <cstdint>
+#include <filesystem>
+#include <fstream>
 #include <functional>
 #include <memory>
 #include <mutex>
@@ -36,7 +42,9 @@
 #include <vector>
 
 using namespace std::chrono_literals;
+using tapeloop::AirMediaKind;
 using tapeloop::AirPhase;
+using tapeloop::AirSettings;
 using tapeloop::DecodedFrame;
 using tapeloop::DecodeStatus;
 using tapeloop::Nanoseconds;
@@ -45,9 +53,12 @@ using tapeloop::SequenceEntry;
 using tapeloop::VideoCodec;
 using tapeloop::decode::Picture;
 using tapeloop::decode::PictureDecoder;
+using tapeloop::obs::kAirChannel;
 using tapeloop::obs::PlayerState;
 using tapeloop::obs::registerReplaySource;
 using tapeloop::obs::SequencePlayer;
+using tapeloop::obs::TransitionCatalog;
+using tapeloop::obs::TransitionTemplate;
 using tapeloop::test::captureOf;
 using tapeloop::test::FakeDecoder;
 using tapeloop::test::Gops;
@@ -198,6 +209,162 @@ std::vector<std::string> keysOf(const SequencePlayer &sequence)
 		keys.push_back(entry.sourceKey + (entry.shown ? "" : "-"));
 	}
 	return keys;
+}
+
+const char *fadeName(void *) noexcept
+{
+	return "Tapeloop test fade";
+}
+
+void *createFade(obs_data_t *, obs_source_t *source) noexcept
+{
+	return source;
+}
+
+void destroyFade(void *) noexcept {}
+
+void renderFade(void *data, gs_effect_t *) noexcept
+{
+	obs_transition_video_render(static_cast<obs_source_t *>(data), nullptr);
+}
+
+float fadeFrom(void *, float t) noexcept
+{
+	return 1.0f - t;
+}
+
+float fadeTo(void *, float t) noexcept
+{
+	return t;
+}
+
+bool renderFadeAudio(void *data, uint64_t *time, obs_source_audio_mix *audio, uint32_t mixers, size_t channels,
+		     size_t sampleRate) noexcept
+{
+	return obs_transition_audio_render(static_cast<obs_source_t *>(data), time, audio, mixers, channels, sampleRate,
+					   fadeFrom, fadeTo);
+}
+
+// Stands in for OBS's fade, which the harness does not load: it draws nothing while it
+// runs and stops once its time is up, as OBS's own transitions do.
+void registerFade()
+{
+	obs_source_info info = {};
+	info.id = "fade_transition";
+	info.type = OBS_SOURCE_TYPE_TRANSITION;
+	info.get_name = fadeName;
+	info.create = createFade;
+	info.destroy = destroyFade;
+	info.video_render = renderFade;
+	info.audio_render = renderFadeAudio;
+	obs_register_source(&info);
+}
+
+// Counts a signal of a source, which it keeps until it goes.
+class SignalCount {
+public:
+	SignalCount(obs_source_t *source, const char *signal) : source_(obs_source_get_ref(source)), signal_(signal)
+	{
+		signal_handler_connect(obs_source_get_signal_handler(source_), signal_, count, this);
+	}
+
+	~SignalCount() { signal_handler_disconnect(obs_source_get_signal_handler(source_), signal_, count, this); }
+
+	SignalCount(const SignalCount &) = delete;
+	SignalCount &operator=(const SignalCount &) = delete;
+	SignalCount(SignalCount &&) = delete;
+	SignalCount &operator=(SignalCount &&) = delete;
+
+	int value() const noexcept { return count_.load(); }
+
+private:
+	static void count(void *data, calldata_t *) noexcept { ++static_cast<SignalCount *>(data)->count_; }
+
+	OBSSourceAutoRelease source_;
+	const char *signal_;
+	std::atomic<int> count_{0};
+};
+
+// What the replay's channel holds, empty for nothing.
+std::string channelName()
+{
+	const OBSSourceAutoRelease source = obs_get_output_source(kAirChannel);
+	return source ? std::string(obs_source_get_name(source)) : std::string();
+}
+
+// What the channel shows: the part a transition on it goes to or holds.
+std::string shownName()
+{
+	const OBSSourceAutoRelease source = obs_get_output_source(kAirChannel);
+	if (!source) {
+		return {};
+	}
+	if (obs_source_get_type(source) != OBS_SOURCE_TYPE_TRANSITION) {
+		return obs_source_get_name(source);
+	}
+	const OBSSourceAutoRelease shown = obs_transition_get_active_source(source);
+	return shown ? std::string(obs_source_get_name(shown)) : std::string();
+}
+
+std::string idOnChannel()
+{
+	const OBSSourceAutoRelease source = obs_get_output_source(kAirChannel);
+	return source ? std::string(obs_source_get_unversioned_id(source)) : std::string();
+}
+
+int64_t markerOnChannel()
+{
+	const OBSSourceAutoRelease source = obs_get_output_source(kAirChannel);
+	if (!source) {
+		return -1;
+	}
+	const OBSDataAutoRelease settings = obs_source_get_settings(source);
+	return obs_data_get_int(settings, "marker");
+}
+
+// A file for an intro or outro, which the stand-ins of OBS's media and image sources
+// never read.
+std::string fileIn(const TempDirectory &folder, const char *name)
+{
+	const std::filesystem::path path = folder.path() / name;
+	std::ofstream(path) << "unread";
+	return path.string();
+}
+
+// The length the stand-in of OBS's media source gives.
+void setLength(obs_source_t *media, int64_t milliseconds)
+{
+	const OBSDataAutoRelease settings = obs_data_create();
+	obs_data_set_int(settings, "duration_ms", milliseconds);
+	obs_source_update(media, settings);
+}
+
+class Catalog final : public TransitionCatalog {
+public:
+	std::optional<TransitionTemplate> find(const std::string &name) const override
+	{
+		if (name == "Swipe") {
+			return TransitionTemplate{"fade_transition", R"({"marker": 7})"};
+		}
+		if (name == "Ghost") {
+			return TransitionTemplate{"ghost_transition", "{}"};
+		}
+		return std::nullopt;
+	}
+};
+
+// Runs the UI thread's tasks for a while, failing should the condition stop holding.
+bool holdsFor(std::chrono::milliseconds time, const std::function<bool()> &condition)
+{
+	const auto deadline = std::chrono::steady_clock::now() + time;
+	while (std::chrono::steady_clock::now() < deadline) {
+		UiTasks::run();
+		if (!condition()) {
+			return false;
+		}
+		std::this_thread::sleep_for(2ms);
+	}
+	return true;
 }
 
 } // namespace
@@ -609,6 +776,420 @@ TEST_CASE_METHOD(ObsFixture, "a source on air reads its files as soon as the sto
 	store.waitUntilIdle();
 	sequence->player()->seek(late);
 	CHECK(waitFor([&] { return newest.load() >= 110 * tapeloop::test::kGopLength; }, 10s));
+
+	sequence.reset();
+	obs_wait_for_destroy_queue();
+}
+
+TEST_CASE_METHOD(ObsFixture, "a replay goes on air through its intro and outro and back to live, in order",
+		 "[obs][sequence][air]")
+{
+	registerReplaySource({});
+	registerFade();
+	const UiTasks ui;
+	const TempDirectory folder;
+	ReplayLibrary library;
+	std::optional<SequencePlayer> sequence(std::in_place, library);
+	REQUIRE(sequence->player());
+
+	AirSettings air;
+	air.intro = {AirMediaKind::Video, fileIn(folder, "intro.mp4")};
+	air.into.duration = 100ms;
+	air.outro = {AirMediaKind::Image, fileIn(folder, "outro.png"), 500ms};
+	air.back.duration = 100ms;
+	sequence->setAir(air);
+	obs_source_t *intro = sequence->air().partSource(AirPhase::Intro);
+	REQUIRE(intro);
+	REQUIRE(sequence->air().partSource(AirPhase::Outro));
+	setLength(intro, 60000);
+	// Connected after the composition's own, so it counts once the composition saw it.
+	std::optional<SignalCount> started(std::in_place, intro, "media_started");
+
+	// Clips of a sixth of a second, which play out by themselves.
+	const Captured captured(library, {"a"}, 2);
+	CHECK(channelName().empty());
+	REQUIRE(sequence->putOnAir(captured.id()));
+	CHECK(sequence->state().phase() == AirPhase::Intro);
+	CHECK(channelName() == "Tapeloop in");
+	CHECK(shownName() == "Tapeloop intro");
+	CHECK_FALSE(sequence->player()->state().loaded);
+	REQUIRE(runUntil([&] { return started->value() > 0; }));
+	CHECK(sequence->state().phase() == AirPhase::Intro);
+
+	obs_source_media_ended(intro);
+	REQUIRE(runUntil([&] { return sequence->state().phase() != AirPhase::Intro; }));
+	CHECK(sequence->state().phase() == AirPhase::Source);
+	CHECK(channelName() == "Tapeloop in");
+	CHECK(shownName() == "Tapeloop replay");
+
+	REQUIRE(runUntil([&] { return sequence->state().phase() != AirPhase::Source; }));
+	const auto outroShown = std::chrono::steady_clock::now();
+	CHECK(sequence->state().phase() == AirPhase::Outro);
+	CHECK(channelName() == "Tapeloop in");
+	CHECK(shownName() == "Tapeloop outro");
+	REQUIRE(playerUntil(*sequence, [](const PlayerState &state) { return !state.loaded; }));
+
+	REQUIRE(runUntil([&] { return sequence->state().phase() != AirPhase::Outro; }));
+	CHECK(std::chrono::steady_clock::now() - outroShown >= 450ms);
+	CHECK(sequence->state().phase() == AirPhase::Live);
+	CHECK(sequence->air().leaving());
+	CHECK(channelName() == "Tapeloop out");
+
+	REQUIRE(runUntil([&] { return !sequence->air().onAir(); }));
+	CHECK(channelName().empty());
+	CHECK_FALSE(sequence->air().leaving());
+
+	started.reset();
+	sequence.reset();
+	obs_wait_for_destroy_queue();
+}
+
+TEST_CASE_METHOD(ObsFixture, "an intro ends only after it started on air", "[obs][sequence][air]")
+{
+	registerReplaySource({});
+	registerFade();
+	const UiTasks ui;
+	const TempDirectory folder;
+	ReplayLibrary library;
+	std::optional<SequencePlayer> sequence(std::in_place, library);
+	REQUIRE(sequence->player());
+
+	AirSettings air;
+	air.intro = {AirMediaKind::Video, fileIn(folder, "intro.mp4")};
+	sequence->setAir(air);
+	obs_source_t *intro = sequence->air().partSource(AirPhase::Intro);
+	REQUIRE(intro);
+	setLength(intro, 60000);
+	std::optional<SignalCount> started(std::in_place, intro, "media_started");
+
+	const Captured captured(library, {"a"}, 120);
+	{
+		const TicksHeld held;
+		REQUIRE(sequence->putOnAir(captured.id()));
+		// The end a video taken off air earlier sends late, before it started again.
+		obs_source_media_ended(intro);
+	}
+	REQUIRE(runUntil([&] { return started->value() > 0; }));
+	CHECK(holdsFor(300ms, [&] { return sequence->state().phase() == AirPhase::Intro; }));
+
+	obs_source_media_ended(intro);
+	REQUIRE(runUntil([&] { return sequence->state().phase() != AirPhase::Intro; }));
+	CHECK(playing(*sequence) == "a");
+
+	started.reset();
+	sequence.reset();
+	obs_wait_for_destroy_queue();
+}
+
+TEST_CASE_METHOD(ObsFixture, "a video intro or outro ends by its length when its end never comes",
+		 "[obs][sequence][air]")
+{
+	registerReplaySource({});
+	registerFade();
+	const UiTasks ui;
+	const TempDirectory folder;
+	ReplayLibrary library;
+	std::optional<SequencePlayer> sequence(std::in_place, library);
+	REQUIRE(sequence->player());
+
+	AirSettings air;
+	air.intro = {AirMediaKind::Video, fileIn(folder, "intro.mp4")};
+	air.outro = {AirMediaKind::Video, fileIn(folder, "outro.mp4")};
+	sequence->setAir(air);
+	REQUIRE(sequence->air().partSource(AirPhase::Intro));
+	REQUIRE(sequence->air().partSource(AirPhase::Outro));
+	setLength(sequence->air().partSource(AirPhase::Intro), 300);
+
+	const Captured captured(library, {"a"}, 2);
+	const auto start = std::chrono::steady_clock::now();
+	REQUIRE(sequence->putOnAir(captured.id()));
+	// Its length and two seconds more, counted from when it started.
+	REQUIRE(runUntil([&] { return sequence->state().phase() != AirPhase::Intro; }));
+	const auto introTime = std::chrono::steady_clock::now() - start;
+	CHECK(introTime >= 2300ms);
+	CHECK(introTime < 4500ms);
+
+	// One without a length, which says nothing of its time either, gets five seconds.
+	REQUIRE(runUntil([&] { return sequence->state().phase() == AirPhase::Outro; }));
+	const auto outroShown = std::chrono::steady_clock::now();
+	REQUIRE(runUntil([&] { return sequence->state().phase() != AirPhase::Outro; }));
+	CHECK(std::chrono::steady_clock::now() - outroShown >= 4900ms);
+	CHECK(sequence->state().phase() == AirPhase::Live);
+
+	sequence.reset();
+	obs_wait_for_destroy_queue();
+}
+
+TEST_CASE_METHOD(ObsFixture, "a replay cut short goes through its outro, and closed goes off air at once",
+		 "[obs][sequence][air]")
+{
+	registerReplaySource({});
+	registerFade();
+	const UiTasks ui;
+	const TempDirectory folder;
+	ReplayLibrary library;
+	std::optional<SequencePlayer> sequence(std::in_place, library);
+	REQUIRE(sequence->player());
+
+	AirSettings air;
+	air.intro = {AirMediaKind::Image, fileIn(folder, "intro.png"), 500ms};
+	air.outro = {AirMediaKind::Image, fileIn(folder, "outro.png"), 20000ms};
+	sequence->setAir(air);
+
+	const Captured captured(library, {"a"}, 120);
+	REQUIRE(sequence->putOnAir(captured.id()));
+	CHECK(sequence->state().phase() == AirPhase::Intro);
+	REQUIRE(runUntil([&] { return sequence->state().phase() == AirPhase::Source; }));
+	CHECK(playing(*sequence) == "a");
+	sequence->takeOffAir();
+	CHECK(sequence->state().phase() == AirPhase::Outro);
+	CHECK(shownName() == "Tapeloop outro");
+	REQUIRE(playerUntil(*sequence, [](const PlayerState &state) { return !state.loaded; }));
+	sequence->takeOffAir();
+	CHECK(sequence->state().phase() == AirPhase::Live);
+	CHECK(channelName() == "Tapeloop out");
+	REQUIRE(runUntil([&] { return !sequence->air().onAir(); }));
+
+	REQUIRE(sequence->putOnAir(captured.id()));
+	REQUIRE(runUntil([&] { return sequence->state().phase() == AirPhase::Source; }));
+	CHECK(playing(*sequence) == "a");
+	// Neither the outro nor the way back: the collection they were shown over goes away.
+	sequence->close();
+	CHECK(sequence->state().phase() == AirPhase::Live);
+	CHECK_FALSE(sequence->air().onAir());
+	CHECK(channelName().empty());
+	REQUIRE(playerUntil(*sequence, [](const PlayerState &state) { return !state.loaded; }));
+	CHECK_FALSE(sequence->putOnAir(captured.id()));
+	CHECK(channelName().empty());
+
+	sequence->open();
+	REQUIRE(sequence->putOnAir(captured.id()));
+	CHECK(sequence->state().phase() == AirPhase::Intro);
+
+	sequence.reset();
+	obs_wait_for_destroy_queue();
+}
+
+TEST_CASE_METHOD(ObsFixture, "a replay whose channel another source takes goes back to live", "[obs][sequence][air]")
+{
+	registerReplaySource({});
+	registerFade();
+	const UiTasks ui;
+	const TempDirectory folder;
+	ReplayLibrary library;
+	std::optional<SequencePlayer> sequence(std::in_place, library);
+	REQUIRE(sequence->player());
+
+	// The outro stays off the channel too: it would take it back from the other source.
+	AirSettings air;
+	air.outro = {AirMediaKind::Image, fileIn(folder, "outro.png"), 20000ms};
+	sequence->setAir(air);
+
+	const Captured captured(library, {"a"}, 120);
+	REQUIRE(sequence->putOnAir(captured.id()));
+	CHECK(playing(*sequence) == "a");
+
+	const OBSSourceAutoRelease other =
+		obs_source_create_private(tapeloop::test::kTestPatternId, "Another plugin", nullptr);
+	REQUIRE(other);
+	obs_set_output_source(kAirChannel, other);
+	REQUIRE(runUntil([&] { return sequence->state().phase() == AirPhase::Live; }));
+	CHECK_FALSE(sequence->air().onAir());
+	CHECK(channelName() == "Another plugin");
+	REQUIRE(playerUntil(*sequence, [](const PlayerState &state) { return !state.loaded; }));
+
+	// The channel is the other source's until it lets go.
+	CHECK_FALSE(sequence->putOnAir(captured.id()));
+	CHECK(channelName() == "Another plugin");
+	obs_set_output_source(kAirChannel, nullptr);
+	REQUIRE(sequence->putOnAir(captured.id()));
+	CHECK(channelName() == "Tapeloop in");
+
+	sequence.reset();
+	CHECK(channelName().empty());
+	obs_wait_for_destroy_queue();
+}
+
+TEST_CASE_METHOD(ObsFixture, "a replay put on air during the way back stays on air", "[obs][sequence][air]")
+{
+	registerReplaySource({});
+	registerFade();
+	const UiTasks ui;
+	ReplayLibrary library;
+	std::optional<SequencePlayer> sequence(std::in_place, library);
+	REQUIRE(sequence->player());
+
+	AirSettings air;
+	air.back.duration = 1000ms;
+	sequence->setAir(air);
+
+	const Captured captured(library, {"a", "b"}, 120);
+	REQUIRE(sequence->putOnAir(captured.id()));
+	CHECK(playing(*sequence) == "a");
+	sequence->takeOffAir();
+	CHECK(sequence->air().leaving());
+	CHECK(channelName() == "Tapeloop out");
+	// The way back fades out the last frame.
+	CHECK(sequence->player()->state().loaded);
+
+	REQUIRE(sequence->putOnAir(captured.id()));
+	CHECK_FALSE(sequence->air().leaving());
+	CHECK(channelName() == "Tapeloop in");
+	CHECK(holdsFor(1500ms, [&] {
+		return sequence->state().phase() == AirPhase::Source && sequence->air().onAir() &&
+		       channelName() == "Tapeloop in";
+	}));
+	CHECK(playing(*sequence) == "a");
+
+	sequence.reset();
+	obs_wait_for_destroy_queue();
+}
+
+TEST_CASE_METHOD(ObsFixture, "a replay goes on air with copies of the user's transitions, or else fades",
+		 "[obs][sequence][air]")
+{
+	registerReplaySource({});
+	registerFade();
+	const UiTasks ui;
+	const Catalog catalog;
+	ReplayLibrary library;
+	std::optional<SequencePlayer> sequence(std::in_place, library);
+	REQUIRE(sequence->player());
+	sequence->setTransitions(&catalog);
+
+	AirSettings air;
+	air.into = {"Swipe", 100ms};
+	// One OBS has, of a kind no module registered.
+	air.back = {"Ghost", 100ms};
+	sequence->setAir(air);
+
+	const Captured captured(library, {"a"}, 120);
+	REQUIRE(sequence->putOnAir(captured.id()));
+	CHECK(channelName() == "Tapeloop in");
+	CHECK(idOnChannel() == "fade_transition");
+	CHECK(markerOnChannel() == 7);
+	sequence->takeOffAir();
+	CHECK(channelName() == "Tapeloop out");
+	CHECK(idOnChannel() == "fade_transition");
+	CHECK(markerOnChannel() == 0);
+	REQUIRE(runUntil([&] { return !sequence->air().onAir(); }));
+
+	// One OBS does not have.
+	air.into.name = "Unknown";
+	sequence->setAir(air);
+	REQUIRE(sequence->putOnAir(captured.id()));
+	CHECK(channelName() == "Tapeloop in");
+	CHECK(idOnChannel() == "fade_transition");
+	CHECK(markerOnChannel() == 0);
+
+	sequence.reset();
+	obs_wait_for_destroy_queue();
+}
+
+TEST_CASE_METHOD(ObsFixture, "an intro whose file is missing is looked for again by the next replay",
+		 "[obs][sequence][air]")
+{
+	registerReplaySource({});
+	const UiTasks ui;
+	const TempDirectory folder;
+	ReplayLibrary library;
+	std::optional<SequencePlayer> sequence(std::in_place, library);
+	REQUIRE(sequence->player());
+
+	const std::filesystem::path path = folder.path() / "intro.png";
+	AirSettings air;
+	air.intro = {AirMediaKind::Image, path.string(), 500ms};
+	sequence->setAir(air);
+	CHECK_FALSE(sequence->air().hasIntro());
+
+	const Captured captured(library, {"a"}, 120);
+	REQUIRE(sequence->putOnAir(captured.id()));
+	CHECK(sequence->state().phase() == AirPhase::Source);
+	sequence->takeOffAir();
+	CHECK(sequence->state().phase() == AirPhase::Live);
+
+	CHECK(fileIn(folder, "intro.png") == path.string());
+	REQUIRE(sequence->putOnAir(captured.id()));
+	CHECK(sequence->state().phase() == AirPhase::Intro);
+	CHECK(sequence->air().hasIntro());
+
+	sequence.reset();
+	obs_wait_for_destroy_queue();
+}
+
+TEST_CASE_METHOD(ObsFixture, "without OBS's fade, a replay cuts on air and off", "[obs][sequence][air]")
+{
+	registerReplaySource({});
+	const UiTasks ui;
+	ReplayLibrary library;
+	std::optional<SequencePlayer> sequence(std::in_place, library);
+	REQUIRE(sequence->player());
+
+	const Captured captured(library, {"a"}, 120);
+	REQUIRE(sequence->putOnAir(captured.id()));
+	{
+		const OBSSourceAutoRelease onChannel = obs_get_output_source(kAirChannel);
+		CHECK(onChannel.Get() == sequence->source());
+	}
+	CHECK(playing(*sequence) == "a");
+	sequence->takeOffAir();
+	CHECK(sequence->state().phase() == AirPhase::Live);
+	CHECK(channelName().empty());
+	REQUIRE(playerUntil(*sequence, [](const PlayerState &state) { return !state.loaded; }));
+
+	sequence.reset();
+	obs_wait_for_destroy_queue();
+}
+
+TEST_CASE_METHOD(ObsFixture, "a sequence lets go of what it made for air before OBS shuts down", "[obs][sequence][air]")
+{
+	registerReplaySource({});
+	registerFade();
+	const UiTasks ui;
+	const TempDirectory folder;
+	ReplayLibrary library;
+	std::optional<SequencePlayer> sequence(std::in_place, library);
+	REQUIRE(sequence->player());
+
+	AirSettings air;
+	air.intro = {AirMediaKind::Image, fileIn(folder, "intro.png"), 20000ms};
+	air.outro = {AirMediaKind::Video, fileIn(folder, "outro.mp4")};
+	sequence->setAir(air);
+
+	std::vector<OBSWeakSourceAutoRelease> made;
+	made.emplace_back(obs_source_get_weak_source(sequence->air().partSource(AirPhase::Intro)));
+	made.emplace_back(obs_source_get_weak_source(sequence->air().partSource(AirPhase::Outro)));
+	const Captured captured(library, {"a"}, 120);
+	REQUIRE(sequence->putOnAir(captured.id()));
+	{
+		const OBSSourceAutoRelease in = obs_get_output_source(kAirChannel);
+		made.emplace_back(obs_source_get_weak_source(in));
+	}
+	sequence->takeOffAir();
+	CHECK(sequence->state().phase() == AirPhase::Outro);
+	sequence->takeOffAir();
+	CHECK(sequence->air().leaving());
+	{
+		const OBSSourceAutoRelease out = obs_get_output_source(kAirChannel);
+		made.emplace_back(obs_source_get_weak_source(out));
+	}
+	for (const OBSWeakSourceAutoRelease &weak : made) {
+		REQUIRE(weak);
+		CHECK_FALSE(obs_weak_source_expired(weak));
+	}
+
+	sequence->destroyAir();
+	CHECK(sequence->state().phase() == AirPhase::Live);
+	CHECK(channelName().empty());
+	// The audio thread holds what it mixes until the end of its turn.
+	for (const OBSWeakSourceAutoRelease &weak : made) {
+		CHECK(waitFor([&] { return obs_weak_source_expired(weak); }, 2000ms));
+	}
+	REQUIRE(playerUntil(*sequence, [](const PlayerState &state) { return !state.loaded; }));
+	CHECK_FALSE(sequence->putOnAir(captured.id()));
+	sequence->open();
+	CHECK(sequence->closed());
+	CHECK_FALSE(sequence->putOnAir(captured.id()));
 
 	sequence.reset();
 	obs_wait_for_destroy_queue();
