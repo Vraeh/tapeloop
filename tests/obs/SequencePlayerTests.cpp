@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: GPL-2.0-or-later
 // Copyright (C) 2026 Vicente Aedo <ryde1337@gmail.com>
 
+#include "../core/AllocationCounter.hpp"
 #include "../core/FakeDecoder.hpp"
 #include "../core/StoredReplays.hpp"
 #include "../core/TempDirectory.hpp"
@@ -557,6 +558,9 @@ class Catalog final : public TransitionCatalog {
 public:
 	std::optional<TransitionTemplate> find(const std::string &name) const override
 	{
+		if (takesChannel) {
+			obs_set_output_source(kAirChannel, takesChannel);
+		}
 		if (name == "Swipe") {
 			return TransitionTemplate{"fade_transition", R"({"marker": 7})"};
 		}
@@ -573,6 +577,9 @@ public:
 
 	// The settings of the user's stinger, which the user may edit in OBS.
 	std::string stinger = "{}";
+	// Takes the replay's channel, as another plugin may at any moment, when a transition is
+	// looked up: during a Put on air, once that has found the channel free.
+	obs_source_t *takesChannel = nullptr;
 };
 
 // Runs the UI thread's tasks for a while, failing should the condition stop holding.
@@ -1109,6 +1116,78 @@ TEST_CASE_METHOD(ObsFixture, "a replay that did not go on air says why until the
 	CHECK(setup.sequence->airRefusal() == AirRefusal::None);
 	// With a replay on air, the press does nothing whatever it names.
 	CHECK(refusalOf(damaged) == AirRefusal::None);
+}
+
+TEST_CASE_METHOD(ObsFixture, "a replay that finds the channel taken on its way on air says so and leaves it",
+		 "[obs][sequence][air]")
+{
+	registerFade();
+	AirSetup setup;
+	Catalog catalog;
+	setup.sequence->setTransitions(&catalog);
+	AirSettings air;
+	air.into = {"Swipe", 100ms};
+	SECTION("going to the replay") {}
+	SECTION("going to an intro")
+	{
+		air.intro = {AirMediaKind::Image, fileIn(setup.folder, "intro.png"), 20000ms};
+	}
+	setup.sequence->setAir(air);
+
+	const OBSSourceAutoRelease other =
+		obs_source_create_private(tapeloop::test::kTestPatternId, "Another plugin", nullptr);
+	catalog.takesChannel = other;
+	CHECK_FALSE(setup.sequence->putOnAir(setup.captured.id()));
+	catalog.takesChannel = nullptr;
+	CHECK(setup.sequence->airRefusal() == AirRefusal::ChannelBusy);
+	CHECK(setup.phase() == AirPhase::Live);
+	CHECK_FALSE(setup.sequence->air().onAir());
+	CHECK(channelName() == "Another plugin");
+	CHECK(playerUntil(*setup.sequence, [](const PlayerState &state) { return !state.loaded; }));
+
+	obs_set_output_source(kAirChannel, nullptr);
+	setup.putOnAir();
+	CHECK(setup.sequence->airRefusal() == AirRefusal::None);
+	CHECK(channelName() == "Tapeloop in");
+}
+
+TEST_CASE_METHOD(ObsFixture, "a replay out of memory on its way on air does not blame the channel",
+		 "[obs][sequence][air]")
+{
+	if (!tapeloop::test::kAllocationFailures) {
+		SKIP("allocations cannot be made to fail in this build");
+	}
+	registerFade();
+	AirSetup setup;
+	bool leftLive = false;
+	for (size_t skip = 0;; ++skip) {
+		CAPTURE(skip);
+		bool threw = false;
+		bool triggered = false;
+		{
+			// Nothing of the test's own may allocate in here.
+			const tapeloop::test::AllocationFailure failure(skip);
+			try {
+				setup.sequence->putOnAir(setup.captured.id());
+			} catch (const std::bad_alloc &) {
+				threw = true;
+			}
+			triggered = failure.triggered();
+		}
+		CHECK(setup.sequence->airRefusal() != AirRefusal::ChannelBusy);
+		if (!threw && setup.phase() == AirPhase::Live) {
+			leftLive = true;
+		}
+		if (setup.phase() != AirPhase::Live) {
+			setup.sequence->takeOffAir();
+			REQUIRE(runUntil([&] { return !setup.sequence->air().onAir(); }));
+		}
+		if (!triggered) {
+			break;
+		}
+	}
+	// No clip could load in at least one of these, which is what the channel is told from.
+	CHECK(leftLive);
 }
 
 TEST_CASE_METHOD(ObsFixture, "a closed sequence goes back to live and forgets its list until opened", "[obs][sequence]")

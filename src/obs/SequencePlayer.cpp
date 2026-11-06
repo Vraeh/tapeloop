@@ -112,10 +112,7 @@ bool SequencePlayer::putOnAir(uint64_t id)
 		return false;
 	}
 	if (!air_.channelFree()) {
-		refusal_ = AirRefusal::ChannelBusy;
-		blog(LOG_WARNING,
-		     "[tapeloop] Another source is on the replay's channel, so replay %llu cannot go on air",
-		     static_cast<unsigned long long>(id));
+		refuseChannel(id);
 		return false;
 	}
 	std::shared_ptr<const ReplayIndex> index = indexOf(*replay);
@@ -167,7 +164,20 @@ bool SequencePlayer::putOnAir(uint64_t id)
 	index_ = std::move(index);
 	live_ = replay->live;
 	follow();
+	// The look above can be a transition's wait old. Whoever took the channel since has the
+	// replay off air by the next tick at the latest, and only this press can say why.
+	if (!air_.channelFree()) {
+		refuseChannel(id);
+		return false;
+	}
 	return true;
+}
+
+void SequencePlayer::refuseChannel(uint64_t id)
+{
+	refusal_ = AirRefusal::ChannelBusy;
+	blog(LOG_WARNING, "[tapeloop] Another source is on the replay's channel, so replay %llu cannot go on air",
+	     static_cast<unsigned long long>(id));
 }
 
 void SequencePlayer::takeOffAir()

@@ -66,8 +66,9 @@ public:
 	// Puts the library's replay on air. Its sources the list does not have yet join it at
 	// the end, shown, by name. A source with fewer than two frames has nothing to play and
 	// is left out. False while closed or a replay is on air, while another source holds
-	// the channel the replay goes on air through, for an unknown or damaged replay or one
-	// whose index cannot be read, and when none of its shown sources has a clip.
+	// the channel the replay goes on air through or takes it during this call, for an
+	// unknown or damaged replay or one whose index cannot be read, and when none of its
+	// shown sources has a clip.
 	bool putOnAir(uint64_t replay);
 	// What the last putOnAir() found, kept for a dock that is not looking when a hotkey
 	// asks. None once a later one is not refused for one of these reasons, and on close().
@@ -92,6 +93,7 @@ public:
 	void destroyAir();
 
 private:
+	void refuseChannel(uint64_t replay);
 	// What follows the state's part on air, if it changed: the clip of a source, or else
 	// nothing loaded.
 	void follow();
