@@ -1398,6 +1398,182 @@ TEST_CASE_METHOD(ObsFixture, "a replay waits for a transition's video to open on
 	obs_wait_for_destroy_queue();
 }
 
+// What the composition does to a stand-in stinger, which it keeps until it goes.
+class WatchedStinger {
+public:
+	explicit WatchedStinger(obs_source_t *transition)
+		: stinger_(*static_cast<const Stinger *>(obs_obj_get_data(transition))),
+		  stops_(transition, "transition_stop")
+	{
+	}
+
+	int stops() const noexcept { return stops_.value(); }
+	bool plays() const { return stinger_.running && obs_source_active(stinger_.media); }
+	bool stopped() const { return !stinger_.running && !obs_source_active(stinger_.media); }
+
+private:
+	const Stinger &stinger_;
+	SignalCount stops_;
+};
+
+// A replay put on air through the stand-in, whose video takes a second, with an image for
+// intro that is on air for the time given.
+struct StingerOnAir {
+	explicit StingerOnAir(std::chrono::milliseconds image)
+	{
+		registerReplaySource({});
+		registerFade();
+		registerStinger();
+		catalog.stinger = R"({"media_ms": 1000})";
+		sequence.emplace(library);
+		REQUIRE(sequence->player());
+		sequence->setTransitions(&catalog);
+
+		AirSettings air;
+		air.intro = {AirMediaKind::Image, fileIn(folder, "intro.png"), image};
+		air.into = {"Stinger", 100ms};
+		air.back = {"Stinger", 100ms};
+		sequence->setAir(air);
+
+		REQUIRE(sequence->putOnAir(captured.id()));
+		const OBSSourceAutoRelease channel = obs_get_output_source(kAirChannel);
+		in.emplace(channel);
+		REQUIRE(in->plays());
+	}
+
+	~StingerOnAir()
+	{
+		in.reset();
+		out.reset();
+		sequence.reset();
+		obs_wait_for_destroy_queue();
+	}
+
+	StingerOnAir(const StingerOnAir &) = delete;
+	StingerOnAir &operator=(const StingerOnAir &) = delete;
+	StingerOnAir(StingerOnAir &&) = delete;
+	StingerOnAir &operator=(StingerOnAir &&) = delete;
+
+	void watchOut()
+	{
+		const OBSSourceAutoRelease channel = obs_get_output_source(kAirChannel);
+		REQUIRE(std::string(obs_source_get_name(channel)) == "Tapeloop out");
+		out.emplace(channel);
+	}
+
+	const UiTasks ui;
+	const TempDirectory folder;
+	Catalog catalog;
+	ReplayLibrary library;
+	const Captured captured{library, {"a"}, 120};
+	std::optional<SequencePlayer> sequence;
+	std::optional<WatchedStinger> in;
+	std::optional<WatchedStinger> out;
+};
+
+TEST_CASE_METHOD(ObsFixture, "a part that ends under a transition stops it", "[obs][sequence][air]")
+{
+	StingerOnAir air(500ms);
+	REQUIRE(runUntil([&] { return air.sequence->state().phase() == AirPhase::Source; }));
+	// Short of its length, the video's and a quarter of a second, so the part did this.
+	CHECK(air.in->stops() == 1);
+	CHECK(air.in->stopped());
+	CHECK(shownName() == "Tapeloop replay");
+	CHECK(holdsFor(1000ms, [&] { return air.in->stops() == 1; }));
+}
+
+TEST_CASE_METHOD(ObsFixture, "a skip during a transition stops it at once", "[obs][sequence][air]")
+{
+	StingerOnAir air(20000ms);
+	air.sequence->skip();
+	CHECK(air.sequence->state().phase() == AirPhase::Source);
+	CHECK(shownName() == "Tapeloop replay");
+	CHECK(air.in->stops() == 1);
+	CHECK(air.in->stopped());
+}
+
+TEST_CASE_METHOD(ObsFixture, "a replay taken off air during a transition stops it and goes back at once",
+		 "[obs][sequence][air]")
+{
+	StingerOnAir air(20000ms);
+	air.sequence->takeOffAir();
+	air.watchOut();
+	CHECK(air.in->stops() == 1);
+	CHECK(air.in->stopped());
+	CHECK(air.out->stops() == 0);
+	CHECK(air.out->plays());
+
+	// The way back runs out by itself, which leaving the air does not repeat.
+	REQUIRE(runUntil([&] { return !air.sequence->air().onAir(); }));
+	CHECK(air.out->stops() == 1);
+	CHECK(air.out->stopped());
+	CHECK(air.in->stops() == 1);
+}
+
+TEST_CASE_METHOD(ObsFixture, "a replay put back on air during the way back stops it at once", "[obs][sequence][air]")
+{
+	StingerOnAir air(20000ms);
+	air.sequence->takeOffAir();
+	air.watchOut();
+	REQUIRE(air.out->plays());
+
+	REQUIRE(air.sequence->putOnAir(air.captured.id()));
+	CHECK(channelName() == "Tapeloop in");
+	CHECK(air.out->stops() == 1);
+	CHECK(air.out->stopped());
+	CHECK(air.in->stops() == 1);
+	CHECK(air.in->plays());
+}
+
+TEST_CASE_METHOD(ObsFixture, "a transition stops when another source takes the channel from it", "[obs][sequence][air]")
+{
+	StingerOnAir air(20000ms);
+	const OBSSourceAutoRelease other =
+		obs_source_create_private(tapeloop::test::kTestPatternId, "Another plugin", nullptr);
+	REQUIRE(other);
+	obs_set_output_source(kAirChannel, other);
+	REQUIRE(runUntil([&] { return !air.sequence->air().onAir(); }));
+	CHECK(air.in->stops() == 1);
+	CHECK(air.in->stopped());
+	obs_set_output_source(kAirChannel, nullptr);
+}
+
+TEST_CASE_METHOD(ObsFixture, "a transition stops with the sequence that ran it", "[obs][sequence][air]")
+{
+	StingerOnAir air(20000ms);
+	air.sequence.reset();
+	CHECK(air.in->stops() == 1);
+	CHECK(air.in->stopped());
+}
+
+TEST_CASE_METHOD(ObsFixture, "a way back stops with the sequence that ran it", "[obs][sequence][air]")
+{
+	StingerOnAir air(20000ms);
+	air.sequence->takeOffAir();
+	air.watchOut();
+	REQUIRE(air.out->plays());
+	air.sequence.reset();
+	CHECK(air.out->stops() == 1);
+	CHECK(air.out->stopped());
+}
+
+TEST_CASE_METHOD(ObsFixture, "a transition that ran its length is not stopped again", "[obs][sequence][air]")
+{
+	StingerOnAir air(3000ms);
+	REQUIRE(runUntil([&] { return air.in->stops() == 1; }));
+	CHECK(air.sequence->state().phase() == AirPhase::Intro);
+	CHECK(air.in->stopped());
+
+	REQUIRE(runUntil([&] { return air.sequence->state().phase() == AirPhase::Source; }));
+	CHECK(air.in->stops() == 1);
+	air.sequence->takeOffAir();
+	air.watchOut();
+	CHECK(air.in->stops() == 1);
+	REQUIRE(runUntil([&] { return !air.sequence->air().onAir(); }));
+	CHECK(air.in->stops() == 1);
+	CHECK(air.out->stops() == 1);
+}
+
 TEST_CASE_METHOD(ObsFixture, "a transition whose video never opens holds a replay back once, and briefly",
 		 "[obs][sequence][air]")
 {

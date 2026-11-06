@@ -147,6 +147,9 @@ private:
 	void applyMedia();
 	bool holdsChannel() const;
 	void takeChannel(obs_source_t *source);
+	// Leaves the transition showing that source, or nothing, and ends a run it was on as
+	// running out would, so a watch still on it sees the stop.
+	void endTransition(obs_source_t *transition, obs_source_t *showing);
 	// Starts a new watch, which makes whatever the last one saw stale: the end of this
 	// media, the stop of this transition, or the deadline, whichever comes first. Zero
 	// for no deadline.

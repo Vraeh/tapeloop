@@ -154,11 +154,11 @@ bool AirComposition::show(AirPhase part)
 			takeChannel(target);
 		}
 		if (out_) {
-			obs_transition_clear(out_);
+			endTransition(out_, nullptr);
 		}
 		leaving_ = false;
 	} else if (onChannel_ == in_) {
-		obs_transition_set(in_, target);
+		endTransition(in_, target);
 	} else {
 		takeChannel(target);
 	}
@@ -191,7 +191,7 @@ bool AirComposition::leave()
 	// transition that showed it lets go, so it never stops in between.
 	takeChannel(out_);
 	if (in_) {
-		obs_transition_clear(in_);
+		endTransition(in_, nullptr);
 	}
 	shown_ = AirPhase::Live;
 	leaving_ = true;
@@ -420,6 +420,22 @@ void AirComposition::takeChannel(obs_source_t *source)
 	obs_set_output_source(kAirChannel, source);
 }
 
+void AirComposition::endTransition(obs_source_t *transition, obs_source_t *showing)
+{
+	// Until it stops, the way in holds the part as its second source and the way back,
+	// which goes to nothing, as its first.
+	obs_source_t *held = obs_transition_get_source(transition, transition == out_ ? OBS_TRANSITION_SOURCE_A
+										      : OBS_TRANSITION_SOURCE_B);
+	const bool running = held != nullptr;
+	obs_source_release(held);
+	// Setting it ends the run without telling the transition, so a stinger's video and
+	// audio would go on under what comes next.
+	obs_transition_set(transition, showing);
+	if (running) {
+		obs_transition_force_stop(transition);
+	}
+}
+
 void AirComposition::watch(obs_source_t *media, obs_source_t *transition, uint64_t deadline)
 {
 	const std::lock_guard lock(mutex_);
@@ -450,10 +466,10 @@ void AirComposition::offAir(bool emptyChannel)
 	}
 	onChannel_ = nullptr;
 	if (in_) {
-		obs_transition_clear(in_);
+		endTransition(in_, nullptr);
 	}
 	if (out_) {
-		obs_transition_clear(out_);
+		endTransition(out_, nullptr);
 	}
 	shown_ = AirPhase::Live;
 	leaving_ = false;
