@@ -43,6 +43,7 @@ public:
 	void requestSave() override { ++saves; }
 	std::string recordingFolder() const override { return tapeloop::utf8FromPath(dir.path()); }
 	std::string sceneCollectionName() const override { return "Liga"; }
+	void buffersStopped() override {}
 
 	int saves = 0;
 	tapeloop::test::TempDirectory dir;

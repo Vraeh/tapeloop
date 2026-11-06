@@ -40,6 +40,7 @@ private:
 	void requestSave() override;
 	std::string recordingFolder() const override;
 	std::string sceneCollectionName() const override;
+	void buffersStopped() override;
 	// The frontend API is gone by the time the module unloads, so the callbacks go at
 	// the exit event.
 	void removeFrontendCallbacks() noexcept;

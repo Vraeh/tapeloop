@@ -9,14 +9,19 @@
 #include "ObsFixture.hpp"
 #include "TestEncoders.hpp"
 #include "TestPattern.hpp"
+#include "UiTasks.hpp"
 
 #include "core/EncoderPolicy.hpp"
 #include "core/FileIo.hpp"
 #include "core/GopReader.hpp"
+#include "core/ReplayPlayerState.hpp"
 #include "core/ReplayWriter.hpp"
 #include "decode/Mp4Writer.hpp"
+#include "obs/AirComposition.hpp"
 #include "obs/CaptureManager.hpp"
 #include "obs/ManagerDockBackend.hpp"
+#include "obs/ReplaySource.hpp"
+#include "obs/SequencePlayer.hpp"
 #include "obs/SettingsData.hpp"
 
 #include <catch2/catch_test_macros.hpp>
@@ -27,15 +32,18 @@
 #include <chrono>
 #include <cmath>
 #include <filesystem>
+#include <functional>
 #include <future>
 #include <initializer_list>
 #include <memory>
 #include <optional>
 #include <string>
 #include <thread>
+#include <utility>
 #include <vector>
 
 using namespace std::chrono_literals;
+using tapeloop::AirPhase;
 using tapeloop::BufferSettings;
 using tapeloop::ExportFormat;
 using tapeloop::FrameSize;
@@ -50,7 +58,9 @@ using tapeloop::obs::CaptureManager;
 using tapeloop::obs::CaptureState;
 using tapeloop::obs::ExportStatus;
 using tapeloop::obs::createSettingsData;
+using tapeloop::obs::kAirChannel;
 using tapeloop::obs::readSettingsData;
+using tapeloop::obs::SequencePlayer;
 using tapeloop::test::createTestPattern;
 using tapeloop::test::LogCounter;
 using tapeloop::test::ObsFixture;
@@ -75,8 +85,17 @@ public:
 	void requestSave() override { ++saves; }
 	std::string recordingFolder() const override { return folder; }
 	std::string sceneCollectionName() const override { return collection; }
+	void buffersStopped() override
+	{
+		++stops;
+		if (onStop) {
+			onStop();
+		}
+	}
 
 	int saves = 0;
+	int stops = 0;
+	std::function<void()> onStop;
 };
 
 std::string uuidOf(obs_source_t *source)
@@ -158,6 +177,77 @@ TEST_CASE_METHOD(ObsFixture, "the manual control drives the buffers without auto
 	manager.setSettings(settings);
 	CHECK(manager.running());
 	CHECK_FALSE(manager.manualStop());
+}
+
+TEST_CASE_METHOD(ObsFixture, "the host hears when the buffers stop, unless the collection goes or OBS exits",
+		 "[obs][manager]")
+{
+	OBSSourceAutoRelease pattern = createTestPattern(640, 360);
+	FakeHost host;
+	CaptureManager manager(host);
+	manager.setSettings(selecting(uuidOf(pattern)));
+	manager.onStreaming(true);
+	manager.onRecording(true);
+	manager.onStreaming(false);
+	CHECK(host.stops == 0);
+	manager.onRecording(false);
+	CHECK(host.stops == 1);
+	manager.onRecording(false);
+	manager.poll();
+	CHECK(host.stops == 1);
+
+	REQUIRE(manager.manualStart());
+	REQUIRE(manager.manualStop());
+	CHECK(host.stops == 2);
+
+	REQUIRE(manager.manualStart());
+	manager.onSceneCollectionCleanup();
+	OBSDataAutoRelease nextCollection = obs_data_create();
+	manager.load(nextCollection);
+	CHECK_FALSE(manager.running());
+	CHECK(host.stops == 2);
+
+	manager.onStreaming(true);
+	REQUIRE(manager.running());
+	manager.onExit();
+	manager.onStreaming(false);
+	CHECK(host.stops == 2);
+}
+
+TEST_CASE_METHOD(ObsFixture, "a replay on air goes back to live when the buffers stop", "[obs][manager][air]")
+{
+	tapeloop::obs::registerReplaySource({});
+	const tapeloop::test::UiTasks ui;
+	OBSSourceAutoRelease pattern = createTestPattern(320, 180);
+	const std::string uuid = uuidOf(pattern);
+	FakeHost host;
+	CaptureManager manager(host);
+	BufferSettings settings = selecting(uuid);
+	settings.startWithOutputs = false;
+	manager.setSettings(settings);
+	std::optional<SequencePlayer> sequence(std::in_place, manager.library());
+	REQUIRE(sequence->player());
+	// As the frontend bridge does.
+	host.onStop = [&] {
+		sequence->takeOffAir();
+	};
+	REQUIRE(manager.manualStart());
+	REQUIRE(waitFor([&] { return hasGops(manager, uuid, 2); }, 60s));
+	const uint64_t id = manager.captureReplay();
+	REQUIRE(id != 0);
+	REQUIRE(sequence->putOnAir(id));
+	REQUIRE(sequence->air().onAir());
+
+	REQUIRE(manager.manualStop());
+	CHECK(host.stops == 1);
+	CHECK(sequence->state().phase() == AirPhase::Live);
+	CHECK_FALSE(sequence->air().onAir());
+	OBSSourceAutoRelease onChannel = obs_get_output_source(kAirChannel);
+	CHECK(onChannel.Get() == nullptr);
+
+	manager.finishWrites();
+	sequence.reset();
+	obs_wait_for_destroy_queue();
 }
 
 TEST_CASE_METHOD(ObsFixture, "selecting and unselecting a source while the buffers run", "[obs][manager]")

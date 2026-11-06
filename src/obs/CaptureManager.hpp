@@ -43,6 +43,9 @@ public:
 	// The folder OBS records into, in UTF-8; empty when it has none.
 	virtual std::string recordingFolder() const = 0;
 	virtual std::string sceneCollectionName() const = 0;
+	// The buffers stopped, as the outputs ended or the user stopped them. Not for a scene
+	// collection cleanup or OBS's exit, which the host hears of from the frontend.
+	virtual void buffersStopped() = 0;
 };
 
 struct SourceStatus {

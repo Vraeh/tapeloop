@@ -108,6 +108,12 @@ void FrontendBridge::requestSave()
 	obs_frontend_save();
 }
 
+void FrontendBridge::buffersStopped()
+{
+	// The program goes on, so the replay goes back to live the way the user takes it off.
+	sequence_->takeOffAir();
+}
+
 void FrontendBridge::handleEvent(obs_frontend_event event, void *data) noexcept
 {
 	auto &bridge = *static_cast<FrontendBridge *>(data);
