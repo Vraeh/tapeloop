@@ -51,8 +51,7 @@ void handleAirEvent(AirEvent event, SequencePlayer &sequence, CaptureManager &ma
 	case AirEvent::Exit:
 		// OBS unloads its modules before it destroys the sources still held, so those
 		// the composition made from other modules go now.
-		sequence.destroyAir();
-		manager.onExit();
+		exitInOrder([&sequence] { sequence.destroyAir(); }, [&manager] { manager.onExit(); });
 		break;
 	case AirEvent::BuffersStopped:
 		// The program goes on, so the replay goes back to live the way the user takes it
@@ -65,6 +64,16 @@ void handleAirEvent(AirEvent event, SequencePlayer &sequence, CaptureManager &ma
 		}
 		break;
 	}
+}
+
+void exitInOrder(const std::function<void()> &letGoOfAir, const std::function<void()> &endManager)
+{
+	try {
+		letGoOfAir();
+	} catch (...) {
+		blog(LOG_ERROR, "[tapeloop] Letting go of the replay failed as OBS exits");
+	}
+	endManager();
 }
 
 } // namespace tapeloop::obs

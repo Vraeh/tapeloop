@@ -4,6 +4,7 @@
 #include "../core/FakeDecoder.hpp"
 #include "../core/StoredReplays.hpp"
 #include "../core/TempDirectory.hpp"
+#include "LogCounter.hpp"
 #include "ObsFixture.hpp"
 #include "TestPattern.hpp"
 #include "UiTasks.hpp"
@@ -40,6 +41,7 @@
 #include <new>
 #include <optional>
 #include <span>
+#include <stdexcept>
 #include <string>
 #include <thread>
 #include <utility>
@@ -60,6 +62,7 @@ using tapeloop::decode::PictureDecoder;
 using tapeloop::obs::AirEvent;
 using tapeloop::obs::CaptureHost;
 using tapeloop::obs::CaptureManager;
+using tapeloop::obs::exitInOrder;
 using tapeloop::obs::handleAirEvent;
 using tapeloop::obs::kAirChannel;
 using tapeloop::obs::PlayerState;
@@ -2298,6 +2301,22 @@ TEST_CASE_METHOD(ObsFixture, "OBS exiting lets go of what the composition made a
 	// A manager that exited says nothing of the buffers stopping.
 	setup.manager.onStreaming(false);
 	CHECK(setup.host.stops == 0);
+}
+
+TEST_CASE("a failure letting go of a replay at exit still ends the manager", "[obs][sequence][air]")
+{
+	const tapeloop::test::LogCounter said("Letting go of the replay failed");
+	int ended = 0;
+	CHECK_NOTHROW(exitInOrder([] { throw std::runtime_error("no"); }, [&ended] { ++ended; }));
+	CHECK(ended == 1);
+	CHECK(said.lines == 1);
+}
+
+TEST_CASE("OBS's exit lets go of a replay before it ends the manager", "[obs][sequence][air]")
+{
+	std::vector<int> steps;
+	exitInOrder([&steps] { steps.push_back(1); }, [&steps] { steps.push_back(2); });
+	CHECK(steps == std::vector<int>{1, 2});
 }
 
 TEST_CASE_METHOD(ObsFixture, "buffers stopping takes a replay off air the way the user does", "[obs][sequence][air]")
