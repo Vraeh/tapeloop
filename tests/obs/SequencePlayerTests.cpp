@@ -34,6 +34,7 @@
 #include <functional>
 #include <memory>
 #include <mutex>
+#include <new>
 #include <optional>
 #include <span>
 #include <string>
@@ -62,6 +63,7 @@ using tapeloop::obs::TransitionTemplate;
 using tapeloop::test::captureOf;
 using tapeloop::test::FakeDecoder;
 using tapeloop::test::Gops;
+using tapeloop::test::kMediaStandInId;
 using tapeloop::test::makeGops;
 using tapeloop::test::ObsFixture;
 using tapeloop::test::sourceOf;
@@ -260,6 +262,122 @@ void registerFade()
 	obs_register_source(&info);
 }
 
+constexpr const char *kStingerId = "tapeloop_test_stinger";
+
+// Stands in for how OBS's stinger gets its length, which the harness does not load. Its
+// setup is in its update, which libobs defers to the next tick, and makes the media its
+// "media_ms" and "open_after_ms" settings say. On starting, it asks that media its length
+// and adds a quarter of a second, and without the media it has no length at all.
+struct Stinger {
+	obs_source_t *source = nullptr;
+	OBSSourceAutoRelease media;
+	std::atomic<bool> running{false};
+};
+
+const char *stingerName(void *) noexcept
+{
+	return "Tapeloop test stinger";
+}
+
+void *createStinger(obs_data_t *, obs_source_t *source) noexcept
+{
+	auto *stinger = new (std::nothrow) Stinger;
+	if (stinger) {
+		stinger->source = source;
+		obs_transition_enable_fixed(source, true, 0);
+		obs_source_update(source, nullptr);
+	}
+	return stinger;
+}
+
+void destroyStinger(void *data) noexcept
+{
+	delete static_cast<Stinger *>(data);
+}
+
+void updateStinger(void *data, obs_data_t *settings) noexcept
+{
+	auto &stinger = *static_cast<Stinger *>(data);
+	if (!obs_data_has_user_value(settings, "media_ms")) {
+		return;
+	}
+	const OBSDataAutoRelease media = obs_data_create();
+	obs_data_set_int(media, "duration_ms", obs_data_get_int(settings, "media_ms"));
+	obs_data_set_int(media, "open_after_ms", obs_data_get_int(settings, "open_after_ms"));
+	stinger.media = obs_source_create_private(kMediaStandInId, "stinger media", media);
+}
+
+void startStinger(void *data) noexcept
+{
+	auto &stinger = *static_cast<Stinger *>(data);
+	if (!stinger.media) {
+		return;
+	}
+	if (stinger.running) {
+		obs_source_media_restart(stinger.media);
+		return;
+	}
+	const int64_t length = obs_source_media_get_duration(stinger.media);
+	obs_transition_enable_fixed(stinger.source, true, static_cast<uint32_t>(length) + 250);
+	obs_source_add_active_child(stinger.source, stinger.media);
+	stinger.running = true;
+}
+
+void stopStinger(void *data) noexcept
+{
+	auto &stinger = *static_cast<Stinger *>(data);
+	if (stinger.media) {
+		obs_source_remove_active_child(stinger.source, stinger.media);
+	}
+	stinger.running = false;
+}
+
+void enumStingerActive(void *data, obs_source_enum_proc_t callback, void *param) noexcept
+{
+	const auto &stinger = *static_cast<Stinger *>(data);
+	if (stinger.media && stinger.running) {
+		callback(stinger.source, stinger.media, param);
+	}
+}
+
+void enumStingerAll(void *data, obs_source_enum_proc_t callback, void *param) noexcept
+{
+	const auto &stinger = *static_cast<Stinger *>(data);
+	if (stinger.media) {
+		callback(stinger.source, stinger.media, param);
+	}
+}
+
+void renderStinger(void *data, gs_effect_t *) noexcept
+{
+	obs_transition_video_render(static_cast<Stinger *>(data)->source, nullptr);
+}
+
+bool renderStingerAudio(void *data, uint64_t *time, obs_source_audio_mix *audio, uint32_t mixers, size_t channels,
+			size_t sampleRate) noexcept
+{
+	return obs_transition_audio_render(static_cast<Stinger *>(data)->source, time, audio, mixers, channels,
+					   sampleRate, fadeFrom, fadeTo);
+}
+
+void registerStinger()
+{
+	obs_source_info info = {};
+	info.id = kStingerId;
+	info.type = OBS_SOURCE_TYPE_TRANSITION;
+	info.get_name = stingerName;
+	info.create = createStinger;
+	info.destroy = destroyStinger;
+	info.update = updateStinger;
+	info.video_render = renderStinger;
+	info.audio_render = renderStingerAudio;
+	info.enum_active_sources = enumStingerActive;
+	info.enum_all_sources = enumStingerAll;
+	info.transition_start = startStinger;
+	info.transition_stop = stopStinger;
+	obs_register_source(&info);
+}
+
 // Counts a signal of a source, which it keeps until it goes.
 class SignalCount {
 public:
@@ -322,6 +440,13 @@ int64_t markerOnChannel()
 	return obs_data_get_int(settings, "marker");
 }
 
+// How far the transition on the channel has gone, from 0 to 1.
+float timeOnChannel()
+{
+	const OBSSourceAutoRelease source = obs_get_output_source(kAirChannel);
+	return source ? obs_transition_get_time(source) : 1.0f;
+}
+
 // A file for an intro or outro, which the stand-ins of OBS's media and image sources
 // never read.
 std::string fileIn(const TempDirectory &folder, const char *name)
@@ -349,10 +474,16 @@ public:
 		if (name == "Ghost") {
 			return TransitionTemplate{"ghost_transition", "{}"};
 		}
+		if (name == "Stinger") {
+			return TransitionTemplate{kStingerId, stinger};
+		}
 		return std::nullopt;
 	}
 
 	std::vector<std::string> names() const override { return {"Swipe", "Ghost"}; }
+
+	// The settings of the user's stinger, which the user may edit in OBS.
+	std::string stinger = "{}";
 };
 
 // Runs the UI thread's tasks for a while, failing should the condition stop holding.
@@ -1083,6 +1214,151 @@ TEST_CASE_METHOD(ObsFixture, "a replay goes on air with copies of the user's tra
 	CHECK(channelName() == "Tapeloop in");
 	CHECK(idOnChannel() == "fade_transition");
 	CHECK(markerOnChannel() == 0);
+
+	sequence.reset();
+	obs_wait_for_destroy_queue();
+}
+
+// Past the quarter of a second a stand-in of OBS's stinger has without its media's length.
+bool stingerPlays()
+{
+	return holdsFor(400ms, [] { return timeOnChannel() < 1.0f; });
+}
+
+TEST_CASE_METHOD(ObsFixture, "a transition with a length of its own runs it the first time, and after an edit in OBS",
+		 "[obs][sequence][air]")
+{
+	registerReplaySource({});
+	registerFade();
+	registerStinger();
+	const UiTasks ui;
+	Catalog catalog;
+	catalog.stinger = R"({"media_ms": 2000})";
+	ReplayLibrary library;
+	std::optional<SequencePlayer> sequence(std::in_place, library);
+	REQUIRE(sequence->player());
+	sequence->setTransitions(&catalog);
+
+	AirSettings air;
+	air.into = {"Stinger", 100ms};
+	air.back = {"Stinger", 100ms};
+	sequence->setAir(air);
+
+	const Captured captured(library, {"a"}, 120);
+	REQUIRE(sequence->putOnAir(captured.id()));
+	CHECK(idOnChannel() == kStingerId);
+	CHECK(stingerPlays());
+	sequence->takeOffAir();
+	CHECK(channelName() == "Tapeloop out");
+	CHECK(stingerPlays());
+	REQUIRE(runUntil([&] { return !sequence->air().onAir(); }));
+
+	// The same again with the instances already there.
+	REQUIRE(sequence->putOnAir(captured.id()));
+	CHECK(stingerPlays());
+	sequence->takeOffAir();
+	CHECK(stingerPlays());
+	REQUIRE(runUntil([&] { return !sequence->air().onAir(); }));
+
+	// The user edits it, with nothing to tell the composition but the next replay.
+	catalog.stinger = R"({"media_ms": 3000, "marker": 9})";
+	REQUIRE(sequence->putOnAir(captured.id()));
+	CHECK(markerOnChannel() == 9);
+	CHECK(stingerPlays());
+	sequence->takeOffAir();
+	CHECK(markerOnChannel() == 9);
+	CHECK(stingerPlays());
+
+	sequence.reset();
+	obs_wait_for_destroy_queue();
+}
+
+TEST_CASE_METHOD(ObsFixture, "a replay waits for a transition's video to open only when it was just made",
+		 "[obs][sequence][air]")
+{
+	registerReplaySource({});
+	registerFade();
+	registerStinger();
+	const UiTasks ui;
+	Catalog catalog;
+	catalog.stinger = R"({"media_ms": 2000, "open_after_ms": 150})";
+	ReplayLibrary library;
+	std::optional<SequencePlayer> sequence(std::in_place, library);
+	REQUIRE(sequence->player());
+	sequence->setTransitions(&catalog);
+
+	AirSettings air;
+	air.into = {"Stinger", 100ms};
+	sequence->setAir(air);
+	const Captured captured(library, {"a"}, 120);
+
+	auto before = std::chrono::steady_clock::now();
+	REQUIRE(sequence->putOnAir(captured.id()));
+	const auto waited = std::chrono::steady_clock::now() - before;
+	CHECK(stingerPlays());
+	sequence->takeOffAir();
+	REQUIRE(runUntil([&] { return !sequence->air().onAir(); }));
+
+	// Made when the settings came, it has opened by the time a replay goes on air.
+	catalog.stinger = R"({"media_ms": 2000, "open_after_ms": 150, "marker": 9})";
+	sequence->setAir(air);
+	CHECK(holdsFor(300ms, [] { return true; }));
+	before = std::chrono::steady_clock::now();
+	REQUIRE(sequence->putOnAir(captured.id()));
+	const auto opened = std::chrono::steady_clock::now() - before;
+	CHECK(markerOnChannel() == 9);
+	CHECK(opened < waited / 2);
+	CHECK(stingerPlays());
+
+	sequence.reset();
+	obs_wait_for_destroy_queue();
+}
+
+TEST_CASE_METHOD(ObsFixture, "a transition whose video never opens holds a replay back once, and briefly",
+		 "[obs][sequence][air]")
+{
+	registerReplaySource({});
+	registerFade();
+	registerStinger();
+	const UiTasks ui;
+	Catalog catalog;
+	catalog.stinger = R"({"media_ms": 2000, "open_after_ms": 600000})";
+	ReplayLibrary library;
+	std::optional<SequencePlayer> sequence(std::in_place, library);
+	REQUIRE(sequence->player());
+	sequence->setTransitions(&catalog);
+
+	AirSettings air;
+	air.into = {"Stinger", 100ms};
+	sequence->setAir(air);
+	const Captured captured(library, {"a"}, 120);
+
+	const auto timePutOnAir = [&] {
+		const auto before = std::chrono::steady_clock::now();
+		REQUIRE(sequence->putOnAir(captured.id()));
+		return std::chrono::steady_clock::now() - before;
+	};
+	const auto comeOff = [&] {
+		sequence->takeOffAir();
+		REQUIRE(runUntil([&] { return !sequence->air().onAir(); }));
+	};
+
+	const auto first = timePutOnAir();
+	CHECK(first < 1s);
+	CHECK(shownName() == "Tapeloop replay");
+	// With no length to go by, it runs out at once as OBS's own does.
+	CHECK(runUntil([] { return timeOnChannel() >= 1.0f; }));
+	comeOff();
+
+	const auto second = timePutOnAir();
+	CHECK(second < first);
+	comeOff();
+
+	// One with no video at all has nothing to wait for.
+	catalog.stinger = "{}";
+	const auto noVideo = timePutOnAir();
+	CHECK(noVideo < first);
+	CHECK(shownName() == "Tapeloop replay");
 
 	sequence.reset();
 	obs_wait_for_destroy_queue();

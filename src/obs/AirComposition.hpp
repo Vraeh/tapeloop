@@ -68,9 +68,11 @@ public:
 // them off, without touching the user's scenes: the intro, the replay and the outro, each
 // from the transition into air when nothing was on air and by a cut from the part before
 // otherwise, and the way back to live through a transition of its own. The transitions
-// are private copies of the user's picked ones, and the intro and outro private media or
-// image sources, all made and released here. Everything runs on the UI thread except
-// the signals and the tick, which only note what they saw for the UI thread to act on.
+// are private copies of the user's picked ones, made ahead of the first use because they
+// read their settings on a later tick and open their own video on a thread, and the intro
+// and outro private media or image sources, all made and released here. Everything runs
+// on the UI thread except the signals and the tick, which only note what they saw for the
+// UI thread to act on.
 class AirComposition {
 public:
 	// Shows this source as the replay. Both outlive the composition.
@@ -87,11 +89,13 @@ public:
 	void setCatalog(const TransitionCatalog *catalog) noexcept { catalog_ = catalog; }
 	// The names of the transitions that can be picked.
 	std::vector<std::string> transitionNames() const;
-	// The transitions apply the next time they are used; the intro and outro once nothing
-	// is on air.
+	// A transition's length applies the next time it is used; which transition, and the
+	// intro and outro, once nothing is on air.
 	void setSettings(const AirSettings &settings);
-	// Brings the intro and outro up to date before a replay starts, when nothing is on
-	// air: an intro or outro whose file was missing is looked for again.
+	// Brings the transitions, intro and outro up to date before a replay starts, when
+	// nothing is on air: a transition edited in OBS is made again, and an intro or outro
+	// whose file was missing is looked for again. Blocks for a moment only when a
+	// transition was just made and is not ready.
 	void prepare();
 	bool hasIntro() const noexcept { return intro_ != nullptr; }
 	bool hasOutro() const noexcept { return outro_ != nullptr; }
@@ -129,12 +133,15 @@ private:
 		bool ended = false;
 	};
 
-	// The transition made from the user's pick, made again only when the pick changed. Null
-	// when no transition can be made. Never the one on the channel.
-	obs_source_t *transitionFor(obs_source_t *&transition, TransitionTemplate &made, const AirTransition &wanted,
-				    const char *name);
+	// Makes the transition from the user's pick, again only when the pick changed. Left
+	// null when no transition can be made. Never the one on the channel.
+	void makeTransition(obs_source_t *&transition, TransitionTemplate &made, const AirTransition &wanted,
+			    const char *name);
 	TransitionTemplate pick(const std::string &name) const;
 	void releaseTransition(obs_source_t *&transition);
+	void applyTransitions();
+	bool transitionReady(obs_source_t *transition) const;
+	void awaitTransitions();
 	void makeMedia(obs_source_t *&media, AirMedia &made, const AirMedia &wanted, const char *name);
 	void releaseMedia(obs_source_t *&media);
 	void applyMedia();
@@ -176,6 +183,9 @@ private:
 	obs_source_t *onChannel_ = nullptr;
 	AirPhase shown_ = AirPhase::Live;
 	bool leaving_ = false;
+	// A transition was made and going on air has not yet waited for it.
+	bool settling_ = false;
+	uint64_t madeAtTick_ = 0;
 
 	// What the signals and the tick share with the UI thread, which alone changes watch_.
 	// No libobs call is made while it is held: the channel signal comes with libobs's
@@ -198,6 +208,7 @@ private:
 	bool lost_ = false;
 	// Set while the composition is on the channel, so that the tick looks only then.
 	std::atomic<bool> armed_{false};
+	std::atomic<uint64_t> ticks_{0};
 
 	std::shared_ptr<int> alive_ = std::make_shared<int>(0);
 };

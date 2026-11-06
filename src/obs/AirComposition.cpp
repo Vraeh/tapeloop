@@ -25,6 +25,9 @@ constexpr uint64_t kEndSlack = 2'000'000'000;
 constexpr uint64_t kStopSlack = 30'000'000'000;
 // How often a video that started without telling its length is asked again.
 constexpr uint64_t kProbeEvery = 250'000'000;
+// How long going on air waits for a transition just made to read its settings and for
+// a video of its own to open.
+constexpr uint64_t kSettleWait = 300'000'000;
 
 uint32_t durationOf(const AirTransition &transition)
 {
@@ -58,6 +61,14 @@ obs_source_t *sourceOf(calldata_t *call)
 	return static_cast<obs_source_t *>(calldata_ptr(call, "source"));
 }
 
+void noteUnopened(obs_source_t *, obs_source_t *child, void *param) noexcept
+{
+	if ((obs_source_get_output_flags(child) & OBS_SOURCE_CONTROLLABLE_MEDIA) != 0 &&
+	    obs_source_media_get_duration(child) <= 0) {
+		*static_cast<bool *>(param) = true;
+	}
+}
+
 } // namespace
 
 AirComposition::AirComposition(obs_source_t *replay, AirListener &listener)
@@ -85,11 +96,14 @@ void AirComposition::setSettings(const AirSettings &settings)
 {
 	settings_ = settings;
 	applyMedia();
+	applyTransitions();
 }
 
 void AirComposition::prepare()
 {
 	applyMedia();
+	applyTransitions();
+	awaitTransitions();
 }
 
 bool AirComposition::channelFree() const
@@ -122,14 +136,13 @@ bool AirComposition::show(AirPhase part)
 	}
 
 	if (!onChannel_ || leaving_) {
-		obs_source_t *in = transitionFor(in_, inMade_, settings_.into, "Tapeloop in");
-		if (in) {
-			fit(in);
-			obs_transition_set(in, nullptr);
-			if (!obs_transition_start(in, OBS_TRANSITION_MODE_AUTO, durationOf(settings_.into), target)) {
-				obs_transition_set(in, target);
+		if (in_) {
+			fit(in_);
+			obs_transition_set(in_, nullptr);
+			if (!obs_transition_start(in_, OBS_TRANSITION_MODE_AUTO, durationOf(settings_.into), target)) {
+				obs_transition_set(in_, target);
 			}
-			takeChannel(in);
+			takeChannel(in_);
 		} else {
 			takeChannel(target);
 		}
@@ -155,22 +168,21 @@ bool AirComposition::leave()
 		return true;
 	}
 	obs_source_t *from = partSource(shown_);
-	obs_source_t *out = from ? transitionFor(out_, outMade_, settings_.back, "Tapeloop out") : nullptr;
-	if (!out) {
+	if (!from || !out_) {
 		cut();
 		return false;
 	}
 	const uint32_t duration = durationOf(settings_.back);
-	watch(nullptr, out, os_gettime_ns() + nanoseconds(duration) + kStopSlack);
-	fit(out);
-	obs_transition_set(out, from);
-	if (!obs_transition_start(out, OBS_TRANSITION_MODE_AUTO, duration, nullptr)) {
+	watch(nullptr, out_, os_gettime_ns() + nanoseconds(duration) + kStopSlack);
+	fit(out_);
+	obs_transition_set(out_, from);
+	if (!obs_transition_start(out_, OBS_TRANSITION_MODE_AUTO, duration, nullptr)) {
 		cut();
 		return false;
 	}
 	// The part on air goes on through the way back: the way back holds it before the
 	// transition that showed it lets go, so it never stops in between.
-	takeChannel(out);
+	takeChannel(out_);
 	if (in_) {
 		obs_transition_clear(in_);
 	}
@@ -232,18 +244,18 @@ TransitionTemplate AirComposition::pick(const std::string &name) const
 	return {kFadeId, {}};
 }
 
-obs_source_t *AirComposition::transitionFor(obs_source_t *&transition, TransitionTemplate &made,
-					    const AirTransition &wanted, const char *name)
+void AirComposition::makeTransition(obs_source_t *&transition, TransitionTemplate &made, const AirTransition &wanted,
+				    const char *name)
 {
 	TransitionTemplate picked = pick(wanted.name);
 	if (transition && picked == made) {
-		return transition;
+		return;
 	}
 	releaseTransition(transition);
 	made = std::move(picked);
 	if (!registered(made.id.c_str())) {
 		blog(LOG_WARNING, "[tapeloop] OBS has no %s, so the replay cuts", made.id.c_str());
-		return nullptr;
+		return;
 	}
 	OBSDataAutoRelease settings = made.settingsJson.empty() ? nullptr
 								: obs_data_create_from_json(made.settingsJson.c_str());
@@ -255,8 +267,9 @@ obs_source_t *AirComposition::transitionFor(obs_source_t *&transition, Transitio
 	if (transition) {
 		signal_handler_connect(obs_source_get_signal_handler(transition), "transition_stop",
 				       handleTransitionStop, this);
+		settling_ = true;
+		madeAtTick_ = ticks_;
 	}
-	return transition;
 }
 
 void AirComposition::releaseTransition(obs_source_t *&transition)
@@ -269,6 +282,49 @@ void AirComposition::releaseTransition(obs_source_t *&transition)
 	obs_transition_clear(transition);
 	obs_source_release(transition);
 	transition = nullptr;
+}
+
+void AirComposition::applyTransitions()
+{
+	if (destroyed_ || onChannel_) {
+		return;
+	}
+	makeTransition(in_, inMade_, settings_.into, "Tapeloop in");
+	makeTransition(out_, outMade_, settings_.back, "Tapeloop out");
+}
+
+bool AirComposition::transitionReady(obs_source_t *transition) const
+{
+	if (!transition) {
+		return true;
+	}
+	// A tick reaches this callback before the sources, so one source pass has run only
+	// after the second.
+	if (ticks_ < madeAtTick_ + 2) {
+		return false;
+	}
+	if (!obs_transition_fixed(transition)) {
+		return true;
+	}
+	bool unopened = false;
+	obs_source_enum_full_tree(transition, noteUnopened, &unopened);
+	return !unopened;
+}
+
+void AirComposition::awaitTransitions()
+{
+	if (!settling_) {
+		return;
+	}
+	settling_ = false;
+	const uint64_t giveUp = os_gettime_ns() + kSettleWait;
+	while (!transitionReady(in_) || !transitionReady(out_)) {
+		if (os_gettime_ns() >= giveUp) {
+			blog(LOG_WARNING, "[tapeloop] A transition is not ready yet, so it may run short this once");
+			return;
+		}
+		os_sleep_ms(1);
+	}
 }
 
 void AirComposition::makeMedia(obs_source_t *&media, AirMedia &made, const AirMedia &wanted, const char *name)
@@ -452,6 +508,7 @@ void AirComposition::probeDuration()
 void AirComposition::handleTick(void *data, float) noexcept
 {
 	auto &self = *static_cast<AirComposition *>(data);
+	++self.ticks_;
 	if (!self.armed_.load(std::memory_order_relaxed)) {
 		return;
 	}

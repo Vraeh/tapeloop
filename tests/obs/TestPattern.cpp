@@ -32,6 +32,7 @@ struct TestPattern {
 	std::atomic<bool> sizeOnlyWhenActive{false};
 	std::atomic<bool> restartOnActivate{false};
 	std::atomic<int64_t> durationMs{0};
+	std::atomic<uint64_t> opensAt{0};
 	uint32_t frame = 0;
 
 	bool hidden() const noexcept
@@ -70,6 +71,9 @@ void update(void *data, obs_data_t *settings) noexcept
 	pattern->sizeOnlyWhenActive = obs_data_get_bool(settings, "size_only_when_active");
 	pattern->restartOnActivate = obs_data_get_bool(settings, "restart_on_activate");
 	pattern->durationMs = obs_data_get_int(settings, "duration_ms");
+	const auto openAfter =
+		static_cast<uint64_t>(std::max<long long>(obs_data_get_int(settings, "open_after_ms"), 0));
+	pattern->opensAt = os_gettime_ns() + openAfter * 1'000'000;
 }
 
 const char *mediaName(void *) noexcept
@@ -93,7 +97,8 @@ void mediaActivate(void *data) noexcept
 
 int64_t mediaDuration(void *data) noexcept
 {
-	return static_cast<TestPattern *>(data)->durationMs;
+	const TestPattern &pattern = *static_cast<TestPattern *>(data);
+	return os_gettime_ns() >= pattern.opensAt ? pattern.durationMs.load() : 0;
 }
 
 void browserDefaults(obs_data_t *settings) noexcept
