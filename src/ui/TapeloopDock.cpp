@@ -1036,7 +1036,7 @@ void TapeloopDock::openAirSettings()
 		dialog->setObjectName("airSettingsDialog");
 		dialog->setAttribute(Qt::WA_DeleteOnClose);
 		connect(dialog, &QDialog::accepted, this,
-			[this, dialog, opened] { guarded([&] { applyAirSettings(opened, dialog->result()); }); });
+			[this, dialog, opened] { guarded([&] { applyAirSettings(opened, dialog->chosen()); }); });
 		dialog->open();
 	});
 }

@@ -31,7 +31,7 @@ public:
 			  const TextLookup &text, QWidget *parent = nullptr);
 
 	// What was not touched comes back as it came in, whatever the controls can show.
-	AirSettings result() const;
+	AirSettings chosen() const;
 
 private:
 	struct Part {

@@ -1134,7 +1134,7 @@ TEST_CASE("the on-air settings dialog starts from the defaults")
 		CHECK(child<QSpinBox>(dialog, (name + "Duration").c_str())->value() == 300);
 		CHECK(child<QDoubleSpinBox>(dialog, (name + "ImageTime").c_str())->value() == 3.0);
 	}
-	CHECK(dialog.result() == AirSettings{});
+	CHECK(dialog.chosen() == AirSettings{});
 }
 
 TEST_CASE("the on-air settings dialog gives back what it was given")
@@ -1150,7 +1150,7 @@ TEST_CASE("the on-air settings dialog gives back what it was given")
 	current.back.name = "Gone";
 	current.back.duration = 50ms;
 	const AirSettingsDialog dialog(current, {"Swipe", "Fade"}, localeText());
-	CHECK(dialog.result() == current);
+	CHECK(dialog.chosen() == current);
 	CHECK(child<QComboBox>(dialog, "introTransition")->currentText() == "Swipe");
 	CHECK(child<QComboBox>(dialog, "outroTransition")->currentText() == "Gone (not found)");
 
@@ -1160,7 +1160,7 @@ TEST_CASE("the on-air settings dialog gives back what it was given")
 	unused.intro.imageTime = 4000ms;
 	unused.outro.kind = AirMediaKind::Video;
 	unused.outro.imageTime = 9000ms;
-	CHECK(AirSettingsDialog(unused, {}, localeText()).result() == unused);
+	CHECK(AirSettingsDialog(unused, {}, localeText()).chosen() == unused);
 
 	// A saved file can hold an image time finer than the box's tenths, which stays until
 	// the box is changed.
@@ -1169,9 +1169,9 @@ TEST_CASE("the on-air settings dialog gives back what it was given")
 	fine.intro.imageTime = 1234ms;
 	const AirSettingsDialog fineDialog(fine, {}, localeText());
 	CHECK(child<QDoubleSpinBox>(fineDialog, "introImageTime")->value() == 1.2);
-	CHECK(fineDialog.result() == fine);
+	CHECK(fineDialog.chosen() == fine);
 	child<QDoubleSpinBox>(fineDialog, "introImageTime")->setValue(1.5);
-	CHECK(fineDialog.result().intro.imageTime == 1500ms);
+	CHECK(fineDialog.chosen().intro.imageTime == 1500ms);
 }
 
 TEST_CASE("the on-air settings dialog changes every part of the settings")
@@ -1195,10 +1195,10 @@ TEST_CASE("the on-air settings dialog changes every part of the settings")
 	expected.outro.path = "/media/outro.png";
 	expected.outro.imageTime = 4500ms;
 	expected.back = {"Ghost", 900ms};
-	CHECK(dialog.result() == expected);
+	CHECK(dialog.chosen() == expected);
 
 	child<QComboBox>(dialog, "introTransition")->setCurrentIndex(0);
-	CHECK(dialog.result().into.name.empty());
+	CHECK(dialog.chosen().into.name.empty());
 }
 
 TEST_CASE("the on-air settings dialog lists the transitions by name, whatever the case")
@@ -1293,6 +1293,20 @@ TEST_CASE("every control of the on-air settings dialog is reached with the keybo
 				   "outroTransition", "outroDuration"});
 }
 
+TEST_CASE("every label of the on-air settings dialog names its control")
+{
+	const AirSettingsDialog dialog({}, {}, localeText());
+	QStringList named;
+	for (const QLabel *label : dialog.findChildren<QLabel *>()) {
+		REQUIRE(label->buddy());
+		named.append(label->text() + " " + label->buddy()->objectName());
+	}
+	named.sort();
+	CHECK(named == QStringList{"File introFile", "File outroFile", "Image time introImageTime",
+				   "Image time outroImageTime", "Intro introKind", "Outro outroKind",
+				   "Transition introTransition", "Transition outroTransition"});
+}
+
 TEST_CASE("the on-air settings dialog browses for a file of the kind picked")
 {
 	const QTemporaryDir directory;
@@ -1316,7 +1330,7 @@ TEST_CASE("the on-air settings dialog browses for a file of the kind picked")
 	CHECK(files->nameFilters().last() == "All files (*)");
 	CHECK(files->directory().absolutePath() == QDir(directory.path()).absolutePath());
 	files->reject();
-	CHECK(dialog.result() == current);
+	CHECK(dialog.chosen() == current);
 	QCoreApplication::sendPostedEvents(nullptr, QEvent::DeferredDelete);
 	CHECK_FALSE(dialog.findChild<QFileDialog *>("airFile"));
 

@@ -11,6 +11,7 @@
 #include <QFormLayout>
 #include <QGroupBox>
 #include <QHBoxLayout>
+#include <QLabel>
 #include <QLineEdit>
 #include <QPushButton>
 #include <QSpinBox>
@@ -149,11 +150,16 @@ QGroupBox *AirSettingsDialog::addPart(Part &part, const QString &name, const QSt
 	auto *animation = new QHBoxLayout;
 	animation->addWidget(part.transition, 1);
 	animation->addWidget(part.duration);
+	// addRow gives a label its buddy only when the row is a single widget.
+	auto *fileLabel = new QLabel(text("AirSettings.File"), box);
+	fileLabel->setBuddy(part.path);
+	auto *transitionLabel = new QLabel(text("AirSettings.Transition"), box);
+	transitionLabel->setBuddy(part.transition);
 	auto *form = new QFormLayout(box);
 	form->addRow(kindLabel, part.kind);
-	form->addRow(text("AirSettings.File"), file);
+	form->addRow(fileLabel, file);
 	form->addRow(text("AirSettings.ImageTime"), part.imageTime);
-	form->addRow(text("AirSettings.Transition"), animation);
+	form->addRow(transitionLabel, animation);
 	return box;
 }
 
@@ -194,7 +200,7 @@ AirTransition AirSettingsDialog::transitionOf(const Part &part)
 	return transition;
 }
 
-AirSettings AirSettingsDialog::result() const
+AirSettings AirSettingsDialog::chosen() const
 {
 	AirSettings settings;
 	settings.intro = mediaOf(intro_);
