@@ -1908,6 +1908,7 @@ TEST_CASE_METHOD(ObsFixture, "an intro whose file is missing is looked for again
 	air.intro = {AirMediaKind::Image, path.string(), 500ms};
 	sequence->setAir(air);
 	CHECK_FALSE(sequence->air().hasIntro());
+	CHECK(sequence->air().missingIntro() == path.string());
 
 	const Captured captured(library, {"a"}, 120);
 	REQUIRE(sequence->putOnAir(captured.id()));
@@ -1916,9 +1917,11 @@ TEST_CASE_METHOD(ObsFixture, "an intro whose file is missing is looked for again
 	CHECK(sequence->state().phase() == AirPhase::Live);
 
 	CHECK(fileIn(folder, "intro.png") == path.string());
+	CHECK(sequence->air().missingIntro() == path.string());
 	REQUIRE(sequence->putOnAir(captured.id()));
 	CHECK(sequence->state().phase() == AirPhase::Intro);
 	CHECK(sequence->air().hasIntro());
+	CHECK(sequence->air().missingIntro().empty());
 
 	sequence.reset();
 	obs_wait_for_destroy_queue();

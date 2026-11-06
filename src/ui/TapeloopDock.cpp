@@ -13,6 +13,7 @@
 #include <QComboBox>
 #include <QDateTime>
 #include <QDropEvent>
+#include <QFileInfo>
 #include <QFont>
 #include <QFormLayout>
 #include <QHBoxLayout>
@@ -26,6 +27,7 @@
 #include <QPushButton>
 #include <QSignalBlocker>
 #include <QSpinBox>
+#include <QStringList>
 #include <QStyle>
 #include <QTableWidget>
 #include <QTimer>
@@ -266,6 +268,8 @@ TapeloopDock::TapeloopDock(DockBackend &backend, TextLookup text, QWidget *paren
 	exportStatus_->hide();
 	airStatus_->setObjectName("airStatus");
 	airStatus_->setWordWrap(true);
+	// It may name a file.
+	airStatus_->setTextFormat(Qt::PlainText);
 	airStatus_->hide();
 	followsOutputs_->setObjectName("followsOutputs");
 	followsOutputs_->setWordWrap(true);
@@ -941,20 +945,32 @@ void TapeloopDock::updateExports()
 
 void TapeloopDock::updateAirStatus()
 {
-	QString text;
+	QStringList lines;
 	switch (backend_.airRefusal()) {
 	case AirRefusal::None:
 		break;
 	case AirRefusal::ChannelBusy:
-		text = text_("Dock.Air.ChannelBusy");
+		lines << text_("Dock.Air.ChannelBusy");
 		break;
 	case AirRefusal::Unreadable:
-		text = text_("Dock.Air.Unreadable");
+		lines << text_("Dock.Air.Unreadable");
 		break;
 	case AirRefusal::Damaged:
-		text = text_("Dock.Air.Damaged");
+		lines << text_("Dock.Air.Damaged");
 		break;
 	}
+	const auto fileName = [](const std::string &path) {
+		return QFileInfo(QString::fromStdString(path)).fileName();
+	};
+	const std::string intro = backend_.missingIntro();
+	if (!intro.empty()) {
+		lines << text_("Dock.Air.IntroMissing").arg(fileName(intro));
+	}
+	const std::string outro = backend_.missingOutro();
+	if (!outro.empty()) {
+		lines << text_("Dock.Air.OutroMissing").arg(fileName(outro));
+	}
+	const QString text = lines.join('\n');
 	airStatus_->setVisible(!text.isEmpty());
 	if (airStatus_->text() != text) {
 		airStatus_->setText(text);

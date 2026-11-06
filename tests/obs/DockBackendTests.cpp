@@ -283,6 +283,59 @@ TEST_CASE_METHOD(ObsFixture, "why a replay did not go on air reaches the dock", 
 	CHECK(ManagerDockBackend(manager).airRefusal() == AirRefusal::None);
 }
 
+TEST_CASE_METHOD(ObsFixture, "an intro or outro whose file is missing reaches the dock", "[obs][dock][air]")
+{
+	tapeloop::obs::registerReplaySource({});
+	OfflineHost host;
+	CaptureManager manager(host);
+	SequencePlayer sequence(manager.library());
+	ManagerDockBackend backend(manager, &sequence);
+	const std::filesystem::path intro = host.dir.path() / "intro.png";
+	const std::filesystem::path outro = host.dir.path() / "outro.png";
+	CHECK(backend.missingIntro().empty());
+	CHECK(backend.missingOutro().empty());
+
+	BufferSettings settings = backend.settings();
+	settings.air.intro.kind = AirMediaKind::Image;
+	settings.air.intro.path = tapeloop::utf8FromPath(intro);
+	settings.air.outro.kind = AirMediaKind::Image;
+	settings.air.outro.path = tapeloop::utf8FromPath(outro);
+	backend.setSettings(settings);
+	CHECK(backend.missingIntro() == settings.air.intro.path);
+	CHECK(backend.missingOutro() == settings.air.outro.path);
+	// Without a sequence nothing goes on air, so nothing is missing.
+	CHECK(ManagerDockBackend(manager).missingIntro().empty());
+	CHECK(ManagerDockBackend(manager).missingOutro().empty());
+
+	std::ofstream(intro) << "unread";
+	backend.setSettings(settings);
+	CHECK(backend.missingIntro().empty());
+	CHECK(backend.missingOutro() == settings.air.outro.path);
+
+	std::ofstream(outro) << "unread";
+	backend.setSettings(settings);
+	CHECK(backend.missingOutro().empty());
+
+	std::filesystem::remove(intro);
+	std::filesystem::remove(outro);
+	// A path left under no kind asks for nothing, so its file is not missing.
+	settings.air.intro.kind = AirMediaKind::None;
+	settings.air.outro.kind = AirMediaKind::None;
+	backend.setSettings(settings);
+	CHECK(backend.missingIntro().empty());
+	CHECK(backend.missingOutro().empty());
+
+	settings.air.intro.kind = AirMediaKind::Image;
+	settings.air.outro.kind = AirMediaKind::Image;
+	backend.setSettings(settings);
+	REQUIRE_FALSE(backend.missingIntro().empty());
+	REQUIRE_FALSE(backend.missingOutro().empty());
+	// With the composition gone, nothing goes on air any more.
+	sequence.destroyAir();
+	CHECK(backend.missingIntro().empty());
+	CHECK(backend.missingOutro().empty());
+}
+
 TEST_CASE_METHOD(ObsFixture, "a dock edit waits for the replay on air to go off air", "[obs][dock][air]")
 {
 	tapeloop::obs::registerReplaySource({});

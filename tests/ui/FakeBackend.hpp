@@ -42,6 +42,8 @@ public:
 	// The rows of the sources the dock asked to move, and of the ones whose places they take.
 	std::vector<std::pair<size_t, size_t>> moves;
 	tapeloop::AirRefusal refusal = tapeloop::AirRefusal::None;
+	std::string introMissing;
+	std::string outroMissing;
 
 	std::vector<tapeloop::ui::DockSource> sources() const override
 	{
@@ -178,6 +180,8 @@ public:
 	}
 	std::vector<tapeloop::ui::DockExport> exports() const override { return exportList; }
 	tapeloop::AirRefusal airRefusal() const override { return refusal; }
+	std::string missingIntro() const override { return introMissing; }
+	std::string missingOutro() const override { return outroMissing; }
 	void pickReplay(uint64_t id) override
 	{
 		++picks;

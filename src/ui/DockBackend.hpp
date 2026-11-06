@@ -146,6 +146,10 @@ public:
 	virtual void pickReplay(uint64_t id) = 0;
 	// Why the last try to put a replay on air did not go through.
 	virtual AirRefusal airRefusal() const = 0;
+	// The file of an intro or outro the settings ask for and replays go on air without,
+	// empty when there is none.
+	virtual std::string missingIntro() const = 0;
+	virtual std::string missingOutro() const = 0;
 
 	virtual bool canExport(ExportFormat format) const = 0;
 	// Exports a stored replay in the background. False when refused.

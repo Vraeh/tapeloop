@@ -2014,3 +2014,40 @@ TEST_CASE("the dock says why a replay did not go on air")
 	CHECK_FALSE(status->isVisible());
 	CHECK(status->text().isEmpty());
 }
+
+TEST_CASE("the dock says which intro or outro replays go on air without")
+{
+	FakeBackend backend;
+	addSources(backend);
+	TapeloopDock dock(backend, localeText());
+	dock.show();
+	auto *status = child<QLabel>(dock, "airStatus");
+	const QString busy = localeText()("Dock.Air.ChannelBusy");
+	// A file's name is not markup.
+	const QString intro = localeText()("Dock.Air.IntroMissing").arg("<b>intro.mp4");
+	const QString outro = localeText()("Dock.Air.OutroMissing").arg("outro.png");
+	CHECK(status->textFormat() == Qt::PlainText);
+
+	backend.introMissing = "/videos/<b>intro.mp4";
+	dock.refresh();
+	CHECK(status->isVisible());
+	CHECK(status->text() == intro);
+
+	backend.outroMissing = "/pictures/outro.png";
+	dock.refresh();
+	CHECK(status->text() == intro + "\n" + outro);
+
+	backend.refusal = AirRefusal::ChannelBusy;
+	dock.refresh();
+	CHECK(status->text() == busy + "\n" + intro + "\n" + outro);
+
+	backend.refusal = AirRefusal::None;
+	backend.introMissing.clear();
+	dock.refresh();
+	CHECK(status->text() == outro);
+
+	backend.outroMissing.clear();
+	dock.refresh();
+	CHECK_FALSE(status->isVisible());
+	CHECK(status->text().isEmpty());
+}

@@ -328,6 +328,16 @@ void AirComposition::awaitTransitions()
 	}
 }
 
+std::string AirComposition::missingIntro() const
+{
+	return !destroyed_ && !intro_ && introMade_.present() ? introMade_.path : std::string();
+}
+
+std::string AirComposition::missingOutro() const
+{
+	return !destroyed_ && !outro_ && outroMade_.present() ? outroMade_.path : std::string();
+}
+
 void AirComposition::makeMedia(obs_source_t *&media, AirMedia &made, const AirMedia &wanted, const char *name)
 {
 	// A file that was missing is looked for again.

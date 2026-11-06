@@ -99,6 +99,11 @@ public:
 	void prepare();
 	bool hasIntro() const noexcept { return intro_ != nullptr; }
 	bool hasOutro() const noexcept { return outro_ != nullptr; }
+	// The file of an intro or outro the settings ask for and that could not be made, empty
+	// when there is none. As of the last look at it: when the settings change, when a
+	// replay is about to go on air and when one has gone off.
+	std::string missingIntro() const;
+	std::string missingOutro() const;
 	// Whether the channel is empty or holds the composition.
 	bool channelFree() const;
 
