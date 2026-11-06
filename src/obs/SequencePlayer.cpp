@@ -72,7 +72,6 @@ SequencePlayer::SequencePlayer(const ReplayLibrary &library)
 
 SequencePlayer::~SequencePlayer()
 {
-	air_.destroy();
 	// Waits for a tick running now, after which no end is handed over.
 	obs_remove_tick_callback(handleTick, this);
 	alive_.reset();
@@ -235,11 +234,7 @@ void SequencePlayer::follow()
 			live_.clear();
 			continue;
 		}
-		if (!air_.show(phase)) {
-			// The intro or outro went missing since the replay started.
-			state_.ended(token_);
-			continue;
-		}
+		air_.show(phase);
 		if (player_) {
 			player_->load(nullptr);
 		}
@@ -301,10 +296,6 @@ void SequencePlayer::onEnded(uint64_t clip)
 
 void SequencePlayer::partEnded()
 {
-	const AirPhase phase = state_.phase();
-	if (phase != AirPhase::Intro && phase != AirPhase::Outro) {
-		return;
-	}
 	state_.ended(token_);
 	follow();
 }

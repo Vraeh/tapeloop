@@ -114,16 +114,13 @@ bool AirComposition::channelFree() const
 	return free;
 }
 
-bool AirComposition::show(AirPhase part)
+void AirComposition::show(AirPhase part)
 {
-	obs_source_t *target = partSource(part);
-	if (!target) {
-		return false;
-	}
 	if (onChannel_ && !leaving_ && part == shown_) {
-		return true;
+		return;
 	}
 
+	obs_source_t *target = partSource(part);
 	// Watched before it goes on air, as a video says it started from the next tick on.
 	const uint64_t now = os_gettime_ns();
 	const AirMedia &media = part == AirPhase::Intro ? introMade_ : outroMade_;
@@ -145,7 +142,6 @@ bool AirComposition::show(AirPhase part)
 		}
 		if (in_) {
 			fit(in_);
-			obs_transition_set(in_, nullptr);
 			if (!obs_transition_start(in_, OBS_TRANSITION_MODE_AUTO, durationOf(settings_.into), target)) {
 				obs_transition_set(in_, target);
 			}
@@ -163,7 +159,6 @@ bool AirComposition::show(AirPhase part)
 		takeChannel(target);
 	}
 	shown_ = part;
-	return true;
 }
 
 bool AirComposition::leave()
@@ -171,9 +166,8 @@ bool AirComposition::leave()
 	if (!onChannel_) {
 		return false;
 	}
-	if (leaving_) {
-		return true;
-	}
+	// Nothing is shown during a way back. A replay put on air in one comes here only if it
+	// ran out of memory before it played, and the rest of the way back is cut.
 	obs_source_t *from = partSource(shown_);
 	if (!from || !out_) {
 		cut();

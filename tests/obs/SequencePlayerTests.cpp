@@ -24,6 +24,7 @@
 #include <obs.h>
 #include <obs.hpp>
 
+#include <algorithm>
 #include <atomic>
 #include <chrono>
 #include <condition_variable>
@@ -498,6 +499,136 @@ bool holdsFor(std::chrono::milliseconds time, const std::function<bool()> &condi
 		std::this_thread::sleep_for(2ms);
 	}
 	return true;
+}
+
+// A sequence and a replay long enough to stay on air, for a test to set up as it needs. The
+// replay cuts on air and off unless the test registers the fade first.
+struct AirSetup {
+	AirSetup()
+	{
+		registerReplaySource({});
+		sequence.emplace(library);
+		REQUIRE(sequence->player());
+	}
+
+	~AirSetup()
+	{
+		sequence.reset();
+		obs_wait_for_destroy_queue();
+	}
+
+	AirSetup(const AirSetup &) = delete;
+	AirSetup &operator=(const AirSetup &) = delete;
+	AirSetup(AirSetup &&) = delete;
+	AirSetup &operator=(AirSetup &&) = delete;
+
+	void putOnAir() { REQUIRE(sequence->putOnAir(captured.id())); }
+	AirPhase phase() const { return sequence->state().phase(); }
+	bool leaving() const { return sequence->air().leaving(); }
+
+	const UiTasks ui;
+	const TempDirectory folder;
+	ReplayLibrary library;
+	const Captured captured{library, {"a"}, 120};
+	std::optional<SequencePlayer> sequence;
+};
+
+// Whether a source was active at every change of the replay's channel, which libobs signals
+// before it activates what comes on or lets go of what goes off.
+class ActiveAtChange {
+public:
+	explicit ActiveAtChange(obs_source_t *source) : source_(source)
+	{
+		signal_handler_connect(obs_get_signal_handler(), "channel_change", changed, this);
+	}
+
+	~ActiveAtChange() { signal_handler_disconnect(obs_get_signal_handler(), "channel_change", changed, this); }
+
+	ActiveAtChange(const ActiveAtChange &) = delete;
+	ActiveAtChange &operator=(const ActiveAtChange &) = delete;
+	ActiveAtChange(ActiveAtChange &&) = delete;
+	ActiveAtChange &operator=(ActiveAtChange &&) = delete;
+
+	int changes() const noexcept { return changes_.load(); }
+	bool active() const noexcept { return active_.load(); }
+
+private:
+	static void changed(void *data, calldata_t *call) noexcept
+	{
+		if (calldata_int(call, "channel") != kAirChannel) {
+			return;
+		}
+		auto &self = *static_cast<ActiveAtChange *>(data);
+		++self.changes_;
+		if (!obs_source_active(self.source_)) {
+			self.active_ = false;
+		}
+	}
+
+	obs_source_t *source_;
+	std::atomic<int> changes_{0};
+	std::atomic<bool> active_{true};
+};
+
+// The parts fill the canvas whatever their size, keeping their shape.
+void checkTransitionOnChannelFits()
+{
+	const OBSSourceAutoRelease transition = obs_get_output_source(kAirChannel);
+	REQUIRE(transition);
+	REQUIRE(obs_source_get_type(transition) == OBS_SOURCE_TYPE_TRANSITION);
+	obs_video_info video = {};
+	REQUIRE(obs_get_video_info(&video));
+	uint32_t width = 0;
+	uint32_t height = 0;
+	obs_transition_get_size(transition, &width, &height);
+	CHECK(width == video.base_width);
+	CHECK(height == video.base_height);
+	CHECK(obs_transition_get_scale_type(transition) == OBS_TRANSITION_SCALE_ASPECT);
+	CHECK(obs_transition_get_alignment(transition) == OBS_ALIGN_CENTER);
+}
+
+bool listPublic(void *param, obs_source_t *source) noexcept
+{
+	if (!obs_obj_is_private(source)) {
+		static_cast<std::vector<std::string> *>(param)->push_back(std::string("public ") +
+									  obs_source_get_name(source));
+	}
+	return true;
+}
+
+bool listInput(void *param, obs_source_t *source) noexcept
+{
+	static_cast<std::vector<std::string> *>(param)->push_back(std::string("input ") + obs_source_get_name(source));
+	return true;
+}
+
+bool listSceneItem(obs_scene_t *scene, obs_sceneitem_t *item, void *param) noexcept
+{
+	static_cast<std::vector<std::string> *>(param)->push_back(
+		std::string("item ") + obs_source_get_name(obs_scene_get_source(scene)) + " " +
+		obs_source_get_name(obs_sceneitem_get_source(item)));
+	return true;
+}
+
+bool listScene(void *param, obs_source_t *source) noexcept
+{
+	static_cast<std::vector<std::string> *>(param)->push_back(std::string("scene ") + obs_source_get_name(source));
+	obs_scene_enum_items(obs_scene_from_source(source), listSceneItem, param);
+	return true;
+}
+
+// What OBS's lists show: every public object, the scenes and what they hold, the inputs, and
+// the program, each with a word that says which list it is from.
+std::vector<std::string> listsOfObs()
+{
+	std::vector<std::string> lists;
+	obs_enum_all_sources(listPublic, &lists);
+	obs_enum_scenes(listScene, &lists);
+	obs_enum_sources(listInput, &lists);
+	const OBSSourceAutoRelease program = obs_get_output_source(0);
+	lists.push_back(std::string("program ") + (program ? obs_source_get_name(program) : ""));
+	std::sort(lists.begin(), lists.end());
+	return lists;
 }
 
 } // namespace
@@ -1731,4 +1862,285 @@ TEST_CASE_METHOD(ObsFixture, "a sequence lets go of what it made for air before 
 
 	sequence.reset();
 	obs_wait_for_destroy_queue();
+}
+
+TEST_CASE_METHOD(ObsFixture, "a video intro that never says it started gives way after the wait for it",
+		 "[obs][sequence][air]")
+{
+	registerFade();
+	AirSetup setup;
+	AirSettings air;
+	air.intro = {AirMediaKind::Video, fileIn(setup.folder, "intro.mp4")};
+	setup.sequence->setAir(air);
+	obs_source_t *intro = setup.sequence->air().partSource(AirPhase::Intro);
+	REQUIRE(intro);
+	const OBSDataAutoRelease silent = obs_data_create();
+	obs_data_set_bool(silent, "restart_on_activate", false);
+	obs_data_set_int(silent, "duration_ms", 60000);
+	obs_source_update(intro, silent);
+	// The update waits for a tick, and until then the video would say it started.
+	REQUIRE(runUntil([&] { return obs_source_media_get_duration(intro) == 60000; }));
+
+	const auto start = std::chrono::steady_clock::now();
+	setup.putOnAir();
+	CHECK(holdsFor(4000ms, [&] { return setup.phase() == AirPhase::Intro; }));
+	REQUIRE(runUntil([&] { return setup.phase() != AirPhase::Intro; }));
+	CHECK(std::chrono::steady_clock::now() - start < 8s);
+	CHECK(setup.phase() == AirPhase::Source);
+}
+
+TEST_CASE_METHOD(ObsFixture, "a video intro that says it started again keeps to its first start",
+		 "[obs][sequence][air]")
+{
+	registerFade();
+	AirSetup setup;
+	AirSettings air;
+	air.intro = {AirMediaKind::Video, fileIn(setup.folder, "intro.mp4")};
+	setup.sequence->setAir(air);
+	obs_source_t *intro = setup.sequence->air().partSource(AirPhase::Intro);
+	REQUIRE(intro);
+	setLength(intro, 300);
+
+	setup.putOnAir();
+	// Its end never comes, so its length and the slack after it, counted from the first start,
+	// end it within this.
+	const auto giveUp = std::chrono::steady_clock::now() + 6s;
+	while (setup.phase() == AirPhase::Intro && std::chrono::steady_clock::now() < giveUp) {
+		obs_source_media_started(intro);
+		UiTasks::run();
+		std::this_thread::sleep_for(20ms);
+	}
+	CHECK(setup.phase() == AirPhase::Source);
+}
+
+TEST_CASE_METHOD(ObsFixture, "a video intro is made to play once from the start and stay open", "[obs][sequence][air]")
+{
+	AirSetup setup;
+	AirSettings air;
+	air.intro = {AirMediaKind::Video, fileIn(setup.folder, "intro.mp4")};
+	setup.sequence->setAir(air);
+	REQUIRE(setup.sequence->air().partSource(AirPhase::Intro));
+
+	// OBS's media source has its own defaults, which these must not be left to. What it does
+	// with them is not shown here, as the harness does not load it.
+	const OBSDataAutoRelease settings = obs_source_get_settings(setup.sequence->air().partSource(AirPhase::Intro));
+	const auto says = [&](const char *name, bool value) {
+		return obs_data_has_user_value(settings, name) && obs_data_get_bool(settings, name) == value;
+	};
+	CHECK(says("is_local_file", true));
+	CHECK(std::string(obs_data_get_string(settings, "local_file")) == air.intro.path);
+	CHECK(says("looping", false));
+	CHECK(says("restart_on_activate", true));
+	CHECK(says("clear_on_media_end", false));
+	CHECK(says("close_when_inactive", false));
+}
+
+TEST_CASE_METHOD(ObsFixture, "a replay closed just after another source took its channel leaves that source there",
+		 "[obs][sequence][air]")
+{
+	registerFade();
+	AirSetup setup;
+	setup.putOnAir();
+	const OBSSourceAutoRelease other =
+		obs_source_create_private(tapeloop::test::kTestPatternId, "Another plugin", nullptr);
+	REQUIRE(other);
+	obs_set_output_source(kAirChannel, other);
+
+	// Before the UI thread hears of it.
+	setup.sequence->close();
+	CHECK(setup.phase() == AirPhase::Live);
+	CHECK(channelName() == "Another plugin");
+	obs_set_output_source(kAirChannel, nullptr);
+}
+
+TEST_CASE_METHOD(ObsFixture, "a replay cut off air just after another source took its channel leaves that source there",
+		 "[obs][sequence][air]")
+{
+	AirSetup setup;
+	setup.putOnAir();
+	const OBSSourceAutoRelease other =
+		obs_source_create_private(tapeloop::test::kTestPatternId, "Another plugin", nullptr);
+	REQUIRE(other);
+	obs_set_output_source(kAirChannel, other);
+
+	// Before the UI thread hears of it.
+	setup.sequence->takeOffAir();
+	CHECK(setup.phase() == AirPhase::Live);
+	CHECK(channelName() == "Another plugin");
+	obs_set_output_source(kAirChannel, nullptr);
+}
+
+TEST_CASE_METHOD(ObsFixture, "a channel given back before the UI thread looks keeps the replay on air",
+		 "[obs][sequence][air]")
+{
+	registerFade();
+	AirSetup setup;
+	setup.putOnAir();
+	{
+		const OBSSourceAutoRelease ours = obs_get_output_source(kAirChannel);
+		const OBSSourceAutoRelease other =
+			obs_source_create_private(tapeloop::test::kTestPatternId, "Another plugin", nullptr);
+		REQUIRE(other);
+		obs_set_output_source(kAirChannel, other);
+		obs_set_output_source(kAirChannel, ours);
+	}
+
+	REQUIRE(waitFor([] { return UiTasks::pending() > 0; }, 5000ms));
+	CHECK(holdsFor(100ms, [&] { return setup.phase() == AirPhase::Source && setup.sequence->air().onAir(); }));
+	CHECK(channelName() == "Tapeloop in");
+}
+
+TEST_CASE_METHOD(ObsFixture, "the end of a part skipped before the UI thread heard of it counts for nothing",
+		 "[obs][sequence][air]")
+{
+	registerFade();
+	AirSetup setup;
+	AirSettings air;
+	air.intro = {AirMediaKind::Image, fileIn(setup.folder, "intro.png"), 100ms};
+	setup.sequence->setAir(air);
+	setup.putOnAir();
+
+	REQUIRE(waitFor([] { return UiTasks::pending() > 0; }, 5000ms));
+	setup.sequence->skip();
+	CHECK(setup.phase() == AirPhase::Source);
+	CHECK(holdsFor(300ms, [&] { return setup.phase() == AirPhase::Source; }));
+}
+
+TEST_CASE_METHOD(ObsFixture,
+		 "the end of an outro cut short before the UI thread heard of it leaves the way back running",
+		 "[obs][sequence][air]")
+{
+	registerFade();
+	AirSetup setup;
+	AirSettings air;
+	air.outro = {AirMediaKind::Image, fileIn(setup.folder, "outro.png"), 100ms};
+	air.back = {"", 20000ms};
+	setup.sequence->setAir(air);
+	setup.putOnAir();
+	setup.sequence->takeOffAir();
+	REQUIRE(setup.phase() == AirPhase::Outro);
+
+	REQUIRE(waitFor([] { return UiTasks::pending() > 0; }, 5000ms));
+	setup.sequence->takeOffAir();
+	CHECK(setup.leaving());
+	CHECK(holdsFor(300ms, [&] { return setup.leaving(); }));
+}
+
+TEST_CASE_METHOD(ObsFixture, "a part on air stays active as the way back takes over from it", "[obs][sequence][air]")
+{
+	registerFade();
+	AirSetup setup;
+	setup.putOnAir();
+	REQUIRE(obs_source_active(setup.sequence->source()));
+
+	const ActiveAtChange watched(setup.sequence->source());
+	setup.sequence->takeOffAir();
+	REQUIRE(setup.leaving());
+	CHECK(watched.changes() == 1);
+	CHECK(watched.active());
+}
+
+TEST_CASE_METHOD(ObsFixture, "a replay's transitions fit the parts to the canvas", "[obs][sequence][air]")
+{
+	registerFade();
+	AirSetup setup;
+	AirSettings air;
+	air.back = {"", 20000ms};
+	setup.sequence->setAir(air);
+
+	setup.putOnAir();
+	CHECK(channelName() == "Tapeloop in");
+	checkTransitionOnChannelFits();
+
+	setup.sequence->takeOffAir();
+	REQUIRE(setup.leaving());
+	CHECK(channelName() == "Tapeloop out");
+	checkTransitionOnChannelFits();
+}
+
+TEST_CASE_METHOD(ObsFixture, "a way back that ran out lets go of the replay's last frame", "[obs][sequence][air]")
+{
+	registerFade();
+	AirSetup setup;
+	AirSettings air;
+	air.back = {"", 100ms};
+	setup.sequence->setAir(air);
+	setup.putOnAir();
+	CHECK(playing(*setup.sequence) == "a");
+
+	setup.sequence->takeOffAir();
+	REQUIRE(setup.leaving());
+	REQUIRE(runUntil([&] { return !setup.sequence->air().onAir(); }));
+	CHECK(playerUntil(*setup.sequence, [](const PlayerState &state) { return !state.loaded; }));
+}
+
+TEST_CASE_METHOD(ObsFixture, "a replay closed during a way back lets go of its last frame", "[obs][sequence][air]")
+{
+	registerFade();
+	AirSetup setup;
+	AirSettings air;
+	air.back = {"", 20000ms};
+	setup.sequence->setAir(air);
+	setup.putOnAir();
+	CHECK(playing(*setup.sequence) == "a");
+
+	setup.sequence->takeOffAir();
+	REQUIRE(setup.leaving());
+	CHECK(setup.sequence->player()->state().loaded);
+
+	setup.sequence->close();
+	CHECK_FALSE(setup.sequence->air().onAir());
+	CHECK(playerUntil(*setup.sequence, [](const PlayerState &state) { return !state.loaded; }));
+}
+
+TEST_CASE_METHOD(ObsFixture, "a replay on air changes nothing in OBS's lists", "[obs][sequence][air]")
+{
+	registerFade();
+	const OBSSceneAutoRelease scene = obs_scene_create("Match");
+	REQUIRE(scene);
+	const OBSSourceAutoRelease camera =
+		obs_source_create(tapeloop::test::kTestPatternId, "Camera", nullptr, nullptr);
+	REQUIRE(camera);
+	REQUIRE(obs_scene_add(scene, camera));
+	obs_set_output_source(0, obs_scene_get_source(scene));
+
+	const std::vector<std::string> before = listsOfObs();
+	const std::vector<std::string> expected = {"input Camera",  "item Match Camera", "program Match",
+						   "public Camera", "public Match",      "scene Match"};
+	CHECK(before == expected);
+	{
+		AirSetup setup;
+		AirSettings air;
+		air.intro = {AirMediaKind::Image, fileIn(setup.folder, "intro.png"), 20000ms};
+		air.outro = {AirMediaKind::Video, fileIn(setup.folder, "outro.mp4")};
+		air.back = {"", 20000ms};
+		setup.sequence->setAir(air);
+		CHECK(listsOfObs() == before);
+
+		setup.putOnAir();
+		CHECK(setup.phase() == AirPhase::Intro);
+		CHECK(listsOfObs() == before);
+
+		setup.sequence->skip();
+		CHECK(setup.phase() == AirPhase::Source);
+		CHECK(listsOfObs() == before);
+
+		setup.sequence->takeOffAir();
+		CHECK(setup.phase() == AirPhase::Outro);
+		CHECK(listsOfObs() == before);
+
+		setup.sequence->takeOffAir();
+		CHECK(setup.leaving());
+		CHECK(listsOfObs() == before);
+
+		setup.sequence->close();
+		CHECK_FALSE(setup.sequence->air().onAir());
+		CHECK(listsOfObs() == before);
+	}
+	CHECK(listsOfObs() == before);
+
+	obs_set_output_source(0, nullptr);
+	// The main canvas keeps its scenes until they are removed, as the frontend does before
+	// shutting down.
+	obs_source_remove(obs_scene_get_source(scene));
 }

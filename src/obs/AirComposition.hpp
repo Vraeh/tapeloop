@@ -102,9 +102,9 @@ public:
 	// Whether the channel is empty or holds the composition.
 	bool channelFree() const;
 
-	// Puts the part on air. False, changing nothing, for Live or a part it has nothing to
-	// show for.
-	bool show(AirPhase part);
+	// Puts the part on air. Never Live, and an intro or outro only if hasIntro() or hasOutro()
+	// said so before the replay started: those change only once nothing is on air.
+	void show(AirPhase part);
 	// Starts the way back to live, after which the listener hears wentOffAir(). False when
 	// nothing is on air, and when there is no transition to go back with, in which case
 	// the composition is taken off at once.
@@ -209,7 +209,9 @@ private:
 	obs_source_t *expected_ = nullptr;
 	bool onAir_ = false;
 	bool lost_ = false;
-	// Set while the composition is on the channel, so that the tick looks only then.
+	// Set while the composition is on the channel, so that the tick looks only then. Relaxed
+	// is enough: the flag only gates a look at what mutex_ orders, and a stale value costs a
+	// tick's delay, or a look that finds nothing to do.
 	std::atomic<bool> armed_{false};
 	std::atomic<uint64_t> ticks_{0};
 
