@@ -95,6 +95,15 @@ void mediaActivate(void *data) noexcept
 	}
 }
 
+// As OBS's media source, which plays from the beginning if it is showing, and says so.
+void mediaRestart(void *data) noexcept
+{
+	const auto *pattern = static_cast<TestPattern *>(data);
+	if (obs_source_showing(pattern->source)) {
+		obs_source_media_started(pattern->source);
+	}
+}
+
 int64_t mediaDuration(void *data) noexcept
 {
 	const TestPattern &pattern = *static_cast<TestPattern *>(data);
@@ -288,6 +297,7 @@ void registerTestPattern()
 	media.get_defaults = mediaDefaults;
 	media.output_flags |= OBS_SOURCE_CONTROLLABLE_MEDIA;
 	media.activate = mediaActivate;
+	media.media_restart = mediaRestart;
 	media.media_get_duration = mediaDuration;
 	obs_register_source(&media);
 

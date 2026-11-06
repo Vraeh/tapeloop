@@ -127,15 +127,22 @@ bool AirComposition::show(AirPhase part)
 	// Watched before it goes on air, as a video says it started from the next tick on.
 	const uint64_t now = os_gettime_ns();
 	const AirMedia &media = part == AirPhase::Intro ? introMade_ : outroMade_;
+	const bool video = part != AirPhase::Source && media.kind == AirMediaKind::Video;
 	if (part == AirPhase::Source) {
 		watch(nullptr, nullptr, 0);
-	} else if (media.kind == AirMediaKind::Video) {
+	} else if (video) {
 		watch(target, nullptr, now + kStartWait);
 	} else {
 		watch(nullptr, nullptr, now + nanoseconds(media.imageTime.count()));
 	}
 
 	if (!onChannel_ || leaving_) {
+		if (video && leaving_) {
+			// Held by the way back, or let go less than a tick ago, it never goes inactive
+			// as libobs sees it, so going on air would not start it over. Should it have
+			// gone inactive, it starts a tick apart, of which the watch sees the first.
+			obs_source_media_restart(target);
+		}
 		if (in_) {
 			fit(in_);
 			obs_transition_set(in_, nullptr);

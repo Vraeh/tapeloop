@@ -1178,6 +1178,90 @@ TEST_CASE_METHOD(ObsFixture, "a replay put on air during the way back stays on a
 	obs_wait_for_destroy_queue();
 }
 
+TEST_CASE_METHOD(ObsFixture, "a video intro put back on air during the way back starts over and plays out",
+		 "[obs][sequence][air]")
+{
+	registerReplaySource({});
+	registerFade();
+	const UiTasks ui;
+	const TempDirectory folder;
+	ReplayLibrary library;
+	std::optional<SequencePlayer> sequence(std::in_place, library);
+	REQUIRE(sequence->player());
+
+	AirSettings air;
+	air.intro = {AirMediaKind::Video, fileIn(folder, "intro.mp4")};
+	air.into.duration = 100ms;
+	air.back.duration = 1000ms;
+	sequence->setAir(air);
+	obs_source_t *intro = sequence->air().partSource(AirPhase::Intro);
+	REQUIRE(intro);
+	setLength(intro, 10000);
+	std::optional<SignalCount> started(std::in_place, intro, "media_started");
+
+	const Captured captured(library, {"a"}, 120);
+	REQUIRE(sequence->putOnAir(captured.id()));
+	REQUIRE(runUntil([&] { return started->value() == 1; }));
+	sequence->takeOffAir();
+	REQUIRE(sequence->air().leaving());
+	CHECK(channelName() == "Tapeloop out");
+
+	// It never goes inactive on the way from one transition to the other.
+	REQUIRE(sequence->putOnAir(captured.id()));
+	CHECK(shownName() == "Tapeloop intro");
+	REQUIRE(runUntil([&] { return started->value() == 2; }));
+	// Past the wait for a video that never starts, and short of its length.
+	CHECK(holdsFor(5500ms, [&] { return sequence->state().phase() == AirPhase::Intro; }));
+
+	obs_source_media_ended(intro);
+	REQUIRE(runUntil([&] { return sequence->state().phase() == AirPhase::Source; }));
+
+	started.reset();
+	sequence.reset();
+	obs_wait_for_destroy_queue();
+}
+
+TEST_CASE_METHOD(ObsFixture, "a video intro put on air just as the way back ends starts over", "[obs][sequence][air]")
+{
+	registerReplaySource({});
+	registerFade();
+	const UiTasks ui;
+	const TempDirectory folder;
+	ReplayLibrary library;
+	std::optional<SequencePlayer> sequence(std::in_place, library);
+	REQUIRE(sequence->player());
+
+	AirSettings air;
+	air.intro = {AirMediaKind::Video, fileIn(folder, "intro.mp4")};
+	air.into.duration = 100ms;
+	air.back.duration = 100ms;
+	sequence->setAir(air);
+	obs_source_t *intro = sequence->air().partSource(AirPhase::Intro);
+	REQUIRE(intro);
+	setLength(intro, 10000);
+	std::optional<SignalCount> started(std::in_place, intro, "media_started");
+
+	const Captured captured(library, {"a"}, 120);
+	REQUIRE(sequence->putOnAir(captured.id()));
+	REQUIRE(runUntil([&] { return started->value() == 1; }));
+	sequence->takeOffAir();
+
+	// The way back ended, which the UI thread has yet to hear, and libobs may not have seen
+	// the intro go inactive.
+	const OBSSourceAutoRelease out = obs_get_output_source(kAirChannel);
+	REQUIRE(waitFor([&] { return !OBSSourceAutoRelease(obs_transition_get_source(out, OBS_TRANSITION_SOURCE_A)); },
+			10s));
+	REQUIRE(sequence->air().leaving());
+
+	REQUIRE(sequence->putOnAir(captured.id()));
+	REQUIRE(runUntil([&] { return started->value() >= 2; }));
+	CHECK(holdsFor(5500ms, [&] { return sequence->state().phase() == AirPhase::Intro; }));
+
+	started.reset();
+	sequence.reset();
+	obs_wait_for_destroy_queue();
+}
+
 TEST_CASE_METHOD(ObsFixture, "a replay goes on air with copies of the user's transitions, or else fades",
 		 "[obs][sequence][air]")
 {
