@@ -135,6 +135,9 @@ void ManagerDockBackend::enlist(const std::vector<ui::DockSource> &listed)
 void ManagerDockBackend::setSettings(const BufferSettings &settings)
 {
 	manager_.setSettings(settings);
+	if (sequence_) {
+		sequence_->setAir(manager_.settings().air);
+	}
 }
 
 std::vector<ui::DockExport> ManagerDockBackend::exports() const

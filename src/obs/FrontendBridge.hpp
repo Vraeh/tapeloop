@@ -3,6 +3,7 @@
 
 #pragma once
 
+#include "obs/AirComposition.hpp"
 #include "obs/CaptureManager.hpp"
 #include "obs/ReplayHotkeys.hpp"
 #include "obs/SequencePlayer.hpp"
@@ -11,6 +12,7 @@
 
 #include <functional>
 #include <memory>
+#include <optional>
 #include <string>
 
 namespace tapeloop::obs {
@@ -18,10 +20,10 @@ namespace tapeloop::obs {
 // The capture manager wired to the OBS frontend: streaming and recording events, scene
 // collection cleanup and exit, the scene collection save callback and save requests,
 // the replays on disk read once OBS has loaded, a poll every second on the UI thread,
-// the replay on air and Tapeloop's hotkeys, whose bindings the profile keeps. Created
-// and destroyed on the UI thread, at module load and unload, after the replay source is
-// registered.
-class FrontendBridge : private CaptureHost {
+// the replay on air with the user's transitions, and Tapeloop's hotkeys, whose bindings
+// the profile keeps. Created and destroyed on the UI thread, at module load and unload,
+// after the replay source is registered.
+class FrontendBridge : private CaptureHost, private TransitionCatalog {
 public:
 	FrontendBridge();
 	~FrontendBridge() override;
@@ -41,6 +43,9 @@ private:
 	std::string recordingFolder() const override;
 	std::string sceneCollectionName() const override;
 	void buffersStopped() override;
+	// Copies what the transition needs and keeps no reference to it, so that nothing of
+	// the scene collection outlives it.
+	std::optional<TransitionTemplate> find(const std::string &name) const override;
 	// The frontend API is gone by the time the module unloads, so the callbacks go at
 	// the exit event.
 	void removeFrontendCallbacks() noexcept;

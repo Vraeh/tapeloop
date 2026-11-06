@@ -8,9 +8,12 @@
 #endif
 
 #include <obs-module.h>
+#include <obs.hpp>
 #include <util/base.h>
 
 #include <new>
+#include <optional>
+#include <span>
 #include <string>
 #include <utility>
 
@@ -28,6 +31,27 @@ ReplayExporter::WriterFactory mp4Writers()
 	return {};
 #endif
 }
+
+// Releases what obs_frontend_get_transitions handed out.
+class TransitionList {
+public:
+	TransitionList() { obs_frontend_get_transitions(&list_); }
+	~TransitionList() { obs_frontend_source_list_free(&list_); }
+
+	TransitionList(const TransitionList &) = delete;
+	TransitionList &operator=(const TransitionList &) = delete;
+	TransitionList(TransitionList &&) = delete;
+	TransitionList &operator=(TransitionList &&) = delete;
+
+	std::span<obs_source_t *const> sources() const noexcept
+	{
+		// NOLINTNEXTLINE(cppcoreguidelines-pro-type-union-access): a DARRAY is a union, and libobs has no other way in.
+		return {list_.sources.array, list_.sources.num};
+	}
+
+private:
+	obs_frontend_source_list list_ = {};
+};
 
 void runTask(void *param) noexcept
 {
@@ -50,6 +74,7 @@ FrontendBridge::FrontendBridge()
 		  [this](HotkeyAction action, bool pressed) { runHotkey(action, pressed, *manager_, *sequence_); },
 		  obs_module_text))
 {
+	sequence_->setTransitions(this);
 	obs_frontend_add_event_callback(handleEvent, this);
 	obs_frontend_add_save_callback(handleSave, this);
 	obs_add_tick_callback(handleTick, this);
@@ -114,6 +139,22 @@ void FrontendBridge::buffersStopped()
 	sequence_->takeOffAir();
 }
 
+std::optional<TransitionTemplate> FrontendBridge::find(const std::string &name) const
+{
+	const TransitionList transitions;
+	for (obs_source_t *transition : transitions.sources()) {
+		const char *found = obs_source_get_name(transition);
+		if (!found || name != found) {
+			continue;
+		}
+		const char *id = obs_source_get_id(transition);
+		OBSDataAutoRelease settings = obs_source_get_settings(transition);
+		const char *json = settings ? obs_data_get_json(settings) : nullptr;
+		return TransitionTemplate{id ? id : "", json ? json : ""};
+	}
+	return std::nullopt;
+}
+
 void FrontendBridge::handleEvent(obs_frontend_event event, void *data) noexcept
 {
 	auto &bridge = *static_cast<FrontendBridge *>(data);
@@ -132,9 +173,19 @@ void FrontendBridge::handleEvent(obs_frontend_event event, void *data) noexcept
 		case OBS_FRONTEND_EVENT_RECORDING_STOPPED:
 			manager.onRecording(false);
 			break;
+		case OBS_FRONTEND_EVENT_SCENE_COLLECTION_CHANGING:
+		case OBS_FRONTEND_EVENT_SCRIPTING_SHUTDOWN:
+			// The last the frontend says before it empties every channel, which would
+			// look like another source taking the replay's.
+			bridge.sequence_->close();
+			break;
 		case OBS_FRONTEND_EVENT_SCENE_COLLECTION_CLEANUP:
+			// Duplicating or renaming a collection says nothing before this.
 			bridge.sequence_->close();
 			manager.onSceneCollectionCleanup();
+			// A collection with no file yet loads nothing, so it starts from what the
+			// cleanup left.
+			bridge.sequence_->setAir(manager.settings().air);
 			break;
 		case OBS_FRONTEND_EVENT_SCENE_COLLECTION_CHANGED:
 			// OBS sends it after every collection it loads, the first one included;
@@ -172,6 +223,7 @@ void FrontendBridge::handleSave(obs_data_t *collection, bool saving, void *data)
 			manager.save(collection);
 		} else {
 			manager.load(collection);
+			bridge.sequence_->setAir(manager.settings().air);
 		}
 	} catch (...) {
 		blog(LOG_ERROR, "[tapeloop] Saving or loading the settings failed");
