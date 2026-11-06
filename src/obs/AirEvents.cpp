@@ -6,7 +6,25 @@
 #include "obs/CaptureManager.hpp"
 #include "obs/SequencePlayer.hpp"
 
+#include <obs.hpp>
+
 namespace tapeloop::obs {
+
+namespace {
+
+// OBS says nothing of Fade to Black by name, but only it runs the program's transition to
+// no source at all: a scene switch always has a scene to go to.
+bool programIsBlack()
+{
+	const OBSSourceAutoRelease program = obs_get_output_source(0);
+	if (!program || obs_source_get_type(program) != OBS_SOURCE_TYPE_TRANSITION) {
+		return false;
+	}
+	const OBSSourceAutoRelease shown = obs_transition_get_active_source(program);
+	return !shown;
+}
+
+} // namespace
 
 void handleAirEvent(AirEvent event, SequencePlayer &sequence, CaptureManager &manager)
 {
@@ -40,6 +58,11 @@ void handleAirEvent(AirEvent event, SequencePlayer &sequence, CaptureManager &ma
 		// The program goes on, so the replay goes back to live the way the user takes it
 		// off.
 		sequence.takeOffAir();
+		break;
+	case AirEvent::ProgramTransitionStopped:
+		if (programIsBlack()) {
+			sequence.programWentBlack();
+		}
 		break;
 	}
 }

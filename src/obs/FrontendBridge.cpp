@@ -186,6 +186,9 @@ void FrontendBridge::handleEvent(obs_frontend_event event, void *data) noexcept
 		case OBS_FRONTEND_EVENT_RECORDING_STOPPED:
 			manager.onRecording(false);
 			break;
+		case OBS_FRONTEND_EVENT_TRANSITION_STOPPED:
+			handleAirEvent(AirEvent::ProgramTransitionStopped, *bridge.sequence_, manager);
+			break;
 		case OBS_FRONTEND_EVENT_SCENE_COLLECTION_CHANGING:
 			handleAirEvent(AirEvent::CollectionChanging, *bridge.sequence_, manager);
 			break;

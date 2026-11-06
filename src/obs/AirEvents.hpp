@@ -16,6 +16,7 @@ enum class AirEvent {
 	CollectionChanged,
 	Exit,
 	BuffersStopped,
+	ProgramTransitionStopped,
 };
 
 // Answers the event, on the UI thread. Apart from the frontend bridge because the libobs

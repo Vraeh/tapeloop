@@ -180,6 +180,12 @@ void SequencePlayer::skip()
 	follow();
 }
 
+void SequencePlayer::programWentBlack()
+{
+	air_.cut();
+	wentOffAir();
+}
+
 void SequencePlayer::close()
 {
 	closed_ = true;

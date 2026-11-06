@@ -581,6 +581,43 @@ struct EventSetup : AirSetup {
 	CaptureManager manager{host};
 };
 
+// OBS's program: its transition on channel 0, showing a scene.
+struct ProgramSetup : EventSetup {
+	ProgramSetup()
+	{
+		REQUIRE(scene);
+		REQUIRE(transition);
+		obs_transition_set(transition, scene);
+		obs_set_output_source(0, transition);
+	}
+
+	~ProgramSetup() { obs_set_output_source(0, nullptr); }
+
+	ProgramSetup(const ProgramSetup &) = delete;
+	ProgramSetup &operator=(const ProgramSetup &) = delete;
+	ProgramSetup(ProgramSetup &&) = delete;
+	ProgramSetup &operator=(ProgramSetup &&) = delete;
+
+	// Runs the transition to its end, where OBS says it stopped.
+	void runTo(obs_source_t *target)
+	{
+		const SignalCount stops(transition, "transition_video_stop");
+		REQUIRE(obs_transition_start(transition, OBS_TRANSITION_MODE_AUTO, 1, target));
+		REQUIRE(waitFor([&] { return stops.value() > 0; }, 10s));
+		answer(AirEvent::ProgramTransitionStopped);
+	}
+
+	void checkStillOn() const
+	{
+		CHECK(phase() == AirPhase::Source);
+		CHECK(sequence->air().onAir());
+		CHECK_FALSE(channelName().empty());
+	}
+
+	const OBSSourceAutoRelease scene = obs_source_create_private(tapeloop::test::kTestPatternId, "Scene", nullptr);
+	const OBSSourceAutoRelease transition = obs_source_create_private("fade_transition", "Program", nullptr);
+};
+
 // Whether a source was active at every change of the replay's channel, which libobs signals
 // before it activates what comes on or lets go of what goes off.
 class ActiveAtChange {
@@ -2271,4 +2308,71 @@ TEST_CASE_METHOD(ObsFixture, "buffers stopping takes a replay off air the way th
 	CHECK(setup.phase() == AirPhase::Outro);
 	CHECK(setup.sequence->air().onAir());
 	CHECK_FALSE(setup.sequence->closed());
+}
+
+TEST_CASE_METHOD(ObsFixture, "a program faded to black cuts a replay on air with no outro", "[obs][sequence][air]")
+{
+	registerFade();
+	ProgramSetup setup;
+	setup.runTo(nullptr);
+	setup.checkCut();
+	CHECK_FALSE(setup.sequence->closed());
+	CHECK_FALSE(setup.sequence->state().sequence().entries().empty());
+
+	// Nothing refuses the next one, and coming back from black takes nothing off.
+	setup.putOnAir();
+	setup.runTo(setup.scene);
+	setup.checkStillOn();
+}
+
+TEST_CASE_METHOD(ObsFixture, "a program faded to black ends a way back under way", "[obs][sequence][air]")
+{
+	registerFade();
+	ProgramSetup setup;
+	setup.sequence->takeOffAir();
+	setup.sequence->skip();
+	REQUIRE(setup.leaving());
+	setup.runTo(nullptr);
+	setup.checkCut();
+	CHECK_FALSE(setup.leaving());
+}
+
+TEST_CASE_METHOD(ObsFixture, "a program gone black during a way back lets go of its last frame", "[obs][sequence][air]")
+{
+	registerFade();
+	AirSetup setup;
+	AirSettings air;
+	air.back = {"", 20000ms};
+	setup.sequence->setAir(air);
+	setup.putOnAir();
+	CHECK(playing(*setup.sequence) == "a");
+
+	setup.sequence->takeOffAir();
+	REQUIRE(setup.leaving());
+	REQUIRE(setup.sequence->player()->state().loaded);
+
+	setup.sequence->programWentBlack();
+	CHECK_FALSE(setup.sequence->air().onAir());
+	CHECK(playerUntil(*setup.sequence, [](const PlayerState &state) { return !state.loaded; }));
+}
+
+TEST_CASE_METHOD(ObsFixture, "a transition to another scene leaves a replay on air", "[obs][sequence][air]")
+{
+	registerFade();
+	ProgramSetup setup;
+	const OBSSourceAutoRelease other = obs_source_create_private(tapeloop::test::kTestPatternId, "Other", nullptr);
+	setup.runTo(other);
+	setup.checkStillOn();
+}
+
+TEST_CASE_METHOD(ObsFixture, "a program with no transition is not black", "[obs][sequence][air]")
+{
+	registerFade();
+	ProgramSetup setup;
+	obs_set_output_source(0, setup.scene);
+	setup.answer(AirEvent::ProgramTransitionStopped);
+	setup.checkStillOn();
+	obs_set_output_source(0, nullptr);
+	setup.answer(AirEvent::ProgramTransitionStopped);
+	setup.checkStillOn();
 }

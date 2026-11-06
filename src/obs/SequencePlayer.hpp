@@ -73,6 +73,9 @@ public:
 	void takeOffAir();
 	// Ends the part on air as if it had played out.
 	void skip();
+	// For a program already black: takes the replay off air at once, without an outro or a
+	// way back, so that the whole output is black. The list stays, for the next replay.
+	void programWentBlack();
 
 	// For a scene collection that goes away: takes the replay off air at once, without
 	// an outro or a way back, and forgets the list, whose sources were that collection's.
