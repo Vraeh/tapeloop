@@ -85,6 +85,8 @@ target_sources(
     src/obs/FrontendBridge.cpp
     src/obs/FrontendBridge.hpp
     src/plugin-main.cpp
+    src/ui/AirSettingsDialog.cpp
+    src/ui/AirSettingsDialog.hpp
     src/ui/DockBackend.hpp
     src/ui/DockText.cpp
     src/ui/DockText.hpp

@@ -109,6 +109,8 @@ public:
 	virtual BufferSettings settings() const = 0;
 	virtual void setSettings(const BufferSettings &settings) = 0;
 	virtual std::vector<EncoderChoice> encoderChoices() const = 0;
+	// The names of the transitions the user has in OBS, in no particular order.
+	virtual std::vector<std::string> transitions() const = 0;
 	// The computer's memory in bytes, zero when it cannot be read.
 	virtual uint64_t physicalMemory() const = 0;
 	// What the selected sources need for their buffer lengths at their bitrates, and what

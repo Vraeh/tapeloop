@@ -14,6 +14,7 @@
 #include <mutex>
 #include <optional>
 #include <string>
+#include <vector>
 
 namespace tapeloop::obs {
 
@@ -42,6 +43,7 @@ public:
 	TransitionCatalog &operator=(TransitionCatalog &&) = delete;
 
 	virtual std::optional<TransitionTemplate> find(const std::string &name) const = 0;
+	virtual std::vector<std::string> names() const = 0;
 };
 
 // Told on the UI thread what the composition saw happen on its own.
@@ -83,6 +85,8 @@ public:
 	// Null, or one that outlives the composition. Without it, or for a name it does not
 	// have, the transitions are OBS's fade.
 	void setCatalog(const TransitionCatalog *catalog) noexcept { catalog_ = catalog; }
+	// The names of the transitions that can be picked.
+	std::vector<std::string> transitionNames() const;
 	// The transitions apply the next time they are used; the intro and outro once nothing
 	// is on air.
 	void setSettings(const AirSettings &settings);

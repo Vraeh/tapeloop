@@ -14,6 +14,7 @@
 #include <memory>
 #include <optional>
 #include <string>
+#include <vector>
 
 namespace tapeloop::obs {
 
@@ -46,6 +47,7 @@ private:
 	// Copies what the transition needs and keeps no reference to it, so that nothing of
 	// the scene collection outlives it.
 	std::optional<TransitionTemplate> find(const std::string &name) const override;
+	std::vector<std::string> names() const override;
 	// The frontend API is gone by the time the module unloads, so the callbacks go at
 	// the exit event.
 	void removeFrontendCallbacks() noexcept;

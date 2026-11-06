@@ -23,6 +23,7 @@
 #include <cstdint>
 #include <filesystem>
 #include <fstream>
+#include <optional>
 #include <string>
 #include <tuple>
 #include <vector>
@@ -208,6 +209,32 @@ TEST_CASE_METHOD(ObsFixture, "every settings change from the dock asks the host 
 	CHECK(host.saves == 4);
 	REQUIRE(backend.toggleRunning());
 	CHECK(host.saves == 4);
+}
+
+TEST_CASE_METHOD(ObsFixture, "the dock is offered the transitions the sequence knows of", "[obs][dock][air]")
+{
+	class Catalog final : public tapeloop::obs::TransitionCatalog {
+	public:
+		std::optional<tapeloop::obs::TransitionTemplate> find(const std::string &) const override
+		{
+			return std::nullopt;
+		}
+		std::vector<std::string> names() const override { return {"Swipe", "Ghost"}; }
+	};
+
+	tapeloop::obs::registerReplaySource({});
+	OfflineHost host;
+	CaptureManager manager(host);
+	CHECK(ManagerDockBackend(manager).transitions().empty());
+
+	SequencePlayer sequence(manager.library());
+	const ManagerDockBackend backend(manager, &sequence);
+	CHECK(backend.transitions().empty());
+
+	const Catalog catalog;
+	sequence.setTransitions(&catalog);
+	CHECK(backend.transitions() == std::vector<std::string>{"Swipe", "Ghost"});
+	sequence.setTransitions(nullptr);
 }
 
 TEST_CASE_METHOD(ObsFixture, "how a replay goes on air reaches the sequence from the dock", "[obs][dock][air]")

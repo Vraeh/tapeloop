@@ -73,6 +73,14 @@ AirComposition::~AirComposition()
 	destroy();
 }
 
+std::vector<std::string> AirComposition::transitionNames() const
+{
+	if (!catalog_) {
+		return {};
+	}
+	return catalog_->names();
+}
+
 void AirComposition::setSettings(const AirSettings &settings)
 {
 	settings_ = settings;

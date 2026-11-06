@@ -5,6 +5,7 @@
 
 #include "core/BufferBudget.hpp"
 
+#include "ui/AirSettingsDialog.hpp"
 #include "ui/SourceSettingsDialog.hpp"
 
 #include <QAbstractItemView>
@@ -166,6 +167,7 @@ TapeloopDock::TapeloopDock(DockBackend &backend, TextLookup text, QWidget *paren
 	  bufferMemory_(new QSpinBox(this)),
 	  memoryWarning_(new QLabel(text_("Dock.BufferMemory.Unsafe"), this)),
 	  memoryShort_(new QLabel(this)),
+	  airSettings_(new QPushButton(text_("Dock.AirSettings"), this)),
 	  note_(new QLabel(text_("Dock.ApplyNote"), this)),
 	  startStop_(new QPushButton(this)),
 	  followsOutputs_(new QLabel(text_("Dock.FollowsOutputs"), this)),
@@ -214,6 +216,7 @@ TapeloopDock::TapeloopDock(DockBackend &backend, TextLookup text, QWidget *paren
 	advanced_->setToolTip(text_("Dock.Advanced.Tooltip"));
 	advancedSettings_->setObjectName("advancedSettings");
 	advancedSettings_->hide();
+	airSettings_->setObjectName("airSettings");
 	replayEncoder_->setObjectName("replayEncoder");
 	replayEncoder_->setToolTip(text_("Dock.ReplayEncoder.Tooltip"));
 	otherAdapters_->setObjectName("otherAdapters");
@@ -285,6 +288,7 @@ TapeloopDock::TapeloopDock(DockBackend &backend, TextLookup text, QWidget *paren
 	layout->addWidget(sourceSettings_);
 	layout->addLayout(form);
 	layout->addWidget(advancedSettings_);
+	layout->addWidget(airSettings_);
 	layout->addWidget(note_);
 	layout->addWidget(memoryShort_);
 	layout->addWidget(startStop_);
@@ -366,7 +370,9 @@ TapeloopDock::TapeloopDock(DockBackend &backend, TextLookup text, QWidget *paren
 	setTabOrder(replayEncoder_, otherAdapters_);
 	setTabOrder(otherAdapters_, forceH264_);
 	setTabOrder(forceH264_, bufferMemory_);
-	setTabOrder(bufferMemory_, startStop_);
+	setTabOrder(bufferMemory_, airSettings_);
+	setTabOrder(airSettings_, startStop_);
+	connect(airSettings_, &QPushButton::clicked, this, [this] { openAirSettings(); });
 	connect(bufferMemory_, &QSpinBox::valueChanged, this, [this](int value) {
 		const int mib = value == 0 ? 0 : std::max(value, kMinBufferMemoryMiB);
 		if (mib != value) {
@@ -1019,6 +1025,36 @@ void TapeloopDock::applySourceSettings(const std::string &uuid, const SourceSett
 		source.activateOffAir = chosen.activateOffAir;
 		backend_.setSettings(settings);
 	});
+	refresh();
+}
+
+void TapeloopDock::openAirSettings()
+{
+	guarded([&] {
+		const AirSettings opened = backend_.settings().air;
+		auto *dialog = new AirSettingsDialog(opened, backend_.transitions(), text_, this);
+		dialog->setObjectName("airSettingsDialog");
+		dialog->setAttribute(Qt::WA_DeleteOnClose);
+		connect(dialog, &QDialog::accepted, this,
+			[this, dialog, opened] { guarded([&] { applyAirSettings(opened, dialog->result()); }); });
+		dialog->open();
+	});
+}
+
+void TapeloopDock::applyAirSettings(const AirSettings &opened, const AirSettings &chosen)
+{
+	// Every write saves the scene collection, so a dialog left as it was writes nothing.
+	if (chosen == opened) {
+		return;
+	}
+	BufferSettings settings = backend_.settings();
+	// The scene collection can change while the dialog is open, and what the dialog shows
+	// is then another collection's.
+	if (settings.air != opened) {
+		return;
+	}
+	settings.air = chosen;
+	backend_.setSettings(settings);
 	refresh();
 }
 

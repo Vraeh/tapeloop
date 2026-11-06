@@ -351,6 +351,8 @@ public:
 		}
 		return std::nullopt;
 	}
+
+	std::vector<std::string> names() const override { return {"Swipe", "Ghost"}; }
 };
 
 // Runs the UI thread's tasks for a while, failing should the condition stop holding.

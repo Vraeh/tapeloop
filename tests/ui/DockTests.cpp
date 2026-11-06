@@ -4,6 +4,7 @@
 #include "FakeBackend.hpp"
 #include "LocaleText.hpp"
 
+#include "ui/AirSettingsDialog.hpp"
 #include "ui/SourceSettingsDialog.hpp"
 #include "ui/TapeloopDock.hpp"
 
@@ -20,13 +21,18 @@
 #include <QComboBox>
 #include <QDialog>
 #include <QDir>
+#include <QDoubleSpinBox>
+#include <QFile>
+#include <QFileDialog>
 #include <QFocusEvent>
 #include <QPushButton>
 #include <QListWidget>
 #include <QMimeData>
 #include <QMouseEvent>
+#include <QScrollBar>
 #include <QSpinBox>
 #include <QTableWidget>
+#include <QTemporaryDir>
 #include <QWheelEvent>
 
 #include <chrono>
@@ -38,6 +44,8 @@
 #include <utility>
 
 using namespace std::chrono_literals;
+using tapeloop::AirMediaKind;
+using tapeloop::AirSettings;
 using tapeloop::BufferSettings;
 using tapeloop::ExportFormat;
 using tapeloop::ReplayResolution;
@@ -46,6 +54,7 @@ using tapeloop::ResolutionMode;
 using tapeloop::SourceSettings;
 using tapeloop::test::FakeBackend;
 using tapeloop::test::localeText;
+using tapeloop::ui::AirSettingsDialog;
 using tapeloop::ui::DockSource;
 using tapeloop::ui::SourceState;
 using tapeloop::ui::TapeloopDock;
@@ -71,6 +80,11 @@ struct TableDrop : QTableWidget {
 tapeloop::ui::SourceSettingsDialog *sourceDialog(const QWidget &dock)
 {
 	return static_cast<tapeloop::ui::SourceSettingsDialog *>(dock.findChild<QDialog *>("sourceSettingsDialog"));
+}
+
+AirSettingsDialog *airDialog(const QWidget &dock)
+{
+	return static_cast<AirSettingsDialog *>(dock.findChild<QDialog *>("airSettingsDialog"));
 }
 
 template<typename Widget> Widget *child(const QWidget &parent, const char *name)
@@ -210,7 +224,8 @@ TEST_CASE("the advanced settings choose the replay encoder and whether other car
 	CHECK(nextFocus(encoder) == "otherAdapters");
 	CHECK(nextFocus(otherAdapters) == "forceH264");
 	CHECK(nextFocus(forceH264) == "bufferMemory");
-	CHECK(nextFocus(child<QSpinBox>(dock, "bufferMemory")) == "startStop");
+	CHECK(nextFocus(child<QSpinBox>(dock, "bufferMemory")) == "airSettings");
+	CHECK(nextFocus(child<QPushButton>(dock, "airSettings")) == "startStop");
 }
 
 TEST_CASE("the advanced settings set the memory the buffers may use")
@@ -1108,6 +1123,300 @@ TEST_CASE("the source settings dialog sets and clears a source's own settings")
 	CHECK_FALSE(result.activateOffAir);
 }
 
+TEST_CASE("the on-air settings dialog starts from the defaults")
+{
+	const AirSettingsDialog dialog({}, {}, localeText());
+	for (const char *part : {"intro", "outro"}) {
+		const std::string name(part);
+		CHECK(child<QComboBox>(dialog, (name + "Kind").c_str())->currentText() == "None");
+		CHECK(child<QComboBox>(dialog, (name + "Transition").c_str())->count() == 1);
+		CHECK(child<QComboBox>(dialog, (name + "Transition").c_str())->currentText() == "Default fade");
+		CHECK(child<QSpinBox>(dialog, (name + "Duration").c_str())->value() == 300);
+		CHECK(child<QDoubleSpinBox>(dialog, (name + "ImageTime").c_str())->value() == 3.0);
+	}
+	CHECK(dialog.result() == AirSettings{});
+}
+
+TEST_CASE("the on-air settings dialog gives back what it was given")
+{
+	AirSettings current;
+	current.intro.kind = AirMediaKind::Video;
+	current.intro.path = "/media/intro \xC3\xB1.mp4";
+	current.into.name = "Swipe";
+	current.into.duration = 1250ms;
+	current.outro.kind = AirMediaKind::Image;
+	current.outro.path = "/media/outro.png";
+	current.outro.imageTime = 7500ms;
+	current.back.name = "Gone";
+	current.back.duration = 50ms;
+	const AirSettingsDialog dialog(current, {"Swipe", "Fade"}, localeText());
+	CHECK(dialog.result() == current);
+	CHECK(child<QComboBox>(dialog, "introTransition")->currentText() == "Swipe");
+	CHECK(child<QComboBox>(dialog, "outroTransition")->currentText() == "Gone (not found)");
+
+	// A path and an image time kept while the kind does not use them.
+	AirSettings unused;
+	unused.intro.path = "/media/old.mp4";
+	unused.intro.imageTime = 4000ms;
+	unused.outro.kind = AirMediaKind::Video;
+	unused.outro.imageTime = 9000ms;
+	CHECK(AirSettingsDialog(unused, {}, localeText()).result() == unused);
+
+	// A saved file can hold an image time finer than the box's tenths, which stays until
+	// the box is changed.
+	AirSettings fine;
+	fine.intro.kind = AirMediaKind::Image;
+	fine.intro.imageTime = 1234ms;
+	const AirSettingsDialog fineDialog(fine, {}, localeText());
+	CHECK(child<QDoubleSpinBox>(fineDialog, "introImageTime")->value() == 1.2);
+	CHECK(fineDialog.result() == fine);
+	child<QDoubleSpinBox>(fineDialog, "introImageTime")->setValue(1.5);
+	CHECK(fineDialog.result().intro.imageTime == 1500ms);
+}
+
+TEST_CASE("the on-air settings dialog changes every part of the settings")
+{
+	const AirSettingsDialog dialog({}, {"Swipe", "Ghost"}, localeText());
+	child<QComboBox>(dialog, "introKind")->setCurrentIndex(1);
+	child<QLineEdit>(dialog, "introFile")->setText("/media/intro.mp4");
+	child<QComboBox>(dialog, "introTransition")->setCurrentText("Swipe");
+	child<QSpinBox>(dialog, "introDuration")->setValue(800);
+	child<QComboBox>(dialog, "outroKind")->setCurrentIndex(2);
+	child<QLineEdit>(dialog, "outroFile")->setText("/media/outro.png");
+	child<QDoubleSpinBox>(dialog, "outroImageTime")->setValue(4.5);
+	child<QComboBox>(dialog, "outroTransition")->setCurrentText("Ghost");
+	child<QSpinBox>(dialog, "outroDuration")->setValue(900);
+
+	AirSettings expected;
+	expected.intro.kind = AirMediaKind::Video;
+	expected.intro.path = "/media/intro.mp4";
+	expected.into = {"Swipe", 800ms};
+	expected.outro.kind = AirMediaKind::Image;
+	expected.outro.path = "/media/outro.png";
+	expected.outro.imageTime = 4500ms;
+	expected.back = {"Ghost", 900ms};
+	CHECK(dialog.result() == expected);
+
+	child<QComboBox>(dialog, "introTransition")->setCurrentIndex(0);
+	CHECK(dialog.result().into.name.empty());
+}
+
+TEST_CASE("the on-air settings dialog lists the transitions by name, whatever the case")
+{
+	AirSettings current;
+	current.into.name = "Gone";
+	const AirSettingsDialog dialog(current, {"swipe", "Ghost", "", "Fade", "cut"}, localeText());
+
+	const auto items = [&](const char *name) {
+		QStringList texts;
+		const auto *combo = child<QComboBox>(dialog, name);
+		for (int i = 0; i < combo->count(); ++i) {
+			texts.append(combo->itemText(i));
+		}
+		return texts;
+	};
+	// OBS's fade stays first, apart from a transition the user named Fade, and the missing
+	// name is on offer only where it was picked.
+	CHECK(items("introTransition") ==
+	      QStringList{"Default fade", "cut", "Fade", "Ghost", "swipe", "Gone (not found)"});
+	CHECK(items("outroTransition") == QStringList{"Default fade", "cut", "Fade", "Ghost", "swipe"});
+	CHECK(child<QComboBox>(dialog, "introTransition")->currentText() == "Gone (not found)");
+	CHECK(child<QComboBox>(dialog, "outroTransition")->currentIndex() == 0);
+}
+
+TEST_CASE("the on-air settings dialog enables what the kind uses")
+{
+	AirSettings current;
+	current.outro.kind = AirMediaKind::Image;
+	const AirSettingsDialog dialog(current, {}, localeText());
+	auto *kind = child<QComboBox>(dialog, "introKind");
+	auto *file = child<QLineEdit>(dialog, "introFile");
+	auto *browse = child<QPushButton>(dialog, "introBrowse");
+	auto *imageTime = child<QDoubleSpinBox>(dialog, "introImageTime");
+
+	CHECK_FALSE(file->isEnabled());
+	CHECK_FALSE(browse->isEnabled());
+	CHECK_FALSE(imageTime->isEnabled());
+	CHECK(child<QLineEdit>(dialog, "outroFile")->isEnabled());
+	CHECK(child<QPushButton>(dialog, "outroBrowse")->isEnabled());
+	CHECK(child<QDoubleSpinBox>(dialog, "outroImageTime")->isEnabled());
+
+	kind->setCurrentIndex(1);
+	CHECK(file->isEnabled());
+	CHECK(browse->isEnabled());
+	CHECK_FALSE(imageTime->isEnabled());
+	kind->setCurrentIndex(2);
+	CHECK(file->isEnabled());
+	CHECK(browse->isEnabled());
+	CHECK(imageTime->isEnabled());
+	kind->setCurrentIndex(0);
+	CHECK_FALSE(file->isEnabled());
+	CHECK_FALSE(browse->isEnabled());
+	CHECK_FALSE(imageTime->isEnabled());
+
+	// The transitions apply with or without an intro or outro.
+	CHECK(child<QComboBox>(dialog, "introTransition")->isEnabled());
+	CHECK(child<QSpinBox>(dialog, "introDuration")->isEnabled());
+}
+
+TEST_CASE("the on-air settings dialog keeps its values in range")
+{
+	const AirSettingsDialog dialog({}, {}, localeText());
+	auto *imageTime = child<QDoubleSpinBox>(dialog, "introImageTime");
+	CHECK(imageTime->minimum() == 0.5);
+	CHECK(imageTime->maximum() == 60.0);
+	CHECK(imageTime->singleStep() == 0.5);
+	auto *duration = child<QSpinBox>(dialog, "introDuration");
+	CHECK(duration->minimum() == 50);
+	CHECK(duration->maximum() == 20000);
+	CHECK(duration->singleStep() == 50);
+}
+
+TEST_CASE("every control of the on-air settings dialog is reached with the keyboard in order")
+{
+	AirSettings current;
+	current.intro.kind = AirMediaKind::Image;
+	current.outro.kind = AirMediaKind::Image;
+	const AirSettingsDialog dialog(current, {}, localeText());
+	QStringList order;
+	QWidget *widget = child<QComboBox>(dialog, "introKind");
+	const QWidget *first = widget;
+	do {
+		if ((widget->focusPolicy() & Qt::TabFocus) != 0 && !widget->objectName().isEmpty() &&
+		    !widget->objectName().startsWith("qt_")) {
+			order.append(widget->objectName());
+		}
+		widget = widget->nextInFocusChain();
+	} while (widget != first);
+	CHECK(order == QStringList{"introKind", "introFile", "introBrowse", "introImageTime", "introTransition",
+				   "introDuration", "outroKind", "outroFile", "outroBrowse", "outroImageTime",
+				   "outroTransition", "outroDuration"});
+}
+
+TEST_CASE("the on-air settings dialog browses for a file of the kind picked")
+{
+	const QTemporaryDir directory;
+	REQUIRE(directory.isValid());
+	const QString video = directory.filePath("intro.mp4");
+	const QString image = directory.filePath("intro.png");
+	for (const QString &path : {video, image}) {
+		QFile file(path);
+		REQUIRE(file.open(QIODevice::WriteOnly));
+	}
+
+	AirSettings current;
+	current.intro.kind = AirMediaKind::Video;
+	current.intro.path = video.toStdString();
+	AirSettingsDialog dialog(current, {}, localeText());
+	child<QPushButton>(dialog, "introBrowse")->click();
+	auto *files = dialog.findChild<QFileDialog *>("airFile");
+	REQUIRE(files);
+	CHECK(files->isModal());
+	CHECK(files->nameFilters().first().startsWith("Video files (*.mp4 "));
+	CHECK(files->nameFilters().last() == "All files (*)");
+	CHECK(files->directory().absolutePath() == QDir(directory.path()).absolutePath());
+	files->reject();
+	CHECK(dialog.result() == current);
+	QCoreApplication::sendPostedEvents(nullptr, QEvent::DeferredDelete);
+	CHECK_FALSE(dialog.findChild<QFileDialog *>("airFile"));
+
+	child<QComboBox>(dialog, "introKind")->setCurrentIndex(2);
+	child<QPushButton>(dialog, "introBrowse")->click();
+	files = dialog.findChild<QFileDialog *>("airFile");
+	REQUIRE(files);
+	CHECK(files->nameFilters().first().startsWith("Image files (*.bmp "));
+	files->selectFile(image);
+	static_cast<QDialog *>(files)->accept();
+	CHECK(child<QLineEdit>(dialog, "introFile")->text() == image);
+	CHECK(child<QLineEdit>(dialog, "outroFile")->text().isEmpty());
+	QCoreApplication::sendPostedEvents(nullptr, QEvent::DeferredDelete);
+	CHECK_FALSE(dialog.findChild<QFileDialog *>("airFile"));
+}
+
+TEST_CASE("the on-air settings button writes only what the dialog changed")
+{
+	FakeBackend backend;
+	backend.transitionNames = {"Swipe"};
+	backend.current.air.back.name = "Gone";
+	TapeloopDock dock(backend, localeText());
+	auto *button = child<QPushButton>(dock, "airSettings");
+	const auto dialogGone = [&] {
+		QCoreApplication::sendPostedEvents(nullptr, QEvent::DeferredDelete);
+		return airDialog(dock) == nullptr;
+	};
+
+	CHECK(button->text() == "On-air settings...");
+	button->click();
+	AirSettingsDialog *dialog = airDialog(dock);
+	REQUIRE(dialog);
+	CHECK(dialog->isModal());
+	CHECK(child<QComboBox>(*dialog, "introTransition")->findText("Swipe") >= 0);
+	dialog->accept();
+	CHECK(backend.settingsChanges == 0);
+	CHECK(dialogGone());
+
+	button->click();
+	dialog = airDialog(dock);
+	REQUIRE(dialog);
+	child<QSpinBox>(*dialog, "outroDuration")->setValue(2000);
+	dialog->reject();
+	CHECK(backend.settingsChanges == 0);
+	CHECK(dialogGone());
+
+	button->click();
+	dialog = airDialog(dock);
+	REQUIRE(dialog);
+	child<QComboBox>(*dialog, "introTransition")->setCurrentText("Swipe");
+	dialog->accept();
+	CHECK(backend.settingsChanges == 1);
+	CHECK(backend.current.air.into.name == "Swipe");
+	CHECK(backend.current.air.back.name == "Gone");
+	CHECK(dialogGone());
+
+	// Set back to what it was, which leaves nothing to save.
+	button->click();
+	dialog = airDialog(dock);
+	REQUIRE(dialog);
+	child<QSpinBox>(*dialog, "introDuration")->setValue(1000);
+	child<QSpinBox>(*dialog, "introDuration")->setValue(300);
+	dialog->accept();
+	CHECK(backend.settingsChanges == 1);
+	CHECK(dialogGone());
+}
+
+TEST_CASE("on-air settings opened under another scene collection are dropped")
+{
+	FakeBackend backend;
+	backend.current.air.into.name = "Swipe";
+	TapeloopDock dock(backend, localeText());
+	child<QPushButton>(dock, "airSettings")->click();
+	AirSettingsDialog *dialog = airDialog(dock);
+	REQUIRE(dialog);
+	child<QSpinBox>(*dialog, "introDuration")->setValue(2000);
+
+	backend.current.air.into.name = "Other";
+	dialog->accept();
+	CHECK(backend.settingsChanges == 0);
+	CHECK(backend.current.air.into.name == "Other");
+	CHECK(backend.current.air.into.duration == 300ms);
+}
+
+TEST_CASE("the on-air settings write the rest of the settings as they are now")
+{
+	FakeBackend backend;
+	TapeloopDock dock(backend, localeText());
+	child<QPushButton>(dock, "airSettings")->click();
+	AirSettingsDialog *dialog = airDialog(dock);
+	REQUIRE(dialog);
+	child<QSpinBox>(*dialog, "introDuration")->setValue(2000);
+
+	backend.current.length = 77s;
+	dialog->accept();
+	CHECK(backend.settingsChanges == 1);
+	CHECK(backend.current.length == 77s);
+	CHECK(backend.current.air.into.duration == 2000ms);
+}
+
 TEST_CASE("every control of the dock can be reached with the keyboard")
 {
 	FakeBackend backend;
@@ -1127,7 +1436,7 @@ TEST_CASE("every control of the dock can be reached with the keyboard")
 		CAPTURE(widget->objectName().toStdString());
 		CHECK((widget->focusPolicy() & Qt::TabFocus) != 0);
 	}
-	CHECK(controls == 21);
+	CHECK(controls == 22);
 }
 
 TEST_CASE("every string the dock asks for is in the locale file")
@@ -1150,6 +1459,10 @@ TEST_CASE("every string the dock asks for is in the locale file")
 	table->setCurrentCell(0, 0);
 	child<QPushButton>(dock, "sourceSettings")->click();
 	REQUIRE(sourceDialog(dock));
+	// A transition picked earlier that OBS no longer has is the one string shown only then.
+	backend.current.air.into.name = "Gone";
+	child<QPushButton>(dock, "airSettings")->click();
+	REQUIRE(airDialog(dock));
 	backend.isRunning = true;
 	dock.refresh();
 	backend.memory = 0;
@@ -1315,8 +1628,11 @@ TEST_CASE("dragging a source in the dock changes the order of the replay")
 	FakeBackend backend;
 	addSources(backend);
 	TapeloopDock dock(backend, localeText());
+	// A row that becomes current must not scroll the others away from the points below.
+	dock.resize(380, 900);
 	dock.show();
 	auto *table = child<QTableWidget>(dock, "sources");
+	REQUIRE(table->verticalScrollBar()->maximum() == 0);
 	const auto upperHalf = [&](int row) {
 		return QPoint(5, table->rowViewportPosition(row) + 1);
 	};
@@ -1474,6 +1790,15 @@ TEST_CASE("dock screenshots", "[.screenshots]")
 	tapeloop::ui::SourceSettingsDialog dialog("Camera 1", current, backend.current, localeText());
 	dialog.adjustSize();
 	CHECK(dialog.grab().save(out.filePath("dock-source-settings.png")));
+
+	AirSettings air;
+	air.intro.kind = AirMediaKind::Image;
+	air.intro.path = "/media/intro.png";
+	air.into.name = "Swipe";
+	air.back.name = "Gone";
+	AirSettingsDialog airSettings(air, {"Swipe", "Fade", "Cut"}, localeText());
+	airSettings.adjustSize();
+	CHECK(airSettings.grab().save(out.filePath("dock-air-settings.png")));
 }
 
 TEST_CASE("every kind of edit in the dock writes the settings once")
@@ -1502,6 +1827,12 @@ TEST_CASE("every kind of edit in the dock writes the settings once")
 		child<QPushButton>(dock, "sourceSettings")->click();
 		auto *dialog = sourceDialog(dock);
 		child<QCheckBox>(*dialog, "ownLength")->setChecked(true);
+		dialog->accept();
+	}));
+	CHECK(writesOnce([&] {
+		child<QPushButton>(dock, "airSettings")->click();
+		auto *dialog = airDialog(dock);
+		child<QSpinBox>(*dialog, "introDuration")->setValue(1000);
 		dialog->accept();
 	}));
 }

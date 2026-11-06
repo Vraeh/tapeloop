@@ -212,6 +212,14 @@ std::vector<std::string> ManagerDockBackend::replayTags() const
 	return {tags.begin(), tags.end()};
 }
 
+std::vector<std::string> ManagerDockBackend::transitions() const
+{
+	if (!sequence_) {
+		return {};
+	}
+	return sequence_->air().transitionNames();
+}
+
 std::vector<ui::EncoderChoice> ManagerDockBackend::encoderChoices() const
 {
 	std::vector<ui::EncoderChoice> choices;

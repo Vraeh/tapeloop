@@ -27,6 +27,7 @@ public:
 	BufferSettings settings() const override { return manager_.settings(); }
 	void setSettings(const BufferSettings &settings) override;
 	std::vector<ui::EncoderChoice> encoderChoices() const override;
+	std::vector<std::string> transitions() const override;
 
 	bool running() const override { return manager_.running(); }
 	bool manualControlEnabled() const override { return manager_.manualControlEnabled(); }

@@ -155,6 +155,18 @@ std::optional<TransitionTemplate> FrontendBridge::find(const std::string &name) 
 	return std::nullopt;
 }
 
+std::vector<std::string> FrontendBridge::names() const
+{
+	std::vector<std::string> found;
+	const TransitionList transitions;
+	for (obs_source_t *transition : transitions.sources()) {
+		if (const char *name = obs_source_get_name(transition)) {
+			found.emplace_back(name);
+		}
+	}
+	return found;
+}
+
 void FrontendBridge::handleEvent(obs_frontend_event event, void *data) noexcept
 {
 	auto &bridge = *static_cast<FrontendBridge *>(data);

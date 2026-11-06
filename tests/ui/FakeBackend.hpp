@@ -18,6 +18,7 @@ class FakeBackend : public tapeloop::ui::DockBackend {
 public:
 	std::vector<tapeloop::ui::DockSource> shown;
 	BufferSettings current;
+	std::vector<std::string> transitionNames;
 	bool isRunning = false;
 	bool manualEnabled = true;
 	int toggles = 0;
@@ -96,6 +97,7 @@ public:
 	}
 
 	std::vector<tapeloop::ui::EncoderChoice> encoderChoices() const override { return choices; }
+	std::vector<std::string> transitions() const override { return transitionNames; }
 
 	bool running() const override { return isRunning; }
 	bool manualControlEnabled() const override { return manualEnabled; }
