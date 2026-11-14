@@ -12,7 +12,11 @@
 #include <optional>
 #include <random>
 #include <stdexcept>
+#include <string>
 #include <system_error>
+#include <tuple>
+#include <utility>
+#include <vector>
 
 namespace tapeloop {
 namespace {
@@ -111,17 +115,11 @@ std::optional<ReplayIndex> decodeManifestBytes(const ManifestBytes &bytes)
 
 bool segmentsExist(const std::filesystem::path &manifest, const ReplayIndex &index)
 {
-	for (const StoredSource &source : index.sources) {
-		std::optional<uint32_t> checked;
-		for (const StoredGop &gop : source.gops) {
-			if (gop.segment == checked) {
-				continue;
-			}
-			checked = gop.segment;
-			std::error_code error;
-			if (!std::filesystem::is_regular_file(segmentPath(manifest, source, gop.segment), error)) {
-				return false;
-			}
+	for (const SegmentFile &file : segmentFilesOf(index)) {
+		std::error_code error;
+		if (!std::filesystem::is_regular_file(segmentPath(manifest, index.sources[file.source], file.segment),
+						      error)) {
+			return false;
 		}
 	}
 	return true;
@@ -532,6 +530,39 @@ std::filesystem::path segmentPath(const std::filesystem::path &manifest, const S
 		return manifest;
 	}
 	return manifest.parent_path() / pathFromUtf8(kDataFolder) / pathFromUtf8(segmentFileName(source.key, segment));
+}
+
+std::vector<SegmentFile> segmentFilesOf(const ReplayIndex &index)
+{
+	// A segment's file name is the safe form of its key, so keys that differ can share it.
+	std::vector<std::pair<std::string, uint32_t>> names;
+	names.reserve(index.sources.size());
+	for (size_t s = 0; s < index.sources.size(); ++s) {
+		names.emplace_back(safeFileName(index.sources[s].key), static_cast<uint32_t>(s));
+	}
+	std::sort(names.begin(), names.end());
+	std::vector<uint32_t> namedBy(names.size());
+	for (size_t i = 0; i < names.size(); ++i) {
+		const bool shared = i > 0 && names[i].first == names[i - 1].first;
+		namedBy[names[i].second] = shared ? namedBy[names[i - 1].second] : names[i].second;
+	}
+
+	std::vector<SegmentFile> files;
+	for (size_t s = 0; s < index.sources.size(); ++s) {
+		std::optional<uint32_t> last;
+		for (const StoredGop &gop : index.sources[s].gops) {
+			if (gop.segment != last) {
+				last = gop.segment;
+				// Every GOP of a self-contained replay is in the one file.
+				files.push_back({gop.segment == kOwnFile ? 0 : namedBy[s], gop.segment});
+			}
+		}
+	}
+	std::sort(files.begin(), files.end(), [](const SegmentFile &a, const SegmentFile &b) {
+		return std::tie(a.source, a.segment) < std::tie(b.source, b.segment);
+	});
+	files.erase(std::unique(files.begin(), files.end()), files.end());
+	return files;
 }
 
 } // namespace tapeloop

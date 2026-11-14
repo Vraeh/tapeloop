@@ -212,4 +212,19 @@ std::optional<ReplayIndex> readReplayIndex(const std::filesystem::path &manifest
 // self-contained replay itself.
 std::filesystem::path segmentPath(const std::filesystem::path &manifest, const StoredSource &source, uint32_t segment);
 
+// A file that holds GOPs of a replay, as segmentPath finds it: the index of a source
+// whose key names it, and its sequence or kOwnFile.
+struct SegmentFile {
+	uint32_t source = 0;
+	uint32_t segment = 0;
+
+	bool operator==(const SegmentFile &) const = default;
+};
+
+// Each file that holds GOPs of the replay once, by source and then sequence, however many
+// GOPs it holds and in whatever order the index lists them. Sources whose keys give one
+// file name share their files, known by the first of those sources. What is done per
+// file then grows with the files that exist, not with the length of the index.
+std::vector<SegmentFile> segmentFilesOf(const ReplayIndex &index);
+
 } // namespace tapeloop

@@ -4,6 +4,7 @@
 #include "core/ReplayWriter.hpp"
 
 #include "core/FileIo.hpp"
+#include "core/ReplayNames.hpp"
 
 #include "StoredReplays.hpp"
 #include "SyntheticEncoder.hpp"
@@ -30,6 +31,7 @@ using tapeloop::ReplayCapture;
 using tapeloop::ReplayIndex;
 using tapeloop::ReplayWriter;
 using tapeloop::ReplayWriterConfig;
+using tapeloop::SegmentFile;
 using tapeloop::StoredSource;
 using tapeloop::VideoCodec;
 using tapeloop::WrittenReplay;
@@ -543,6 +545,63 @@ TEST_CASE("a scan checks the first segment a manifest names")
 	const tapeloop::ReplayScan scan = tapeloop::scanReplays(dir.path());
 	REQUIRE(scan.replays.size() == 1);
 	CHECK_FALSE(scan.replays[0].intact);
+}
+
+TEST_CASE("a scan checks a segment a manifest goes back to")
+{
+	TempDirectory dir;
+	const fs::path folder = dir.path() / "Liga 2026-10-09 21-00";
+	const WrittenReplay written = ReplayWriter().write(captureOf(folder, {sourceOf("a", makeGops(4))}));
+	std::optional<ReplayIndex> index = readManifest(written.manifest);
+	REQUIRE(index);
+	std::vector<tapeloop::StoredGop> &gops = index->sources.at(0).gops;
+	for (size_t g = 1; g < gops.size(); g += 2) {
+		gops[g].segment = 2;
+	}
+	fs::remove(written.manifest);
+	File(written.manifest, File::Mode::CreateNew).writeAt(0, tapeloop::encodeManifest(*index, {}));
+
+	CHECK_FALSE(tapeloop::scanReplays(dir.path()).replays.at(0).intact);
+	fs::copy_file(folder / "data" / "a-000001.tpls", folder / "data" / "a-000002.tpls");
+	CHECK(tapeloop::scanReplays(dir.path()).replays.at(0).intact);
+}
+
+TEST_CASE("each file that holds a replay's GOPs is listed once")
+{
+	// A scan looks for every file listed, so the list bounds its lookups. Listed once per
+	// change of segment in each source, a manifest whose GOPs go back and forth between
+	// two segments, or whose sources have keys that give one file name, kept the store
+	// thread busy for seconds.
+	ReplayIndex index;
+	const auto addSource = [&index](std::string key, const std::vector<uint32_t> &segments) {
+		StoredSource source;
+		source.key = std::move(key);
+		for (const uint32_t segment : segments) {
+			source.gops.push_back({segment, 1, 0, 0, 0, 0});
+		}
+		index.sources.push_back(std::move(source));
+	};
+	std::vector<uint32_t> alternating;
+	for (uint32_t g = 0; g < 1000; ++g) {
+		alternating.push_back(1 + g % 2);
+	}
+	addSource("a", alternating);
+	// Keys are cut to the longest file name, so these give one.
+	const std::string longKey(tapeloop::kMaxFileNameBytes, 'b');
+	for (int s = 0; s < 1000; ++s) {
+		addSource(longKey + std::to_string(s), {2, 1});
+	}
+	addSource("c", {1});
+	CHECK(tapeloop::segmentFilesOf(index) == std::vector<SegmentFile>{{0, 1}, {0, 2}, {1, 1}, {1, 2}, {1001, 1}});
+
+	ReplayIndex own;
+	for (const char *key : {"a", "b"}) {
+		StoredSource source;
+		source.key = key;
+		source.gops.assign(3, {tapeloop::kOwnFile, 1, 0, 0, 0, 0});
+		own.sources.push_back(std::move(source));
+	}
+	CHECK(tapeloop::segmentFilesOf(own) == std::vector<SegmentFile>{{0, tapeloop::kOwnFile}});
 }
 
 TEST_CASE("a scan of a base that does not exist finds nothing")
