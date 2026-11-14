@@ -5,6 +5,7 @@
 
 #include "core/FileIo.hpp"
 #include "core/GopReader.hpp"
+#include "core/ReplayFormat.hpp"
 #include "core/ReplayLibrary.hpp"
 #include "core/ReplayWriter.hpp"
 
@@ -473,6 +474,22 @@ TEST_CASE("an export reads the buffers' own GOPs while they last")
 	const ExportResult result = exportOnce(exporter, request);
 	REQUIRE(result.error.empty());
 	CHECK(tapeloop::readReplayIndex(result.files.front()));
+}
+
+TEST_CASE("an export refuses a replay that lists one GOP for two sources")
+{
+	TempDirectory dir;
+	const WrittenReplay written = ReplayWriter().write(captureOf(dir.path(), {sourceOf("a", makeGops(2))}));
+	// Its source twice under one key: the copy would hold each GOP twice.
+	ReplayIndex index = written.index;
+	index.sources.push_back(index.sources.front());
+	fs::remove(written.manifest);
+	File(written.manifest, File::Mode::CreateNew).writeAt(0, tapeloop::encodeManifest(index, {}));
+	ReplayExporter exporter;
+	const ExportResult result = exportOnce(exporter, requestFor(written, ExportFormat::Replay));
+	CHECK_FALSE(result.error.empty());
+	CHECK(result.files.empty());
+	CHECK_FALSE(fs::exists(dir.path() / "Export"));
 }
 
 TEST_CASE("an MP4 export refuses a GOP whose times are not the ones its index gives")

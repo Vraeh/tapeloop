@@ -2,6 +2,7 @@
 // Copyright (C) 2026 Vicente Aedo <ryde1337@gmail.com>
 
 #include "core/ReplayFormat.hpp"
+#include "core/ReplayNames.hpp"
 
 #include "../core/SyntheticEncoder.hpp"
 #include "FuzzInput.hpp"
@@ -14,6 +15,7 @@
 #include <optional>
 #include <span>
 #include <string>
+#include <utility>
 #include <vector>
 
 using tapeloop::ChunkPlace;
@@ -118,10 +120,37 @@ std::vector<uint8_t> encodeAgain(const ReplayIndex &index, std::span<const uint8
 	return file;
 }
 
-// What decodes encodes again to a file that decodes the same. That file is no larger than
-// the original, or some part of the original was decoded more than once.
+// No two GOPs share a byte of one file: the replay's own, or a segment of one sequence
+// whose name both sources' keys make.
+void requireGopsApart(const ReplayIndex &index)
+{
+	std::vector<std::string> names;
+	std::vector<std::pair<size_t, const tapeloop::StoredGop *>> gops;
+	for (size_t s = 0; s < index.sources.size(); ++s) {
+		names.push_back(tapeloop::safeFileName(index.sources[s].key));
+		for (const tapeloop::StoredGop &gop : index.sources[s].gops) {
+			gops.emplace_back(s, &gop);
+		}
+	}
+	for (size_t i = 0; i < gops.size(); ++i) {
+		for (size_t j = i + 1; j < gops.size(); ++j) {
+			const tapeloop::StoredGop &a = *gops[i].second;
+			const tapeloop::StoredGop &b = *gops[j].second;
+			if (a.segment != b.segment ||
+			    (a.segment != tapeloop::kOwnFile && names[gops[i].first] != names[gops[j].first])) {
+				continue;
+			}
+			require(a.offset <= b.offset ? b.offset - a.offset >= a.size : a.offset - b.offset >= b.size);
+		}
+	}
+}
+
+// What decodes lists no byte of a file for two GOPs, and encodes again to a file that
+// decodes the same. That file is no larger than the original, or some part of the original
+// was decoded more than once.
 void requireEncodesAgain(const ReplayIndex &index, std::span<const uint8_t> original)
 {
+	requireGopsApart(index);
 	const std::vector<uint8_t> file = encodeAgain(index, original);
 	require(file.size() <= original.size());
 	const std::optional<ReplayIndex> again = tapeloop::decodeManifest(file);
