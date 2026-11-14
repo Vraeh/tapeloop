@@ -6,6 +6,8 @@
 #include "core/BufferBudget.hpp"
 
 #include "ui/AirSettingsDialog.hpp"
+#include "ui/Guarded.hpp"
+#include "ui/OverlayDialog.hpp"
 #include "ui/SourceSettingsDialog.hpp"
 
 #include <QAbstractItemView>
@@ -46,6 +48,11 @@ namespace {
 constexpr int kSourceColumn = 0;
 constexpr int kShownColumn = 1;
 constexpr int kStatusColumn = 2;
+constexpr int kStatsSourceColumn = 0;
+constexpr int kStatsMemoryColumn = 1;
+constexpr int kStatsLoadColumn = 2;
+constexpr int kStatsSkippedColumn = 3;
+constexpr int kStatsColumns = 4;
 // Below this the buffers would keep little more than a keyframe each, which is a slip
 // rather than a budget.
 constexpr int kMinBufferMemoryMiB = 256;
@@ -68,16 +75,6 @@ const char *readbackNote(ReadbackReason reason)
 		break;
 	}
 	return "Dock.Status.Readback.Tooltip";
-}
-
-// Qt cannot let an exception through its event loop; a failed change is dropped and the
-// next refresh shows the state as it is.
-template<typename Function> void guarded(Function &&function) noexcept
-{
-	try {
-		function();
-	} catch (...) {
-	}
 }
 
 // Qt goes past the rows that cannot be current on the arrow keys only, and ignores Home,
@@ -169,7 +166,9 @@ TapeloopDock::TapeloopDock(DockBackend &backend, TextLookup text, QWidget *paren
 	  bufferMemory_(new QSpinBox(this)),
 	  memoryWarning_(new QLabel(text_("Dock.BufferMemory.Unsafe"), this)),
 	  memoryShort_(new QLabel(this)),
+	  stats_(new QTableWidget(0, kStatsColumns, this)),
 	  airSettings_(new QPushButton(text_("Dock.AirSettings"), this)),
+	  overlaySettings_(new QPushButton(text_("Dock.OverlaySettings"), this)),
 	  note_(new QLabel(text_("Dock.ApplyNote"), this)),
 	  startStop_(new QPushButton(this)),
 	  followsOutputs_(new QLabel(text_("Dock.FollowsOutputs"), this)),
@@ -220,6 +219,7 @@ TapeloopDock::TapeloopDock(DockBackend &backend, TextLookup text, QWidget *paren
 	advancedSettings_->setObjectName("advancedSettings");
 	advancedSettings_->hide();
 	airSettings_->setObjectName("airSettings");
+	overlaySettings_->setObjectName("overlaySettings");
 	replayEncoder_->setObjectName("replayEncoder");
 	replayEncoder_->setToolTip(text_("Dock.ReplayEncoder.Tooltip"));
 	otherAdapters_->setObjectName("otherAdapters");
@@ -234,6 +234,21 @@ TapeloopDock::TapeloopDock(DockBackend &backend, TextLookup text, QWidget *paren
 	memoryWarning_->setObjectName("memoryWarning");
 	memoryWarning_->setWordWrap(true);
 	memoryWarning_->hide();
+	stats_->setObjectName("stats");
+	stats_->setHorizontalHeaderLabels({text_("Dock.Source"), text_("Dock.Stats.Memory"), text_("Dock.Stats.Load"),
+					   text_("Dock.Stats.Skipped")});
+	stats_->horizontalHeaderItem(kStatsMemoryColumn)->setToolTip(text_("Dock.Stats.Memory.Tooltip"));
+	stats_->horizontalHeaderItem(kStatsLoadColumn)->setToolTip(text_("Dock.Stats.Load.Tooltip"));
+	stats_->horizontalHeaderItem(kStatsSkippedColumn)->setToolTip(text_("Dock.Stats.Skipped.Tooltip"));
+	stats_->horizontalHeader()->setSectionResizeMode(kStatsSourceColumn, QHeaderView::Stretch);
+	for (int column = kStatsMemoryColumn; column < kStatsColumns; ++column) {
+		stats_->horizontalHeader()->setSectionResizeMode(column, QHeaderView::ResizeToContents);
+	}
+	stats_->verticalHeader()->hide();
+	stats_->setSelectionMode(QAbstractItemView::NoSelection);
+	stats_->setEditTriggers(QAbstractItemView::NoEditTriggers);
+	stats_->setTabKeyNavigation(false);
+	stats_->setSizeAdjustPolicy(QAbstractScrollArea::AdjustToContents);
 	memoryShort_->setObjectName("memoryShort");
 	memoryShort_->setWordWrap(true);
 	memoryShort_->hide();
@@ -290,6 +305,8 @@ TapeloopDock::TapeloopDock(DockBackend &backend, TextLookup text, QWidget *paren
 	advanced->addRow(forceH264_);
 	advanced->addRow(text_("Dock.BufferMemory"), bufferMemory_);
 	advanced->addRow(memoryWarning_);
+	advanced->addRow(new QLabel(text_("Dock.Stats"), advancedSettings_));
+	advanced->addRow(stats_);
 
 	auto *layout = new QVBoxLayout(this);
 	layout->addWidget(sources_, 1);
@@ -297,6 +314,7 @@ TapeloopDock::TapeloopDock(DockBackend &backend, TextLookup text, QWidget *paren
 	layout->addLayout(form);
 	layout->addWidget(advancedSettings_);
 	layout->addWidget(airSettings_);
+	layout->addWidget(overlaySettings_);
 	layout->addWidget(note_);
 	layout->addWidget(memoryShort_);
 	layout->addWidget(startStop_);
@@ -379,9 +397,12 @@ TapeloopDock::TapeloopDock(DockBackend &backend, TextLookup text, QWidget *paren
 	setTabOrder(replayEncoder_, otherAdapters_);
 	setTabOrder(otherAdapters_, forceH264_);
 	setTabOrder(forceH264_, bufferMemory_);
-	setTabOrder(bufferMemory_, airSettings_);
-	setTabOrder(airSettings_, startStop_);
+	setTabOrder(bufferMemory_, stats_);
+	setTabOrder(stats_, airSettings_);
+	setTabOrder(airSettings_, overlaySettings_);
+	setTabOrder(overlaySettings_, startStop_);
 	connect(airSettings_, &QPushButton::clicked, this, [this] { openAirSettings(); });
+	connect(overlaySettings_, &QPushButton::clicked, this, [this] { openOverlays(); });
 	connect(bufferMemory_, &QSpinBox::valueChanged, this, [this](int value) {
 		const int mib = value == 0 ? 0 : std::max(value, kMinBufferMemoryMiB);
 		if (mib != value) {
@@ -551,6 +572,10 @@ void TapeloopDock::refresh()
 		// The encoders are looked up only while the advanced settings show them.
 		if (settings.showAdvanced) {
 			updateEncoders(settings.replayEncoder);
+			updateStats(sources);
+		}
+		if (overlayDialog_) {
+			overlayDialog_->showAdvanced(settings.showAdvanced);
 		}
 
 		updateReplays();
@@ -1100,6 +1125,66 @@ void TapeloopDock::applyAirSettings(const AirSettings &opened, const AirSettings
 	settings.air = chosen;
 	backend_.setSettings(settings);
 	refresh();
+}
+
+void TapeloopDock::openOverlays()
+{
+	if (overlayDialog_) {
+		overlayDialog_->raise();
+		overlayDialog_->activateWindow();
+		return;
+	}
+	guarded([this] {
+		auto *dialog = new OverlayDialog(backend_, text_, this);
+		dialog->setObjectName("overlayDialog");
+		dialog->setAttribute(Qt::WA_DeleteOnClose);
+		overlayDialog_ = dialog;
+		// Not modal: the properties of an overlay open in OBS's own dialog on the main
+		// window, which a modal one would block.
+		dialog->show();
+	});
+}
+
+void TapeloopDock::updateStats(const std::vector<DockSource> &sources)
+{
+	int rows = 0;
+	const auto setCell = [this](int row, int column, const QString &text) {
+		if (QTableWidgetItem *cell = stats_->item(row, column)) {
+			if (cell->text() != text) {
+				cell->setText(text);
+			}
+		} else {
+			stats_->setItem(row, column, new QTableWidgetItem(text));
+		}
+	};
+	for (const DockSource &source : sources) {
+		if (!source.selected) {
+			continue;
+		}
+		const int row = rows++;
+		if (stats_->rowCount() < rows) {
+			stats_->setRowCount(rows);
+		}
+		const bool running = source.state == SourceState::Running;
+		const double megabytes = static_cast<double>(source.bytes) / 1'000'000.0;
+		QString skipped = text_("Dock.Stats.None");
+		if (running && source.totalFrames > 0) {
+			const double percent = 100.0 * static_cast<double>(source.skippedFrames) /
+					       static_cast<double>(source.totalFrames);
+			skipped = text_("Dock.Stats.SkippedFrames")
+					  .arg(source.skippedFrames)
+					  .arg(source.totalFrames)
+					  .arg(percent, 0, 'f', 1);
+		}
+		setCell(row, kStatsSourceColumn, QString::fromStdString(source.name));
+		setCell(row, kStatsMemoryColumn,
+			running ? text_("Dock.Stats.MB").arg(megabytes, 0, 'f', 1) : text_("Dock.Stats.None"));
+		setCell(row, kStatsLoadColumn, text_("Dock.Stats.NotReported"));
+		setCell(row, kStatsSkippedColumn, skipped);
+	}
+	if (stats_->rowCount() != rows) {
+		stats_->setRowCount(rows);
+	}
 }
 
 } // namespace tapeloop::ui

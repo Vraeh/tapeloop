@@ -5,6 +5,7 @@
 
 #include "core/FileIo.hpp"
 
+#include "obs/Composition.hpp"
 #include "obs/ObsEncoders.hpp"
 #include "obs/ReplayView.hpp"
 #include "obs/SourceLookup.hpp"
@@ -15,6 +16,7 @@
 #include <cctype>
 #include <optional>
 #include <span>
+#include <string_view>
 #include <utility>
 
 namespace tapeloop::obs {
@@ -35,6 +37,24 @@ bool addVideoInput(void *param, obs_source_t *source) noexcept
 		return false;
 	}
 	return true;
+}
+
+bool keepSource(void *param, obs_source_t *source) noexcept
+{
+	try {
+		static_cast<std::vector<OBSSource> *>(param)->emplace_back(source);
+	} catch (...) {
+		return false;
+	}
+	return true;
+}
+
+bool lessByName(const std::string &a, const std::string &b)
+{
+	return std::lexicographical_compare(a.begin(), a.end(), b.begin(), b.end(),
+					    [](unsigned char x, unsigned char y) {
+						    return std::tolower(x) < std::tolower(y);
+					    });
 }
 
 ui::SourceState stateOf(CaptureState state)
@@ -71,13 +91,11 @@ std::vector<ui::DockSource> ManagerDockBackend::sources() const
 		source.choiceSkipped = status.stats.choiceSkipped;
 		source.hevcFailed = status.hevcFailed;
 		source.budgetLimited = status.budgetLimited;
+		source.totalFrames = status.stats.totalFrames;
+		source.skippedFrames = status.stats.skippedFrames;
 	}
-	std::sort(sources.begin(), sources.end(), [](const ui::DockSource &a, const ui::DockSource &b) {
-		return std::lexicographical_compare(a.name.begin(), a.name.end(), b.name.begin(), b.name.end(),
-						    [](unsigned char x, unsigned char y) {
-							    return std::tolower(x) < std::tolower(y);
-						    });
-	});
+	std::sort(sources.begin(), sources.end(),
+		  [](const ui::DockSource &a, const ui::DockSource &b) { return lessByName(a.name, b.name); });
 	if (!sequence_) {
 		return sources;
 	}
@@ -240,6 +258,47 @@ bool ManagerDockBackend::sceneHoldsReplay(const std::string &uuid) const
 		return false;
 	}
 	return holdsReplayView(scene);
+}
+
+std::vector<ui::OverlaySource> ManagerDockBackend::overlaySources() const
+{
+	// Sizes are read once the enumeration has let go of libobs's source list.
+	std::vector<OBSSource> found;
+	obs_enum_sources(keepSource, &found);
+	obs_enum_scenes(keepSource, &found);
+	std::vector<ui::OverlaySource> sources;
+	for (obs_source_t *source : found) {
+		const obs_source_type type = obs_source_get_type(source);
+		const char *uuid = obs_source_get_uuid(source);
+		const char *name = obs_source_get_name(source);
+		if ((type != OBS_SOURCE_TYPE_INPUT && type != OBS_SOURCE_TYPE_SCENE) || obs_source_is_group(source) ||
+		    obs_obj_is_private(source) || obs_source_removed(source) ||
+		    (obs_source_get_output_flags(source) & OBS_SOURCE_VIDEO) == 0 ||
+		    std::string_view(obs_source_get_id(source)) == kReplayViewId || !uuid || !name) {
+			continue;
+		}
+		sources.push_back({uuid, name, type == OBS_SOURCE_TYPE_SCENE, obs_source_get_width(source),
+				   obs_source_get_height(source)});
+	}
+	std::stable_sort(sources.begin(), sources.end(), [](const ui::OverlaySource &a, const ui::OverlaySource &b) {
+		return lessByName(a.name, b.name);
+	});
+	return sources;
+}
+
+CanvasSize ManagerDockBackend::canvas() const
+{
+	return mainCanvas();
+}
+
+bool ManagerDockBackend::openProperties(const std::string &uuid)
+{
+	const OBSSourceAutoRelease source = sourceByUuid(uuid.c_str());
+	if (!properties_ || !source || obs_source_removed(source)) {
+		return false;
+	}
+	properties_->openProperties(source);
+	return true;
 }
 
 std::vector<ui::EncoderChoice> ManagerDockBackend::encoderChoices() const

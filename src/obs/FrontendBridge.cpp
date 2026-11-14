@@ -184,6 +184,11 @@ std::vector<OverlayScene> FrontendBridge::scenes() const
 	return found;
 }
 
+void FrontendBridge::openProperties(obs_source_t *source)
+{
+	obs_frontend_open_source_properties(source);
+}
+
 void FrontendBridge::handleEvent(obs_frontend_event event, void *data) noexcept
 {
 	auto &bridge = *static_cast<FrontendBridge *>(data);

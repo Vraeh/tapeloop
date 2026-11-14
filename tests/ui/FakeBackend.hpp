@@ -48,6 +48,10 @@ public:
 	// The scenes that hold a replay view.
 	std::vector<std::string> sceneViews;
 	std::string sceneMissing;
+	std::vector<tapeloop::ui::OverlaySource> overlayList;
+	CanvasSize canvasSize;
+	// The sources whose properties the dock asked to open.
+	std::vector<std::string> propertiesOpened;
 
 	std::vector<tapeloop::ui::DockSource> sources() const override
 	{
@@ -192,6 +196,13 @@ public:
 		return std::find(sceneViews.begin(), sceneViews.end(), uuid) != sceneViews.end();
 	}
 	std::string missingScene() const override { return sceneMissing; }
+	std::vector<tapeloop::ui::OverlaySource> overlaySources() const override { return overlayList; }
+	CanvasSize canvas() const override { return canvasSize; }
+	bool openProperties(const std::string &uuid) override
+	{
+		propertiesOpened.push_back(uuid);
+		return true;
+	}
 	void pickReplay(uint64_t id) override
 	{
 		++picks;

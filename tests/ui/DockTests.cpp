@@ -5,6 +5,7 @@
 #include "LocaleText.hpp"
 
 #include "ui/AirSettingsDialog.hpp"
+#include "ui/OverlayDialog.hpp"
 #include "ui/SourceSettingsDialog.hpp"
 #include "ui/TapeloopDock.hpp"
 
@@ -225,8 +226,10 @@ TEST_CASE("the advanced settings choose the replay encoder and whether other car
 	CHECK(nextFocus(encoder) == "otherAdapters");
 	CHECK(nextFocus(otherAdapters) == "forceH264");
 	CHECK(nextFocus(forceH264) == "bufferMemory");
-	CHECK(nextFocus(child<QSpinBox>(dock, "bufferMemory")) == "airSettings");
-	CHECK(nextFocus(child<QPushButton>(dock, "airSettings")) == "startStop");
+	CHECK(nextFocus(child<QSpinBox>(dock, "bufferMemory")) == "stats");
+	CHECK(nextFocus(child<QTableWidget>(dock, "stats")) == "airSettings");
+	CHECK(nextFocus(child<QPushButton>(dock, "airSettings")) == "overlaySettings");
+	CHECK(nextFocus(child<QPushButton>(dock, "overlaySettings")) == "startStop");
 }
 
 TEST_CASE("the advanced settings set the memory the buffers may use")
@@ -1451,7 +1454,7 @@ TEST_CASE("every control of the dock can be reached with the keyboard")
 		CAPTURE(widget->objectName().toStdString());
 		CHECK((widget->focusPolicy() & Qt::TabFocus) != 0);
 	}
-	CHECK(controls == 22);
+	CHECK(controls == 24);
 }
 
 TEST_CASE("every string the dock asks for is in the locale file")
@@ -1814,6 +1817,41 @@ TEST_CASE("dock screenshots", "[.screenshots]")
 	AirSettingsDialog airSettings(air, {"Swipe", "Fade", "Cut"}, localeText());
 	airSettings.adjustSize();
 	CHECK(airSettings.grab().save(out.filePath("dock-air-settings.png")));
+
+	backend.shown[0].totalFrames = 1749;
+	backend.shown[0].skippedFrames = 3;
+	backend.current.showAdvanced = true;
+	{
+		TapeloopDock dock(backend, localeText());
+		dock.resize(380, 900);
+		CHECK(dock.grab().save(out.filePath("dock-advanced.png")));
+	}
+
+	backend.overlayList = {{"uuid-clock", "Clock", false, 320, 90},
+			       {"uuid-logo", "Logo", false, 256, 256},
+			       {"uuid-score", "Scoreboard", false, 900, 110},
+			       {"uuid-intro", "Intro", true, 0, 0}};
+	backend.sceneList = {{"uuid-intro", "Intro"}, {"uuid-replays", "Replays"}};
+	backend.current.overlays.items = {
+		tapeloop::newOverlay("uuid-score", "Scoreboard", 900, 110, {}),
+		tapeloop::newOverlay("uuid-logo", "Logo", 256, 256, {}),
+		tapeloop::newOverlay("uuid-clock", "Clock", 320, 90, {}),
+	};
+	backend.current.overlays.items[1].visible = false;
+	backend.current.showAdvanced = false;
+	{
+		tapeloop::ui::OverlayDialog overlays(backend, localeText());
+		overlays.adjustSize();
+		CHECK(overlays.grab().save(out.filePath("overlays-simple.png")));
+	}
+	backend.current.showAdvanced = true;
+	backend.current.overlays.mode = tapeloop::OverlayMode::Scene;
+	backend.current.overlays.scene = {"uuid-replays", "Replays"};
+	{
+		tapeloop::ui::OverlayDialog overlays(backend, localeText());
+		overlays.adjustSize();
+		CHECK(overlays.grab().save(out.filePath("overlays-advanced.png")));
+	}
 }
 
 TEST_CASE("every kind of edit in the dock writes the settings once")

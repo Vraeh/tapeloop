@@ -25,7 +25,7 @@ namespace tapeloop::obs {
 // the replay on air with the user's transitions, and Tapeloop's hotkeys, whose bindings
 // the profile keeps. Created and destroyed on the UI thread, at module load and unload,
 // after the replay source is registered.
-class FrontendBridge : private CaptureHost, private TransitionCatalog, private SceneCatalog {
+class FrontendBridge : private CaptureHost, private TransitionCatalog, private SceneCatalog, private PropertiesOpener {
 public:
 	FrontendBridge();
 	~FrontendBridge() override;
@@ -38,6 +38,7 @@ public:
 	CaptureManager &manager() noexcept { return *manager_; }
 	SequencePlayer &sequence() noexcept { return *sequence_; }
 	const SceneCatalog &sceneCatalog() const noexcept { return *this; }
+	PropertiesOpener &propertiesOpener() noexcept { return *this; }
 
 private:
 	bool streamingActive() const override;
@@ -51,6 +52,7 @@ private:
 	std::optional<TransitionTemplate> find(const std::string &name) const override;
 	std::vector<std::string> names() const override;
 	std::vector<OverlayScene> scenes() const override;
+	void openProperties(obs_source_t *source) override;
 	// The frontend API is gone by the time the module unloads, so the callbacks go at
 	// the exit event.
 	void removeFrontendCallbacks() noexcept;

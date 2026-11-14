@@ -58,6 +58,11 @@ struct CaptureStats {
 	SourceBufferStats buffer;
 	// From the oldest frame held to the newest.
 	Nanoseconds bufferedDuration{0};
+	// Frames OBS gave the running encoder since it started, and those it skipped because
+	// the encoder had not taken the ones before: OBS's measure of an encoder that cannot
+	// keep up.
+	uint64_t totalFrames = 0;
+	uint64_t skippedFrames = 0;
 };
 
 // One source rendered on its own view, encoded and kept in a SourceBuffer. Every call

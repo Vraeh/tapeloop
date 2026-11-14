@@ -48,6 +48,20 @@ struct DockSource {
 	bool budgetLimited = false;
 	// It plays in the replay, in list order.
 	bool shown = true;
+	// Frames OBS gave its running encoder, and those skipped because the encoder had not
+	// taken the ones before.
+	uint64_t totalFrames = 0;
+	uint64_t skippedFrames = 0;
+};
+
+// An input or scene an overlay can show.
+struct OverlaySource {
+	std::string uuid;
+	std::string name;
+	bool scene = false;
+	// Zero while it has no size yet.
+	uint32_t width = 0;
+	uint32_t height = 0;
 };
 
 // A replay as the dock lists it.
@@ -158,6 +172,14 @@ public:
 	// The name of the scene the scene mode asks for and replays go on air without, empty
 	// when there is none.
 	virtual std::string missingScene() const = 0;
+	// The inputs and scenes with video an overlay can show, by name regardless of case.
+	// Groups, private sources and Tapeloop's replay views are left out.
+	virtual std::vector<OverlaySource> overlaySources() const = 0;
+	// The size of OBS's canvas, which overlays are placed on.
+	virtual CanvasSize canvas() const = 0;
+	// Opens OBS's own properties of the source, whose changes apply wherever it is shown.
+	// False when there is no such source.
+	virtual bool openProperties(const std::string &uuid) = 0;
 
 	virtual bool canExport(ExportFormat format) const = 0;
 	// Exports a stored replay in the background. False when refused.

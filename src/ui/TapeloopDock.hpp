@@ -6,6 +6,7 @@
 #include "ui/DockBackend.hpp"
 #include "ui/DockText.hpp"
 
+#include <QPointer>
 #include <QWidget>
 
 #include <optional>
@@ -23,6 +24,8 @@ class QSpinBox;
 class QTableWidget;
 
 namespace tapeloop::ui {
+
+class OverlayDialog;
 
 // The Tapeloop dock: the video sources of the scene collection with a checkbox each and
 // the state of the selected ones, the global buffer settings, and the manual start and
@@ -55,6 +58,8 @@ private:
 	void applySourceSettings(const std::string &uuid, const SourceSettings &chosen);
 	void openAirSettings();
 	void applyAirSettings(const AirSettings &opened, const AirSettings &chosen);
+	void openOverlays();
+	void updateStats(const std::vector<DockSource> &sources);
 
 	DockBackend &backend_;
 	TextLookup text_;
@@ -76,7 +81,11 @@ private:
 	QSpinBox *bufferMemory_;
 	QLabel *memoryWarning_;
 	QLabel *memoryShort_;
+	QTableWidget *stats_;
 	QPushButton *airSettings_;
+	QPushButton *overlaySettings_;
+	// Open while the user edits the overlays; one at a time.
+	QPointer<OverlayDialog> overlayDialog_;
 	QLabel *note_;
 	QPushButton *startStop_;
 	QLabel *followsOutputs_;

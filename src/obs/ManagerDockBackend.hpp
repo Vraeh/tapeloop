@@ -23,18 +23,34 @@ public:
 	virtual std::vector<OverlayScene> scenes() const = 0;
 };
 
+// Opens OBS's properties dialog of a source, as the frontend does; UI thread only.
+class PropertiesOpener {
+public:
+	PropertiesOpener() = default;
+	virtual ~PropertiesOpener() = default;
+
+	PropertiesOpener(const PropertiesOpener &) = delete;
+	PropertiesOpener &operator=(const PropertiesOpener &) = delete;
+	PropertiesOpener(PropertiesOpener &&) = delete;
+	PropertiesOpener &operator=(PropertiesOpener &&) = delete;
+
+	virtual void openProperties(obs_source_t *source) = 0;
+};
+
 // The dock's view of the capture manager and the sequence player: the video inputs of the
 // scene collection with their selection and capture state, in the order of the sequence
 // and then, for those it does not list yet, by name regardless of case. Without a
 // sequence player every source is shown, they stay sorted by name and neither changes.
-// Without a scene catalog there are no scenes to pick.
+// Without a scene catalog there are no scenes to pick, and without an opener no
+// properties open.
 class ManagerDockBackend : public ui::DockBackend {
 public:
 	explicit ManagerDockBackend(CaptureManager &manager, SequencePlayer *sequence = nullptr,
-				    const SceneCatalog *scenes = nullptr)
+				    const SceneCatalog *scenes = nullptr, PropertiesOpener *properties = nullptr)
 		: manager_(manager),
 		  sequence_(sequence),
-		  scenes_(scenes)
+		  scenes_(scenes),
+		  properties_(properties)
 	{
 	}
 
@@ -76,6 +92,9 @@ public:
 	{
 		return sequence_ ? sequence_->air().missingScene() : std::string();
 	}
+	std::vector<ui::OverlaySource> overlaySources() const override;
+	CanvasSize canvas() const override;
+	bool openProperties(const std::string &uuid) override;
 	bool canExport(ExportFormat format) const override { return manager_.canExport(format); }
 	bool exportReplay(uint64_t id, ExportFormat format) override { return manager_.exportReplay(id, format); }
 	std::vector<ui::DockExport> exports() const override;
@@ -88,6 +107,7 @@ private:
 	CaptureManager &manager_;
 	SequencePlayer *sequence_;
 	const SceneCatalog *scenes_;
+	PropertiesOpener *properties_;
 };
 
 } // namespace tapeloop::obs

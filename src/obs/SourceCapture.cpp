@@ -399,6 +399,10 @@ CaptureStats SourceCapture::stats() const
 		stats.state = target_.failed || !obs_output_active(output_) ? CaptureState::Failed
 									    : CaptureState::Running;
 		stats.encoderFailed = target_.encoderFailed;
+		if (const video_t *video = encoder_ ? obs_encoder_video(encoder_) : nullptr) {
+			stats.totalFrames = video_output_get_total_frames(video);
+			stats.skippedFrames = video_output_get_skipped_frames(video);
+		}
 	} else if (view_) {
 		stats.state = CaptureState::Waiting;
 	}

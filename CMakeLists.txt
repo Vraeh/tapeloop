@@ -90,6 +90,9 @@ target_sources(
     src/ui/DockBackend.hpp
     src/ui/DockText.cpp
     src/ui/DockText.hpp
+    src/ui/Guarded.hpp
+    src/ui/OverlayDialog.cpp
+    src/ui/OverlayDialog.hpp
     src/ui/SourceSettingsDialog.cpp
     src/ui/SourceSettingsDialog.hpp
     src/ui/TapeloopDock.cpp

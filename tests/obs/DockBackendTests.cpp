@@ -11,6 +11,7 @@
 #include "core/FileIo.hpp"
 #include "core/ReplayWriter.hpp"
 #include "obs/CaptureManager.hpp"
+#include "obs/Composition.hpp"
 #include "obs/ManagerDockBackend.hpp"
 #include "obs/ReplaySource.hpp"
 #include "obs/ReplayView.hpp"
@@ -39,6 +40,7 @@ using tapeloop::obs::SequencePlayer;
 using tapeloop::test::createTestPattern;
 using tapeloop::test::ObsFixture;
 using tapeloop::ui::SourceState;
+using namespace std::chrono_literals;
 
 namespace {
 
@@ -110,6 +112,11 @@ TEST_CASE_METHOD(ObsFixture, "the dock sees the video inputs of the scene collec
 	CHECK(sources[0].state == SourceState::Stopped);
 	// The harness has no hardware encoder, so the dock hears of x264.
 	CHECK(sources[1].encoderPath == tapeloop::EncoderPath::Software);
+	// The frames OBS gives the encoder are counted from its start, skipped ones apart.
+	CHECK(sources[0].totalFrames == 0);
+	REQUIRE(tapeloop::test::waitFor([&] { return backend.sources()[1].totalFrames > 0; }, 30s));
+	const auto frames = backend.sources()[1];
+	CHECK(frames.skippedFrames <= frames.totalFrames);
 
 	REQUIRE(backend.toggleRunning());
 	CHECK_FALSE(backend.running());
@@ -625,4 +632,64 @@ TEST_CASE_METHOD(ObsFixture, "the dock is offered the user's scenes and told whi
 	for (obs_scene_t *scene : {plain.Get(), hidden.Get(), nesting.Get(), grouping.Get()}) {
 		obs_source_remove(obs_scene_get_source(scene));
 	}
+}
+
+TEST_CASE_METHOD(ObsFixture, "the dock is offered the sources an overlay can show and opens their properties",
+		 "[obs][dock][air]")
+{
+	class Opener final : public tapeloop::obs::PropertiesOpener {
+	public:
+		void openProperties(obs_source_t *source) override { opened.emplace_back(obs_source_get_name(source)); }
+		std::vector<std::string> opened;
+	};
+
+	tapeloop::obs::registerReplaySource({});
+	tapeloop::obs::registerReplayView("Replay view");
+	const tapeloop::test::UiTasks ui;
+	OfflineHost host;
+	CaptureManager manager(host);
+	Opener opener;
+	ManagerDockBackend backend(manager, nullptr, nullptr, &opener);
+
+	const OBSSourceAutoRelease logo = createTestPattern(64, 36, "logo");
+	const OBSSourceAutoRelease board = createTestPattern(320, 90, "Board");
+	const OBSSourceAutoRelease audio =
+		obs_source_create(tapeloop::test::kSilenceId, "Microphone", nullptr, nullptr);
+	const OBSSourceAutoRelease view = obs_source_create(tapeloop::obs::kReplayViewId, "View", nullptr, nullptr);
+	const OBSSourceAutoRelease hidden =
+		obs_source_create_private(tapeloop::test::kTestPatternId, "Private", nullptr);
+	const OBSSceneAutoRelease scene = obs_scene_create("Graphics");
+	const OBSSceneAutoRelease grouping = obs_scene_create("Grouping");
+	obs_sceneitem_t *group = obs_scene_add_group(grouping, "Group");
+
+	const auto sources = backend.overlaySources();
+	std::vector<std::tuple<std::string, bool, uint32_t, uint32_t>> listed;
+	for (const tapeloop::ui::OverlaySource &source : sources) {
+		listed.emplace_back(source.name, source.scene, source.width, source.height);
+	}
+	const tapeloop::CanvasSize canvas = backend.canvas();
+	using Listed = std::tuple<std::string, bool, uint32_t, uint32_t>;
+	CHECK(listed ==
+	      std::vector<Listed>{
+		      {"Board", false, 320, 90},
+		      {"Graphics", true, static_cast<uint32_t>(canvas.width), static_cast<uint32_t>(canvas.height)},
+		      {"Grouping", true, static_cast<uint32_t>(canvas.width), static_cast<uint32_t>(canvas.height)},
+		      {"logo", false, 64, 36}});
+	CHECK(sources[0].uuid == obs_source_get_uuid(board));
+	CHECK(canvas == tapeloop::obs::mainCanvas());
+
+	CHECK(backend.openProperties(obs_source_get_uuid(logo)));
+	CHECK(opener.opened == std::vector<std::string>{"logo"});
+	CHECK_FALSE(backend.openProperties("9f1c0a7e-0000-4000-8000-000000000009"));
+	CHECK_FALSE(backend.openProperties(""));
+	obs_source_remove(board);
+	CHECK_FALSE(backend.openProperties(obs_source_get_uuid(board)));
+	CHECK(opener.opened.size() == 1);
+	CHECK(backend.overlaySources().size() == 3);
+	// Without an opener nothing opens.
+	CHECK_FALSE(ManagerDockBackend(manager).openProperties(obs_source_get_uuid(logo)));
+
+	obs_source_remove(obs_sceneitem_get_source(group));
+	obs_source_remove(obs_scene_get_source(grouping));
+	obs_source_remove(obs_scene_get_source(scene));
 }
