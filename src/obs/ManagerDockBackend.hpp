@@ -57,6 +57,7 @@ public:
 	bool canExport(ExportFormat format) const override { return manager_.canExport(format); }
 	bool exportReplay(uint64_t id, ExportFormat format) override { return manager_.exportReplay(id, format); }
 	std::vector<ui::DockExport> exports() const override;
+	std::unique_ptr<ui::PictureSurface> pictureSurface() override;
 
 private:
 	// Adds the listed sources the sequence does not have yet after its own, in the order

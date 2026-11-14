@@ -6,9 +6,11 @@
 #include "core/FileIo.hpp"
 
 #include "obs/ObsEncoders.hpp"
+#include "obs/SourceDisplay.hpp"
 
 #include <algorithm>
 #include <cctype>
+#include <memory>
 #include <optional>
 #include <span>
 #include <utility>
@@ -155,6 +157,14 @@ void ManagerDockBackend::setSettings(const BufferSettings &settings)
 	if (sequence_) {
 		sequence_->setAir(manager_.settings().air);
 	}
+}
+
+std::unique_ptr<ui::PictureSurface> ManagerDockBackend::pictureSurface()
+{
+	if (!sequence_ || !sequence_->source()) {
+		return nullptr;
+	}
+	return std::make_unique<SourceDisplay>(sequence_->source());
 }
 
 std::vector<ui::DockExport> ManagerDockBackend::exports() const

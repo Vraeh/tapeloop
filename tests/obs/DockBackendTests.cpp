@@ -23,6 +23,7 @@
 #include <cstdint>
 #include <filesystem>
 #include <fstream>
+#include <memory>
 #include <optional>
 #include <string>
 #include <tuple>
@@ -560,4 +561,21 @@ TEST_CASE_METHOD(ObsFixture, "a source created since the list was last set can b
 	REQUIRE(backend.moveSource(uuidC, uuidA));
 	CHECK(keysOf(sequence) == std::vector<std::string>{uuidC, uuidA, uuidB + "-"});
 	CHECK(namesOf(backend.sources()) == std::vector<std::string>{"C camera", "A camera", "B camera-"});
+}
+
+TEST_CASE_METHOD(ObsFixture, "the dock gets a picture of the replay player when there is one", "[obs][dock]")
+{
+	tapeloop::obs::registerReplaySource({});
+	OfflineHost host;
+	CaptureManager manager(host);
+	CHECK(ManagerDockBackend(manager).pictureSurface() == nullptr);
+
+	std::optional<SequencePlayer> sequence(std::in_place, manager.library());
+	ManagerDockBackend backend(manager, &*sequence);
+	std::unique_ptr<tapeloop::ui::PictureSurface> picture = backend.pictureSurface();
+	CHECK(picture != nullptr);
+	// Unattached, it outlives the player.
+	sequence.reset();
+	obs_wait_for_destroy_queue();
+	picture.reset();
 }

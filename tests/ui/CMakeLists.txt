@@ -34,15 +34,20 @@ target_sources(
     ../../src/ui/DockBackend.hpp
     ../../src/ui/DockText.cpp
     ../../src/ui/DockText.hpp
+    ../../src/ui/PictureSurface.hpp
+    ../../src/ui/PlayerPicture.cpp
+    ../../src/ui/PlayerPicture.hpp
     ../../src/ui/SourceSettingsDialog.cpp
     ../../src/ui/SourceSettingsDialog.hpp
     ../../src/ui/TapeloopDock.cpp
     ../../src/ui/TapeloopDock.hpp
     DockTests.cpp
     FakeBackend.hpp
+    FakeSurface.hpp
     LocaleText.cpp
     LocaleText.hpp
     main.cpp
+    PictureTests.cpp
 )
 target_include_directories(tapeloop-ui-tests PRIVATE ../../src)
 target_compile_definitions(

@@ -90,6 +90,9 @@ target_sources(
     src/ui/DockBackend.hpp
     src/ui/DockText.cpp
     src/ui/DockText.hpp
+    src/ui/PictureSurface.hpp
+    src/ui/PlayerPicture.cpp
+    src/ui/PlayerPicture.hpp
     src/ui/SourceSettingsDialog.cpp
     src/ui/SourceSettingsDialog.hpp
     src/ui/TapeloopDock.cpp

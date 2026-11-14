@@ -8,9 +8,11 @@
 #include "core/ReplayExport.hpp"
 #include "core/ReplayPlayerState.hpp"
 #include "core/ReplayState.hpp"
+#include "ui/PictureSurface.hpp"
 
 #include <chrono>
 #include <cstdint>
+#include <memory>
 #include <string>
 #include <vector>
 
@@ -156,6 +158,10 @@ public:
 	virtual bool exportReplay(uint64_t id, ExportFormat format) = 0;
 	// Oldest first.
 	virtual std::vector<DockExport> exports() const = 0;
+
+	// A new surface that draws what the replay player shows; null when there is no
+	// player.
+	virtual std::unique_ptr<PictureSurface> pictureSurface() = 0;
 };
 
 } // namespace tapeloop::ui
