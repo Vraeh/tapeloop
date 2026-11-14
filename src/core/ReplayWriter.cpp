@@ -294,8 +294,13 @@ void ReplayWriter::writeTags(const std::filesystem::path &manifest, std::span<co
 		throw std::invalid_argument("not an intact replay manifest: " + utf8FromPath(manifest));
 	}
 	const TagWrite next = nextTagWrite(bytes.head);
-	file.writeAt(next.offset, encodeTagSlot(tags, next.generation));
+	const std::vector<uint8_t> slot = encodeTagSlot(tags, next.generation);
+	file.writeAt(next.offset, slot);
 	file.flush();
+	if (next.then) {
+		file.writeAt(*next.then, slot);
+		file.flush();
+	}
 }
 
 void ReplayWriter::prepareFolder()

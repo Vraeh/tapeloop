@@ -513,7 +513,13 @@ TagWrite nextTagWrite(std::span<const uint8_t> manifestHead)
 	};
 	const uint64_t a = generationAt(kTagSlotA);
 	const uint64_t b = generationAt(kTagSlotB);
-	return {a < b ? kTagSlotA : kTagSlotB, std::max(a, b) + 1};
+	const uint64_t older = a < b ? kTagSlotA : kTagSlotB;
+	const uint64_t newer = older == kTagSlotA ? kTagSlotB : kTagSlotA;
+	const uint64_t newest = std::max(a, b);
+	if (newest == std::numeric_limits<uint64_t>::max()) {
+		return {older, 1, newer};
+	}
+	return {older, newest + 1, std::nullopt};
 }
 
 bool selfContained(const ReplayIndex &index) noexcept

@@ -199,10 +199,15 @@ std::optional<TagSlot> decodeTagSlot(std::span<const uint8_t> slot);
 std::vector<std::string> decodeTags(std::span<const uint8_t> manifestHead);
 
 // Where the next tag edit goes: the slot with the older generation, B on a tie, so that
-// a torn write leaves the other slot with the previous tags.
+// a torn write leaves the other slot with the previous tags. A newer slot at the last
+// generation, which only a crafted file holds, leaves no generation that reads as newer:
+// the edit then goes to the older slot and after it to the newer, both at generation 1
+// as in a new manifest, so that a torn write leaves the previous tags or the new ones.
 struct TagWrite {
 	uint64_t offset = 0;
 	uint64_t generation = 0;
+	// The newer slot, written with the same bytes once the first write is on the disk.
+	std::optional<uint64_t> then;
 };
 TagWrite nextTagWrite(std::span<const uint8_t> manifestHead);
 
