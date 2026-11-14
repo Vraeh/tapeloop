@@ -174,6 +174,11 @@ void ReplayPlayer::seek(Nanoseconds time) noexcept
 	command(Control::Seek, time.count());
 }
 
+void ReplayPlayer::seekFromStart(Nanoseconds offset) noexcept
+{
+	command(Control::SeekFromStart, offset.count());
+}
+
 void ReplayPlayer::beginScrub(ScrubDirection direction) noexcept
 {
 	command(Control::BeginScrub, direction == ScrubDirection::Forward ? 1 : -1);
@@ -225,6 +230,9 @@ void ReplayPlayer::apply(Playhead &playhead, const Command &command) noexcept
 		break;
 	case Control::Seek:
 		playhead.seek(Nanoseconds{command.value});
+		break;
+	case Control::SeekFromStart:
+		playhead.seek(saturatingAdd(playhead.firstTime(), Nanoseconds{command.value}));
 		break;
 	case Control::BeginScrub:
 		playhead.beginScrub(command.value > 0 ? ScrubDirection::Forward : ScrubDirection::Backward);

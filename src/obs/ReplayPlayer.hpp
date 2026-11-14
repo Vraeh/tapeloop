@@ -126,6 +126,9 @@ public:
 	// Pauses and moves by whole frames.
 	void step(int frames) noexcept;
 	void seek(Nanoseconds time) noexcept;
+	// Measured from the first frame of the clip the seek applies to, so that one given
+	// right after load() lands in the new clip, which state() reports only after a tick.
+	void seekFromStart(Nanoseconds offset) noexcept;
 	void beginScrub(ScrubDirection direction) noexcept;
 	void endScrub() noexcept;
 
@@ -154,6 +157,7 @@ private:
 		Reverse,
 		Step,
 		Seek,
+		SeekFromStart,
 		BeginScrub,
 		EndScrub
 	};

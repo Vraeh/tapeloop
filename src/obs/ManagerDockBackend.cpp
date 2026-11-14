@@ -227,12 +227,8 @@ void ManagerDockBackend::controlPlayer(ui::PlayerControl control, bool pressed)
 void ManagerDockBackend::seekPlayer(Nanoseconds position)
 {
 	ReplayPlayer *player = sequence_ ? controlledPlayer(*sequence_) : nullptr;
-	if (!player) {
-		return;
-	}
-	const PlayerState state = player->state();
-	if (state.loaded) {
-		player->seek(state.start + position);
+	if (player) {
+		player->seekFromStart(position);
 	}
 }
 
