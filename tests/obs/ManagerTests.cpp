@@ -1033,6 +1033,39 @@ TEST_CASE_METHOD(ObsFixture, "two saved sources with one name find neither of th
 	CHECK(readSettingsData(written).sources.empty());
 }
 
+TEST_CASE_METHOD(ObsFixture, "a saved UUID too short or too long finds no source", "[obs][manager]")
+{
+	// libobs compares the first 36 bytes of any key, so it reads past the end of a short
+	// one and finds the source a long one starts with. Twenty-three characters are more
+	// than a string keeps inside itself, so the bytes after them are outside its
+	// allocation.
+	OBSSourceAutoRelease camera = createTestPattern(640, 360, "Camera");
+	const std::string shorter = uuidOf(camera).substr(0, 23);
+	const std::string longer = uuidOf(camera) + "0";
+	OBSDataAutoRelease collection = collectionNaming(
+		{namedSource(shorter.c_str(), "Gone", true), namedSource(longer.c_str(), "Lost", true)});
+
+	FakeHost host;
+	CaptureManager manager(host);
+	manager.load(collection);
+	REQUIRE(manager.settings().selectedSources().size() == 2);
+	CHECK(manager.memoryNeeded() == 0);
+	CHECK(manager.manualStart());
+	manager.poll();
+	for (const std::string &uuid : {shorter, longer}) {
+		CHECK(manager.status(uuid).selected);
+		CHECK(manager.status(uuid).stats.state == CaptureState::Stopped);
+	}
+	CHECK(manager.memoryNeeded() == 0);
+	CHECK_FALSE(manager.status(uuidOf(camera)).selected);
+
+	OBSDataAutoRelease saved = obs_data_create();
+	manager.save(saved);
+	OBSDataAutoRelease written = obs_data_get_obj(saved, tapeloop::obs::kSettingsKey);
+	CHECK(readSettingsData(written).sources.empty());
+	manager.manualStop();
+}
+
 namespace {
 
 // Like a display or window capture: no size while nothing shows it.
