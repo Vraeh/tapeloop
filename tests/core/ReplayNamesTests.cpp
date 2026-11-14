@@ -60,7 +60,18 @@ TEST_CASE("a safe file name never names a Windows device")
 	CHECK(safeFileName("nul.txt") == "_nul.txt");
 	CHECK(safeFileName("Com7") == "_Com7");
 	CHECK(safeFileName("lpt9.tplp") == "_lpt9.tplp");
-	CHECK(safeFileName("COM0") == "COM0");
+	CHECK(safeFileName("COM0") == "_COM0");
+	CHECK(safeFileName("COM\xC2\xB9") == "_COM\xC2\xB9");
+	CHECK(safeFileName("LPT\xC2\xB2") == "_LPT\xC2\xB2");
+	CHECK(safeFileName("com\xC2\xB3.mp4") == "_com\xC2\xB3.mp4");
+	CHECK(safeFileName("CONIN$") == "_CONIN$");
+	CHECK(safeFileName("conout$.log") == "_conout$.log");
+	CHECK(safeFileName("NUL .txt") == "_NUL .txt");
+	CHECK(safeFileName("AUX.tar.gz") == "_AUX.tar.gz");
+	CHECK(safeFileName("CON ") == "_CON");
+	CHECK(safeFileName("COM\xC2\xBA") == "COM\xC2\xBA");
+	CHECK(safeFileName("COM10") == "COM10");
+	CHECK(safeFileName("CONIN") == "CONIN");
 	CHECK(safeFileName("CONSOLE") == "CONSOLE");
 	CHECK(safeFileName("LPT") == "LPT");
 }
