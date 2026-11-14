@@ -18,6 +18,7 @@
 #include <span>
 #include <stdexcept>
 #include <string>
+#include <utility>
 #include <vector>
 
 using tapeloop::ChunkPlace;
@@ -516,6 +517,91 @@ TEST_CASE("a manifest whose index reads part of its blob twice, or leaves part o
 		putLe(payload, 16, 4, blobSize + 1);
 		CHECK_FALSE(tapeloop::decodeManifest(withIndexPayload(manifest, payload)));
 	}
+}
+
+TEST_CASE("a manifest that lists a byte of a segment in two GOPs is refused")
+{
+	// twoSources puts the GOPs of both sources at the same places of segment 0, which are
+	// different chunks: each source has segments of its own.
+	const auto decodes = [](const ReplayIndex &index) {
+		return tapeloop::decodeManifest(tapeloop::encodeManifest(index, {})).has_value();
+	};
+	ReplayIndex index = twoSources();
+	REQUIRE(decodes(index));
+
+	SECTION("two sources with one key")
+	{
+		index.sources[1].key = "a";
+		CHECK_FALSE(decodes(index));
+		// In another segment of that source they are other chunks.
+		for (StoredGop &gop : index.sources[1].gops) {
+			gop.segment = 1;
+		}
+		CHECK(decodes(index));
+	}
+	SECTION("two keys that make one file name")
+	{
+		index.sources[0].key = "cam:1";
+		index.sources[1].key = "cam/1";
+		CHECK_FALSE(decodes(index));
+	}
+	SECTION("one source with a chunk twice")
+	{
+		// A source's GOPs need not lie in the order of their places: a later capture
+		// that reaches further back appends its older GOPs after newer ones.
+		std::vector<StoredGop> &gops = index.sources[0].gops;
+		std::swap(gops[0].offset, gops[1].offset);
+		CHECK(decodes(index));
+		gops[2].offset = gops[0].offset;
+		CHECK_FALSE(decodes(index));
+	}
+	SECTION("a chunk that runs into the next")
+	{
+		std::vector<StoredGop> &gops = index.sources[0].gops;
+		REQUIRE(gops[1].offset == gops[0].offset + 4096);
+		gops[0].size = 4096;
+		CHECK(decodes(index));
+		gops[0].size = 4097;
+		CHECK_FALSE(decodes(index));
+	}
+}
+
+TEST_CASE("a self-contained replay that lists one of its chunks in two GOPs is refused")
+{
+	const Gops gops = makeGops(2, VideoCodec::H264, nullptr);
+	std::vector<uint8_t> chunks(tapeloop::kManifestIndexOffset, 0);
+	const auto append = [&] {
+		std::vector<ChunkPlace> places;
+		for (const auto &gop : gops) {
+			places.push_back(tapeloop::appendGopChunk(chunks, 0, *gop));
+		}
+		return places;
+	};
+	const auto decodes = [&](ReplayIndex index) {
+		for (StoredSource &source : index.sources) {
+			for (StoredGop &gop : source.gops) {
+				gop.segment = tapeloop::kOwnFile;
+			}
+		}
+		std::vector<uint8_t> file = chunks;
+		const std::vector<uint8_t> head = tapeloop::encodeManifestHead(index, {});
+		std::copy(head.begin(), head.end(), file.begin());
+		const std::vector<uint8_t> tail = tapeloop::encodeManifestTail(index, file.size());
+		file.insert(file.end(), tail.begin(), tail.end());
+		return tapeloop::decodeManifest(file).has_value();
+	};
+	const std::vector<ChunkPlace> places = append();
+	ReplayIndex index;
+	index.sources.push_back(sourceOf("a", gops, places));
+	index.start = index.sources[0].in;
+	index.end = index.sources[0].out;
+	REQUIRE(decodes(index));
+
+	// Whatever their keys, the sources of a self-contained replay read its one file.
+	index.sources.push_back(sourceOf("b", gops, places));
+	CHECK_FALSE(decodes(index));
+	index.sources[1] = sourceOf("b", gops, append());
+	CHECK(decodes(index));
 }
 
 TEST_CASE("a self-contained replay holds its GOP chunks between its tag slots and its index")

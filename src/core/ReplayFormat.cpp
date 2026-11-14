@@ -4,12 +4,14 @@
 #include "core/ReplayFormat.hpp"
 
 #include "core/Crc32c.hpp"
+#include "core/ReplayNames.hpp"
 
 #include <algorithm>
 #include <chrono>
 #include <limits>
 #include <stdexcept>
 #include <string_view>
+#include <tuple>
 #include <utility>
 
 namespace tapeloop {
@@ -202,6 +204,60 @@ std::span<const uint8_t> gopBytes(const Gop &gop)
 	// Packets lie back to back from the first one's offset.
 	const std::span<const uint8_t> first = gop.packetData(0);
 	return {first.data(), last.offset + last.size - packets.front().offset};
+}
+
+// Whether no byte of a file belongs to two of the GOPs the index lists. The writer
+// appends a GOP to its source's segments once and an export writes each GOP once, so
+// only a made-up index lists a chunk twice, which an export would copy each time. A
+// segment is known by the name ReplayWriter gives its file, since different keys can
+// make one name.
+bool gopsApart(const ReplayIndex &index)
+{
+	// Sources whose segments have one name get one number.
+	std::vector<std::pair<std::string, uint32_t>> names;
+	names.reserve(index.sources.size());
+	size_t gopCount = 0;
+	for (size_t s = 0; s < index.sources.size(); ++s) {
+		names.emplace_back(safeFileName(index.sources[s].key), static_cast<uint32_t>(s));
+		gopCount += index.sources[s].gops.size();
+	}
+	std::sort(names.begin(), names.end());
+	std::vector<uint32_t> fileOf(names.size());
+	uint32_t file = 0;
+	for (size_t i = 0; i < names.size(); ++i) {
+		if (i > 0 && names[i].first != names[i - 1].first) {
+			++file;
+		}
+		fileOf[names[i].second] = file;
+	}
+
+	struct Place {
+		uint32_t file = 0;
+		uint32_t segment = 0;
+		uint64_t offset = 0;
+		uint64_t size = 0;
+	};
+	std::vector<Place> places;
+	places.reserve(gopCount);
+	for (size_t s = 0; s < index.sources.size(); ++s) {
+		for (const StoredGop &gop : index.sources[s].gops) {
+			// The GOPs of a self-contained replay are all in its one file.
+			places.push_back({gop.segment == kOwnFile ? 0 : fileOf[s], gop.segment, gop.offset, gop.size});
+		}
+	}
+	std::sort(places.begin(), places.end(), [](const Place &a, const Place &b) {
+		return std::tie(a.file, a.segment, a.offset) < std::tie(b.file, b.segment, b.offset);
+	});
+	// In order of offset, a chunk that overlaps any later one overlaps the next.
+	for (size_t i = 1; i < places.size(); ++i) {
+		const Place &before = places[i - 1];
+		const Place &next = places[i];
+		if (next.file == before.file && next.segment == before.segment &&
+		    next.offset - before.offset < before.size) {
+			return false;
+		}
+	}
+	return true;
 }
 
 } // namespace
@@ -848,7 +904,7 @@ std::optional<ReplayIndex> decodeManifest(std::span<const uint8_t> head, std::sp
 		}
 		index.sources.push_back(std::move(source));
 	}
-	if (run != runCount || gop != gopCount || frame != frameCount || blobRead != blob.size()) {
+	if (run != runCount || gop != gopCount || frame != frameCount || blobRead != blob.size() || !gopsApart(index)) {
 		return std::nullopt;
 	}
 	return index;
