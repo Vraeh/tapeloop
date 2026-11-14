@@ -537,11 +537,11 @@ TEST_CASE("every control of the overlay dialog is reached with the keyboard in o
 		widget = widget->nextInFocusChain();
 	} while (widget != first);
 	CHECK(order ==
-	      QStringList{"overlays",          "addOverlay",    "removeOverlay", "moveOverlayUp", "moveOverlayDown",
-			  "overlayProperties", "preset",        "overlayX",      "overlayY",      "overlayWidth",
-			  "overlayHeight",     "opacitySlider", "opacity",       "anchor",        "distanceX",
-			  "distanceY",         "fit",           "cropLeft",      "cropTop",       "cropRight",
-			  "cropBottom",        "blend",         "replayScene"});
+	      QStringList{"overlays",          "addOverlay",    "removeOverlay",  "moveOverlayUp", "moveOverlayDown",
+			  "overlayProperties", "preset",        "overlayX",       "overlayY",      "overlayWidth",
+			  "overlayHeight",     "opacitySlider", "opacity",        "anchor",        "distanceX",
+			  "distanceY",         "fit",           "cropLeft",       "cropTop",       "cropRight",
+			  "cropBottom",        "blend",         "overlayPreview", "replayScene"});
 }
 
 TEST_CASE("the dock's stats show each selected buffer with the advanced settings")

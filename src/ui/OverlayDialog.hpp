@@ -25,6 +25,8 @@ class QSpinBox;
 
 namespace tapeloop::ui {
 
+class OverlayPreview;
+
 // Edits the overlays of the replays on a copy: OK and Apply set it, Cancel drops it, so
 // nothing changes on air while editing. The anchor, fit, crop, blend and the user's own
 // replay scene show only with the dock's advanced settings. In the list, topmost first,
@@ -36,8 +38,7 @@ public:
 	// The dock's advanced settings switch shown or hidden.
 	void showAdvanced(bool advanced);
 	const OverlayLayout &editing() const noexcept { return layout_; }
-	// An empty area, below the list, for a live picture of the copy.
-	QWidget *previewArea() const noexcept { return preview_; }
+	OverlayPreview *preview() const noexcept { return preview_; }
 
 protected:
 	bool eventFilter(QObject *watched, QEvent *event) override;
@@ -46,6 +47,8 @@ private:
 	void buildScenes();
 	void showItems();
 	void showSelected();
+	// After the preview changed the copy or chose another overlay.
+	void followPreview();
 	void showScene();
 	// False when the scene collection changed under the dialog and nothing was written.
 	bool apply();
@@ -96,7 +99,7 @@ private:
 	QWidget *sceneBox_;
 	QComboBox *scene_;
 	QLabel *sceneWarning_;
-	QWidget *preview_;
+	OverlayPreview *preview_;
 	QDialogButtonBox *buttons_;
 };
 

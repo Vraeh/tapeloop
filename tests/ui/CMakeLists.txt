@@ -37,15 +37,20 @@ target_sources(
     ../../src/ui/Guarded.hpp
     ../../src/ui/OverlayDialog.cpp
     ../../src/ui/OverlayDialog.hpp
+    ../../src/ui/OverlayPreview.cpp
+    ../../src/ui/OverlayPreview.hpp
+    ../../src/ui/OverlayView.hpp
     ../../src/ui/SourceSettingsDialog.cpp
     ../../src/ui/SourceSettingsDialog.hpp
     ../../src/ui/TapeloopDock.cpp
     ../../src/ui/TapeloopDock.hpp
     DockTests.cpp
     FakeBackend.hpp
+    FakeOverlayView.hpp
     LocaleText.cpp
     LocaleText.hpp
     OverlayDialogTests.cpp
+    OverlayPreviewTests.cpp
     main.cpp
 )
 target_include_directories(tapeloop-ui-tests PRIVATE ../../src)

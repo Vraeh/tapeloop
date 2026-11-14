@@ -95,6 +95,8 @@ target_sources(
     src/ui/Guarded.hpp
     src/ui/OverlayDialog.cpp
     src/ui/OverlayDialog.hpp
+    src/ui/OverlayPreview.cpp
+    src/ui/OverlayPreview.hpp
     src/ui/OverlayView.hpp
     src/ui/SourceSettingsDialog.cpp
     src/ui/SourceSettingsDialog.hpp

@@ -4,11 +4,11 @@
 #include "ui/OverlayDialog.hpp"
 
 #include "ui/Guarded.hpp"
+#include "ui/OverlayPreview.hpp"
 
 #include <QComboBox>
 #include <QDialogButtonBox>
 #include <QFormLayout>
-#include <QFrame>
 #include <QGroupBox>
 #include <QHBoxLayout>
 #include <QKeyEvent>
@@ -93,7 +93,8 @@ OverlayDialog::OverlayDialog(DockBackend &backend, TextLookup text, QWidget *par
 	  sceneBox_(new QGroupBox(text_("Overlays.ReplayScene"), this)),
 	  scene_(new QComboBox(sceneBox_)),
 	  sceneWarning_(new QLabel(sceneBox_)),
-	  preview_(new QFrame(this)),
+	  preview_(new OverlayPreview(
+		  backend_, layout_, [this] { followPreview(); }, this)),
 	  buttons_(
 		  new QDialogButtonBox(QDialogButtonBox::Ok | QDialogButtonBox::Apply | QDialogButtonBox::Cancel, this))
 {
@@ -176,8 +177,6 @@ OverlayDialog::OverlayDialog(DockBackend &backend, TextLookup text, QWidget *par
 	// Scene names are the user's and shown as they are.
 	sceneWarning_->setTextFormat(Qt::PlainText);
 	preview_->setObjectName("overlayPreview");
-	preview_->setMinimumHeight(120);
-	new QVBoxLayout(preview_);
 	buttons_->setObjectName("overlayButtons");
 
 	auto *listButtons = new QVBoxLayout;
@@ -228,7 +227,7 @@ OverlayDialog::OverlayDialog(DockBackend &backend, TextLookup text, QWidget *par
 	layout->addLayout(list, 1);
 	layout->addWidget(sceneNote_);
 	layout->addWidget(fields_);
-	layout->addWidget(preview_);
+	layout->addWidget(preview_, 1);
 	layout->addWidget(sceneBox_);
 	layout->addWidget(buttons_);
 
@@ -253,7 +252,8 @@ OverlayDialog::OverlayDialog(DockBackend &backend, TextLookup text, QWidget *par
 	setTabOrder(cropTop_, cropRight_);
 	setTabOrder(cropRight_, cropBottom_);
 	setTabOrder(cropBottom_, blend_);
-	setTabOrder(blend_, scene_);
+	setTabOrder(blend_, preview_);
+	setTabOrder(preview_, scene_);
 
 	connect(overlays_, &QListWidget::currentRowChanged, this, [this](int row) {
 		guarded([&] {
@@ -427,6 +427,7 @@ void OverlayDialog::showItems()
 
 void OverlayDialog::showSelected()
 {
+	preview_->refresh();
 	const std::optional<size_t> selected = layout_.selected();
 	const size_t count = layout_.items().size();
 	remove_->setEnabled(selected.has_value());
@@ -467,6 +468,16 @@ void OverlayDialog::showSelected()
 	showValue(*cropRight_, item.crop.right);
 	showValue(*cropBottom_, item.crop.bottom);
 	selectData(*blend_, static_cast<int>(item.blend));
+}
+
+void OverlayDialog::followPreview()
+{
+	{
+		const QSignalBlocker block(overlays_);
+		const std::optional<size_t> selected = layout_.selected();
+		overlays_->setCurrentRow(selected ? rowOfIndex(*selected) : -1);
+	}
+	showSelected();
 }
 
 void OverlayDialog::showScene()

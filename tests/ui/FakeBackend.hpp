@@ -3,7 +3,11 @@
 
 #pragma once
 
+#include "FakeOverlayView.hpp"
+
 #include "ui/DockBackend.hpp"
+
+#include <QPointer>
 
 #include <algorithm>
 #include <cstddef>
@@ -52,6 +56,9 @@ public:
 	CanvasSize canvasSize;
 	// The sources whose properties the dock asked to open.
 	std::vector<std::string> propertiesOpened;
+	// Whether the overlay editor gets a live picture, and the last one it got.
+	bool overlayViews = true;
+	QPointer<FakeOverlayView> overlayView;
 
 	std::vector<tapeloop::ui::DockSource> sources() const override
 	{
@@ -203,7 +210,15 @@ public:
 		propertiesOpened.push_back(uuid);
 		return true;
 	}
-	tapeloop::ui::OverlayView *createOverlayView(QWidget *) override { return nullptr; }
+	tapeloop::ui::OverlayView *createOverlayView(QWidget *parent) override
+	{
+		if (!overlayViews) {
+			return nullptr;
+		}
+		auto *view = new FakeOverlayView(parent);
+		overlayView = view;
+		return view;
+	}
 	void pickReplay(uint64_t id) override
 	{
 		++picks;
