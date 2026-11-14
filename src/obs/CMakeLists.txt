@@ -26,6 +26,8 @@ target_sources(
     OverlayOpacity.hpp
     PictureRenderer.cpp
     PictureRenderer.hpp
+    PreviewRenderer.cpp
+    PreviewRenderer.hpp
     ProfileHotkeys.cpp
     ProfileHotkeys.hpp
     RenderAdapter.cpp

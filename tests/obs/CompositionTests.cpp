@@ -231,6 +231,50 @@ TEST_CASE_METHOD(ObsFixture, "only an overlay below full opacity is drawn throug
 	CHECK(obs_weak_source_expired(weakTranslucent));
 }
 
+TEST_CASE_METHOD(ObsFixture, "overlays that only move keep their scene items", "[obs][composition]")
+{
+	registerOverlayOpacity(TAPELOOP_OPACITY_EFFECT);
+	OBSSourceAutoRelease replay = createTestPattern(320, 180, "Replay");
+	OBSSourceAutoRelease solid = createTestPattern(100, 50, "Solid");
+	OBSSourceAutoRelease faded = createTestPattern(100, 50, "Faded");
+	Composition composition(replay);
+
+	OverlaySettings overlays;
+	overlays.canvas = {640, 360};
+	overlays.items = {overlayOf(solid), overlayOf(faded)};
+	overlays.items[1].opacity = 60;
+	composition.setOverlays(overlays);
+	composition.apply();
+	const std::vector<obs_sceneitem_t *> before = itemsOf(composition.source());
+	REQUIRE(before.size() == 3);
+	OBSWeakSourceAutoRelease weakTranslucent = obs_source_get_weak_source(obs_sceneitem_get_source(before[2]));
+
+	overlays.items[0].x = 40;
+	overlays.items[1].width = 128;
+	overlays.items[1].blend = OverlayBlend::Screen;
+	composition.setOverlays(overlays);
+	composition.apply();
+	CHECK(itemsOf(composition.source()) == before);
+	CHECK_FALSE(obs_weak_source_expired(weakTranslucent));
+	vec2 position = {};
+	obs_sceneitem_get_pos(before[1], &position);
+	CHECK(position.x == 40.0f);
+	vec2 bounds = {};
+	obs_sceneitem_get_bounds(before[2], &bounds);
+	CHECK(bounds.x == 128.0f);
+	CHECK(obs_sceneitem_get_blending_mode(before[2]) == OBS_BLEND_SCREEN);
+
+	overlays.items[1].opacity = 50;
+	composition.setOverlays(overlays);
+	composition.apply();
+	const std::vector<obs_sceneitem_t *> after = itemsOf(composition.source());
+	REQUIRE(after.size() == 3);
+	CHECK(obs_weak_source_expired(weakTranslucent));
+	CHECK(overlayTarget(obs_sceneitem_get_source(after[2])) == faded.Get());
+	obs_sceneitem_get_pos(after[1], &position);
+	CHECK(position.x == 40.0f);
+}
+
 TEST_CASE_METHOD(ObsFixture, "an overlay below full opacity whose source OBS removes is let go of",
 		 "[obs][composition]")
 {

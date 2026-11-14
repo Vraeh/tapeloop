@@ -14,7 +14,11 @@
 #include <string>
 #include <vector>
 
+class QWidget;
+
 namespace tapeloop::ui {
+
+class OverlayView;
 
 // Waiting: the source has no picture yet, as display, window and game captures do until
 // something shows them.
@@ -180,6 +184,9 @@ public:
 	// Opens OBS's own properties of the source, whose changes apply wherever it is shown.
 	// False when there is no such source.
 	virtual bool openProperties(const std::string &uuid) = 0;
+	// A new live picture for the overlay editor, owned by `parent`; null when there is
+	// none to draw.
+	virtual OverlayView *createOverlayView(QWidget *parent) = 0;
 
 	virtual bool canExport(ExportFormat format) const = 0;
 	// Exports a stored replay in the background. False when refused.

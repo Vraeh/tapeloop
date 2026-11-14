@@ -9,6 +9,7 @@
 #include "obs/FrontendBridge.hpp"
 #include "obs/ManagerDockBackend.hpp"
 #include "obs/OverlayOpacity.hpp"
+#include "obs/PreviewDisplay.hpp"
 #include "obs/RenderAdapter.hpp"
 #include "obs/ReplaySource.hpp"
 #include "obs/ReplayView.hpp"
@@ -32,11 +33,13 @@ constexpr const char *kDockId = "tapeloop";
 
 std::unique_ptr<tapeloop::obs::FrontendBridge> bridge;
 std::unique_ptr<tapeloop::obs::ManagerDockBackend> dockBackend;
+tapeloop::obs::PreviewDisplayFactory previews;
 
 void addDock()
 {
-	dockBackend = std::make_unique<tapeloop::obs::ManagerDockBackend>(
-		bridge->manager(), &bridge->sequence(), &bridge->sceneCatalog(), &bridge->propertiesOpener());
+	dockBackend = std::make_unique<tapeloop::obs::ManagerDockBackend>(bridge->manager(), &bridge->sequence(),
+									  &bridge->sceneCatalog(),
+									  &bridge->propertiesOpener(), &previews);
 	auto *dock = new tapeloop::ui::TapeloopDock(*dockBackend, [](const char *key) {
 		return QString::fromUtf8(obs_module_text(key));
 	});

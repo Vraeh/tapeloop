@@ -23,6 +23,20 @@ public:
 	virtual std::vector<OverlayScene> scenes() const = 0;
 };
 
+// Makes the overlay editor's live picture, a widget the plugin draws with OBS.
+class OverlayViewFactory {
+public:
+	OverlayViewFactory() = default;
+	virtual ~OverlayViewFactory() = default;
+
+	OverlayViewFactory(const OverlayViewFactory &) = delete;
+	OverlayViewFactory &operator=(const OverlayViewFactory &) = delete;
+	OverlayViewFactory(OverlayViewFactory &&) = delete;
+	OverlayViewFactory &operator=(OverlayViewFactory &&) = delete;
+
+	virtual ui::OverlayView *createOverlayView(QWidget *parent) = 0;
+};
+
 // Opens OBS's properties dialog of a source, as the frontend does; UI thread only.
 class PropertiesOpener {
 public:
@@ -41,16 +55,18 @@ public:
 // scene collection with their selection and capture state, in the order of the sequence
 // and then, for those it does not list yet, by name regardless of case. Without a
 // sequence player every source is shown, they stay sorted by name and neither changes.
-// Without a scene catalog there are no scenes to pick, and without an opener no
-// properties open.
+// Without a scene catalog there are no scenes to pick, without an opener no properties
+// open, and without a view factory the overlay editor has no live picture.
 class ManagerDockBackend : public ui::DockBackend {
 public:
 	explicit ManagerDockBackend(CaptureManager &manager, SequencePlayer *sequence = nullptr,
-				    const SceneCatalog *scenes = nullptr, PropertiesOpener *properties = nullptr)
+				    const SceneCatalog *scenes = nullptr, PropertiesOpener *properties = nullptr,
+				    OverlayViewFactory *views = nullptr)
 		: manager_(manager),
 		  sequence_(sequence),
 		  scenes_(scenes),
-		  properties_(properties)
+		  properties_(properties),
+		  views_(views)
 	{
 	}
 
@@ -95,6 +111,10 @@ public:
 	std::vector<ui::OverlaySource> overlaySources() const override;
 	CanvasSize canvas() const override;
 	bool openProperties(const std::string &uuid) override;
+	ui::OverlayView *createOverlayView(QWidget *parent) override
+	{
+		return views_ ? views_->createOverlayView(parent) : nullptr;
+	}
 	bool canExport(ExportFormat format) const override { return manager_.canExport(format); }
 	bool exportReplay(uint64_t id, ExportFormat format) override { return manager_.exportReplay(id, format); }
 	std::vector<ui::DockExport> exports() const override;
@@ -108,6 +128,7 @@ private:
 	SequencePlayer *sequence_;
 	const SceneCatalog *scenes_;
 	PropertiesOpener *properties_;
+	OverlayViewFactory *views_;
 };
 
 } // namespace tapeloop::obs

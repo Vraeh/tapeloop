@@ -171,6 +171,47 @@ void fitReplay(obs_sceneitem_t *replayItem, CanvasSize canvas)
 	obs_sceneitem_set_info2(replayItem, &info);
 }
 
+// The overlays, bottom first, each on the item rebuild() added for it.
+struct Moving {
+	obs_sceneitem_t *replayItem = nullptr;
+	CanvasSize canvas;
+	const std::vector<Layer> *layers = nullptr;
+	size_t next = 0;
+	bool matched = true;
+};
+
+bool placeNext(obs_scene_t *, obs_sceneitem_t *item, void *param) noexcept
+{
+	auto &moving = *static_cast<Moving *>(param);
+	if (item == moving.replayItem) {
+		return true;
+	}
+	if (moving.next >= moving.layers->size() ||
+	    overlayTarget(obs_sceneitem_get_source(item)) != (*moving.layers)[moving.next].source) {
+		moving.matched = false;
+		return false;
+	}
+	place(item, *(*moving.layers)[moving.next++].item, moving.canvas);
+	return true;
+}
+
+void move(void *data, obs_scene_t *scene) noexcept
+{
+	auto &moving = *static_cast<Moving *>(data);
+	obs_scene_enum_items(scene, placeNext, &moving);
+	moving.matched = moving.matched && moving.next == moving.layers->size();
+}
+
+// The same overlays in the same order, shown or hidden alike and at the same opacity:
+// what differs only moves them.
+bool sameLayers(const OverlaySettings &a, const OverlaySettings &b)
+{
+	return std::equal(a.items.begin(), a.items.end(), b.items.begin(), b.items.end(),
+			  [](const OverlayItem &x, const OverlayItem &y) {
+				  return x.uuid == y.uuid && x.visible == y.visible && x.opacity == y.opacity;
+			  });
+}
+
 void rebuild(void *data, obs_scene_t *scene) noexcept
 {
 	const auto &build = *static_cast<const Build *>(data);
@@ -233,8 +274,14 @@ void Composition::setOverlays(const OverlaySettings &overlays)
 	if (overlays == overlays_) {
 		return;
 	}
+	// Overlays that only move keep their scene items, so a drag in the editor's preview
+	// does not hide and show again, on every step, a source that only this scene shows.
+	if (sameLayers(overlays, overlays_)) {
+		moved_ = true;
+	} else {
+		stale_ = true;
+	}
 	overlays_ = overlays;
-	stale_ = true;
 }
 
 void Composition::apply()
@@ -264,7 +311,17 @@ void Composition::apply()
 		}
 	}
 	if (!stale_ && canvas == placedAt_ && found == found_) {
-		return;
+		if (!moved_) {
+			return;
+		}
+		Moving moving{replayItem_, canvas, &layers};
+		obs_scene_atomic_update(scene_, move, &moving);
+		moved_ = false;
+		// Should an overlay have failed to go in when the scene was built, it is built
+		// again.
+		if (moving.matched) {
+			return;
+		}
 	}
 
 	for (size_t i = 0, layer = 0; i < placed.items.size(); ++i) {
@@ -292,6 +349,7 @@ void Composition::apply()
 	Build build{replayItem_, canvas, &layers};
 	obs_scene_atomic_update(scene_, rebuild, &build);
 	stale_ = false;
+	moved_ = false;
 	placedAt_ = canvas;
 	found_ = std::move(found);
 }

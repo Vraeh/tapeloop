@@ -84,6 +84,8 @@ target_sources(
   PRIVATE
     src/obs/FrontendBridge.cpp
     src/obs/FrontendBridge.hpp
+    src/obs/PreviewDisplay.cpp
+    src/obs/PreviewDisplay.hpp
     src/plugin-main.cpp
     src/ui/AirSettingsDialog.cpp
     src/ui/AirSettingsDialog.hpp
@@ -93,6 +95,7 @@ target_sources(
     src/ui/Guarded.hpp
     src/ui/OverlayDialog.cpp
     src/ui/OverlayDialog.hpp
+    src/ui/OverlayView.hpp
     src/ui/SourceSettingsDialog.cpp
     src/ui/SourceSettingsDialog.hpp
     src/ui/TapeloopDock.cpp

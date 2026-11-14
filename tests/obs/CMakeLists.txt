@@ -184,6 +184,12 @@ if(CMAKE_SYSTEM_NAME STREQUAL "Linux")
   target_link_options(tapeloop-obs-tests PRIVATE "LINKER:--exclude-libs=libavformat.a:libavcodec.a:libavutil.a")
 endif()
 set_target_properties(tapeloop-obs-tests PROPERTIES BUILD_RPATH "${TAPELOOP_LIBOBS_PREFIX}/lib")
+# The overlay preview draws into a window of the X server the tests run on.
+if(CMAKE_SYSTEM_NAME STREQUAL "Linux")
+  find_package(X11 REQUIRED COMPONENTS xcb)
+  target_sources(tapeloop-obs-tests PRIVATE PreviewTests.cpp)
+  target_link_libraries(tapeloop-obs-tests PRIVATE X11::xcb)
+endif()
 tapeloop_core_warnings(tapeloop-obs-tests)
 
 enable_testing()

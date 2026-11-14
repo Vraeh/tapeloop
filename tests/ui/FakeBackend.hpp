@@ -203,6 +203,7 @@ public:
 		propertiesOpened.push_back(uuid);
 		return true;
 	}
+	tapeloop::ui::OverlayView *createOverlayView(QWidget *) override { return nullptr; }
 	void pickReplay(uint64_t id) override
 	{
 		++picks;

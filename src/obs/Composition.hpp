@@ -38,7 +38,8 @@ public:
 	// Shown from the next apply().
 	void setOverlays(const OverlaySettings &overlays);
 	// Builds the scene again when the overlays, the canvas or which of their sources OBS
-	// has changed since it was last built.
+	// has changed since it was last built, and only places the overlays again when they
+	// just moved.
 	void apply();
 	// Empties the scene and lets go of it, for good.
 	void destroy();
@@ -61,6 +62,8 @@ private:
 	obs_sceneitem_t *replayItem_ = nullptr;
 	OverlaySettings overlays_;
 	bool stale_ = true;
+	// Only where the overlays are placed changed.
+	bool moved_ = false;
 	CanvasSize placedAt_{0, 0};
 	// Whether each visible overlay's source was found when the scene was built.
 	std::vector<bool> found_;
