@@ -178,7 +178,8 @@ struct IndexPlace {
 std::optional<IndexPlace> decodeManifestFooter(std::span<const uint8_t> footer, uint64_t fileSize);
 // From the head, the index chunk at the place the footer gives, and the footer, which is
 // all a self-contained replay needs read for its index. Null for a file that is not a
-// complete and intact manifest or self-contained replay of this major version.
+// complete and intact manifest or self-contained replay of this major version, or that
+// lists a byte of a file in two GOPs.
 std::optional<ReplayIndex> decodeManifest(std::span<const uint8_t> head, std::span<const uint8_t> indexChunk,
 					  std::span<const uint8_t> footer, uint64_t fileSize);
 // The same, from the whole file.

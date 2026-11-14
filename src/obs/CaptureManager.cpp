@@ -59,6 +59,17 @@ bool addInput(void *param, obs_source_t *source) noexcept
 	return true;
 }
 
+// libobs reads a whole UUID's length from the key it is given, whatever the key's own
+// length, and gives sources UUIDs of that length only. Saved settings can hold any
+// string, so a key of another length is a source not found.
+OBSSourceAutoRelease sourceByUuid(const std::string &uuid)
+{
+	if (uuid.size() != UUID_STR_LENGTH) {
+		return nullptr;
+	}
+	return obs_get_source_by_uuid(uuid.c_str());
+}
+
 // Sources that restart, unpause or refresh when they become active. Holding one active
 // off air would keep it from doing so when it is cut to air, so activation leaves them
 // out. The ids and settings are those of OBS 32's media source, VLC source, image
@@ -258,7 +269,7 @@ void CaptureManager::save(obs_data_t *collection) const
 	// Settings of a source the collection no longer has would only pile up.
 	std::vector<SavedSource> kept;
 	for (SavedSource &source : saved.sources) {
-		OBSSourceAutoRelease found = obs_get_source_by_uuid(source.uuid.c_str());
+		OBSSourceAutoRelease found = sourceByUuid(source.uuid);
 		if (found) {
 			source.name = obs_source_get_name(found);
 			kept.push_back(std::move(source));
@@ -301,7 +312,7 @@ void CaptureManager::load(obs_data_t *collection)
 	settings_ = std::move(settings);
 	lifecycle_.reset(settings_.startWithOutputs, host_.streamingActive(), host_.recordingActive());
 	for (const std::string &uuid : settings_.selectedSources()) {
-		OBSSourceAutoRelease source = obs_get_source_by_uuid(uuid.c_str());
+		OBSSourceAutoRelease source = sourceByUuid(uuid);
 		if (!source) {
 			const auto name = savedNames_.find(uuid);
 			blog(LOG_INFO, "[tapeloop] The selected source '%s' is not in this scene collection",
@@ -369,7 +380,7 @@ uint64_t CaptureManager::captureReplay()
 	capture.start = cut.moment.start;
 	capture.end = cut.moment.end;
 	for (MomentClip &clip : cut.moment.clips) {
-		OBSSourceAutoRelease source = obs_get_source_by_uuid(clip.sourceKey.c_str());
+		OBSSourceAutoRelease source = sourceByUuid(clip.sourceKey);
 		const char *name = source ? obs_source_get_name(source) : nullptr;
 		capture.sources.push_back({std::move(clip.sourceKey), name ? name : "", std::move(clip.clip)});
 	}
@@ -759,7 +770,7 @@ uint64_t CaptureManager::memoryNeeded() const
 		const auto found = entries_.find(uuid);
 		size_t need = found != entries_.end() ? found->second->capture.byteNeed() : 0;
 		if (need == 0) {
-			OBSSourceAutoRelease source = obs_get_source_by_uuid(uuid.c_str());
+			OBSSourceAutoRelease source = sourceByUuid(uuid);
 			if (source) {
 				need = SourceCapture::estimateByteNeed(source, captureSettings(uuid, candidates));
 			}
@@ -781,7 +792,7 @@ CaptureManager::StartOutcome CaptureManager::start(const std::string &uuid, Entr
 {
 	entry.retry = false;
 	entry.retryKeepsBuffer = keepBuffer;
-	OBSSourceAutoRelease source = obs_get_source_by_uuid(uuid.c_str());
+	OBSSourceAutoRelease source = sourceByUuid(uuid);
 	// A removed source can still be found while something holds it.
 	if (source && obs_source_removed(source)) {
 		return StartOutcome::SourceRemoved;
