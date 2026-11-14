@@ -60,6 +60,7 @@ target_sources(
     core/MediaTimeTests.cpp
     core/MomentCutterTests.cpp
     core/NalUnitWriter.hpp
+    core/OverlayLayoutTests.cpp
     core/ParameterSetsTests.cpp
     core/PlayheadTests.cpp
     core/ReplayExportTests.cpp

@@ -42,6 +42,8 @@ target_sources(
     MediaTime.hpp
     MomentCutter.cpp
     MomentCutter.hpp
+    OverlayLayout.cpp
+    OverlayLayout.hpp
     ParameterSets.cpp
     ParameterSets.hpp
     Playhead.cpp
