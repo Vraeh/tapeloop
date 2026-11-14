@@ -32,6 +32,12 @@ public:
 	// Annex B, or that would be left without anything.
 	size_t copyWithout(std::span<const uint8_t> packet, std::span<uint8_t> out) const noexcept;
 
+#ifdef TAPELOOP_COUNT_COMPARISONS
+	// The known sets the packets so far were compared with, so that a test can bound
+	// what a lookup costs without timing it. Only the core tests build it.
+	size_t comparisons() const noexcept { return comparisons_; }
+#endif
+
 private:
 	struct Set {
 		size_t at = 0;
@@ -41,11 +47,19 @@ private:
 	std::span<const uint8_t> bytesOf(Set set) const noexcept;
 	bool holds(std::span<const uint8_t> nal) const noexcept;
 	bool canDropSets(std::span<const uint8_t> packet, size_t length) const noexcept;
+#ifdef TAPELOOP_COUNT_COMPARISONS
+	void countComparison() const noexcept { ++comparisons_; }
+#else
+	void countComparison() const noexcept {}
+#endif
 
 	VideoCodec codec_ = VideoCodec::H264;
 	std::vector<uint8_t> config_;
 	// Where each set is in config_, shortest first and those of one size in byte order.
 	std::vector<Set> sets_;
+#ifdef TAPELOOP_COUNT_COMPARISONS
+	mutable size_t comparisons_ = 0;
+#endif
 };
 
 // Whether each sequence parameter set in data, in Annex B, holds every field up to the

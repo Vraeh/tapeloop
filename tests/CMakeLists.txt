@@ -36,6 +36,9 @@ FetchContent_MakeAvailable(Catch2)
 set_target_properties(Catch2 Catch2WithMain PROPERTIES COMPILE_WARNING_AS_ERROR OFF)
 
 add_subdirectory(../src/core core)
+# Counts what a parameter set lookup compares, for a test that must fail rather than hang
+# when a lookup reads the whole configuration again.
+target_compile_definitions(tapeloop-core PUBLIC TAPELOOP_COUNT_COMPARISONS)
 
 add_executable(tapeloop-core-tests)
 target_sources(
