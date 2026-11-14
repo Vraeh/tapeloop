@@ -24,6 +24,9 @@ public:
 	bool isRunning = false;
 	bool manualEnabled = true;
 	int toggles = 0;
+	tapeloop::ui::DockPlayer playerState;
+	std::vector<std::pair<tapeloop::ui::PlayerControl, bool>> controls;
+	std::vector<tapeloop::Nanoseconds> seeks;
 	int settingsChanges = 0;
 	uint64_t captures = 0;
 	uint64_t picked = 0;
@@ -205,6 +208,12 @@ public:
 		}
 		return std::make_unique<FakeSurface>(surface);
 	}
+	tapeloop::ui::DockPlayer player() const override { return playerState; }
+	void controlPlayer(tapeloop::ui::PlayerControl control, bool pressed) override
+	{
+		controls.emplace_back(control, pressed);
+	}
+	void seekPlayer(tapeloop::Nanoseconds position) override { seeks.push_back(position); }
 	bool toggleRunning() override
 	{
 		if (!manualEnabled) {

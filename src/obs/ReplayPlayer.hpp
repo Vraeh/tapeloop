@@ -36,6 +36,9 @@ struct PlayerState {
 	// Thousandths of real time; negative plays backwards.
 	int32_t rate = 1000;
 	Nanoseconds position{0};
+	// The times of the clip's first and last frames, where seek() stops.
+	Nanoseconds start{0};
+	Nanoseconds end{0};
 	// The frame the playhead is on, and the frame the last render() drew, as indexes into
 	// the clip's frames in time order. Nothing is drawn of a clip before its first frame
 	// is decoded.

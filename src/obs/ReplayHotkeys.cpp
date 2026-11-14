@@ -250,9 +250,17 @@ void runHotkey(HotkeyAction action, bool pressed, CaptureManager &manager, Seque
 	default:
 		break;
 	}
-	if ((sequence.state().phase() == AirPhase::Source || sequence.cuedReplay() != 0) && sequence.player()) {
-		runPlayerControl(action, *sequence.player());
+	if (ReplayPlayer *player = controlledPlayer(sequence)) {
+		runPlayerControl(action, *player);
 	}
+}
+
+ReplayPlayer *controlledPlayer(const SequencePlayer &sequence) noexcept
+{
+	if (sequence.closed() || (sequence.state().phase() != AirPhase::Source && sequence.cuedReplay() == 0)) {
+		return nullptr;
+	}
+	return sequence.player();
 }
 
 } // namespace tapeloop::obs

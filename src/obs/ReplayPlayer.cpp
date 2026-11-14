@@ -300,6 +300,8 @@ void ReplayPlayer::tick(Nanoseconds elapsed) noexcept
 		state_.scrubbing = playhead_.scrubbing();
 		state_.rate = playhead_.rate();
 		state_.position = playhead_.position();
+		state_.start = playhead_.firstTime();
+		state_.end = playhead_.lastTime();
 		state_.frame = playhead_.displayedFrame();
 		state_.frames = frames_;
 		state_.clip = clip_;

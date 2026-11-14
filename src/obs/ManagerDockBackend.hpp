@@ -58,6 +58,9 @@ public:
 	bool exportReplay(uint64_t id, ExportFormat format) override { return manager_.exportReplay(id, format); }
 	std::vector<ui::DockExport> exports() const override;
 	std::unique_ptr<ui::PictureSurface> pictureSurface() override;
+	ui::DockPlayer player() const override;
+	void controlPlayer(ui::PlayerControl control, bool pressed) override;
+	void seekPlayer(Nanoseconds position) override;
 
 private:
 	// Adds the listed sources the sequence does not have yet after its own, in the order

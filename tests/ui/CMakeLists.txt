@@ -34,6 +34,8 @@ target_sources(
     ../../src/ui/DockBackend.hpp
     ../../src/ui/DockText.cpp
     ../../src/ui/DockText.hpp
+    ../../src/ui/MiniPlayer.cpp
+    ../../src/ui/MiniPlayer.hpp
     ../../src/ui/PictureSurface.hpp
     ../../src/ui/PlayerPicture.cpp
     ../../src/ui/PlayerPicture.hpp

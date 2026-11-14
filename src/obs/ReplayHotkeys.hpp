@@ -14,6 +14,7 @@
 namespace tapeloop::obs {
 
 class CaptureManager;
+class ReplayPlayer;
 class SequencePlayer;
 
 enum class HotkeyAction {
@@ -83,5 +84,9 @@ private:
 // through every replay that is not damaged, newest first, and the cue with it, as does a
 // capture. None of them does anything while the sequence is closed. UI thread.
 void runHotkey(HotkeyAction action, bool pressed, CaptureManager &manager, SequencePlayer &sequence);
+
+// The player the controls act on: the one on air, or the one holding the cued replay.
+// Null when there is neither.
+ReplayPlayer *controlledPlayer(const SequencePlayer &sequence) noexcept;
 
 } // namespace tapeloop::obs

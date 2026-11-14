@@ -579,3 +579,75 @@ TEST_CASE_METHOD(ObsFixture, "the dock gets a picture of the replay player when 
 	obs_wait_for_destroy_queue();
 	picture.reset();
 }
+
+TEST_CASE_METHOD(ObsFixture, "the dock's player controls act on the cued replay and on air", "[obs][dock][replay]")
+{
+	using tapeloop::ui::DockPlayer;
+	using tapeloop::ui::PlayerControl;
+	tapeloop::obs::registerReplaySource({});
+	const tapeloop::test::UiTasks ui;
+	OBSSourceAutoRelease camera = createTestPattern(320, 180, "Camera");
+	OfflineHost host;
+	CaptureManager manager(host);
+	CHECK_FALSE(ManagerDockBackend(manager).player().loaded);
+	SequencePlayer sequence(manager.library());
+	ManagerDockBackend backend(manager, &sequence);
+	CHECK_FALSE(backend.player().loaded);
+	// Without a replay the controls reach nothing.
+	backend.controlPlayer(PlayerControl::Faster, true);
+	backend.seekPlayer(std::chrono::seconds(1));
+
+	BufferSettings settings = backend.settings();
+	settings.startWithOutputs = false;
+	settings.sources[obs_source_get_uuid(camera)].selected = true;
+	backend.setSettings(settings);
+	REQUIRE(backend.toggleRunning());
+	REQUIRE(tapeloop::test::waitFor(
+		[&] {
+			const tapeloop::SourceBuffer *buffer = manager.buffer(obs_source_get_uuid(camera));
+			return buffer && buffer->stats().gopCount >= 2;
+		},
+		std::chrono::seconds(60)));
+	REQUIRE(backend.captureReplay() != 0);
+	const auto playerUntil = [&](bool (*condition)(const DockPlayer &)) {
+		return tapeloop::test::waitFor([&] { return condition(backend.player()); }, std::chrono::seconds(10));
+	};
+	REQUIRE(playerUntil([](const DockPlayer &state) { return state.loaded && state.length.count() > 0; }));
+	DockPlayer player = backend.player();
+	CHECK_FALSE(player.onAir);
+	CHECK_FALSE(player.playing);
+	CHECK(player.position.count() == 0);
+
+	backend.controlPlayer(PlayerControl::Faster, true);
+	REQUIRE(playerUntil([](const DockPlayer &state) { return state.rate == 2000; }));
+	backend.controlPlayer(PlayerControl::Reverse, true);
+	REQUIRE(playerUntil([](const DockPlayer &state) { return state.rate == -2000; }));
+	// Normal speed keeps the direction.
+	backend.controlPlayer(PlayerControl::NormalSpeed, true);
+	REQUIRE(playerUntil([](const DockPlayer &state) { return state.rate == -1000; }));
+	backend.controlPlayer(PlayerControl::Reverse, true);
+	REQUIRE(playerUntil([](const DockPlayer &state) { return state.rate == 1000; }));
+	// The last frame is as far as a seek goes, and the clip's length is where it is.
+	backend.seekPlayer(player.length + std::chrono::seconds(5));
+	REQUIRE(playerUntil([](const DockPlayer &state) { return state.position == state.length; }));
+	backend.seekPlayer(tapeloop::Nanoseconds{0});
+	REQUIRE(playerUntil([](const DockPlayer &state) { return state.position.count() == 0; }));
+	backend.controlPlayer(PlayerControl::NextFrame, true);
+	REQUIRE(playerUntil([](const DockPlayer &state) { return state.position.count() > 0; }));
+
+	REQUIRE(sequence.putOnAir(backend.currentReplay()));
+	REQUIRE(playerUntil([](const DockPlayer &state) { return state.onAir && state.playing; }));
+	// Paused, so that the clip, a few seconds long, stays on air.
+	backend.controlPlayer(PlayerControl::PlayPause, true);
+	REQUIRE(playerUntil([](const DockPlayer &state) { return state.onAir && !state.playing; }));
+	backend.controlPlayer(PlayerControl::ScrubForward, true);
+	REQUIRE(tapeloop::test::waitFor([&] { return sequence.player()->state().scrubbing; },
+					std::chrono::seconds(10)));
+	backend.controlPlayer(PlayerControl::ScrubForward, false);
+	REQUIRE(tapeloop::test::waitFor([&] { return !sequence.player()->state().scrubbing; },
+					std::chrono::seconds(10)));
+	sequence.takeOffAir();
+
+	REQUIRE(backend.toggleRunning());
+	manager.finishWrites();
+}
