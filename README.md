@@ -9,24 +9,54 @@ are not stable enough to trust during a match.
 
 ## Status
 
-Early development. Nothing is usable yet and there are no releases.
+Early development. There are no releases yet. The first test releases will be alphas,
+and everything here is provisional until then: settings, names and file formats can
+still change.
 
-## Goals for the first release
+## What works in the development branch
 
-- Replay buffers for any video source, encoded on the GPU and kept in memory, never
-  written to disk.
-- Buffer length and replay resolution set by the user.
-- Playback controls: speed changes while the replay is running, reverse, frame
-  stepping and hold-to-scrub.
-- A list of marked moments to choose from.
-- Audio modes: replay audio only, replay audio over the program, or program only.
-- Keyboard hotkeys. Stream Deck and MIDI controllers come later.
+- A buffer for each source you choose, encoded by a hardware encoder where one can
+  take the source and by x264 on the CPU otherwise. Buffers hold 10 to 300 seconds
+  (60 by default), at the canvas resolution, the output resolution or a fixed height,
+  with their own length and resolution per source if you want. The buffers can follow
+  streaming and recording, and a memory limit (a quarter of the computer's memory by
+  default) shortens them evenly if the selected sources need more.
+- Encoder choice: automatic, which tries the encoders of the graphics card OBS renders
+  on first, or one picked in the advanced settings. The code knows NVENC, Quick Sync,
+  AMF, Apple VideoToolbox and x264. Replays are encoded in HEVC where the card can and
+  in H.264 elsewhere, or in H.264 only if you choose. The encoders you stream and
+  record with are never touched.
+- Capture replay: a hotkey or a button keeps everything each buffer holds as a replay.
+  Replays are written to disk as they are captured, in a Tapeloop folder inside the
+  OBS recording folder, and stay across restarts. The buffers keep recording.
+- A list of replays, newest first, with tags you can filter by.
+- A player with play and pause, reverse, speed from 0.05x to 4x, frame stepping and
+  hold-to-scrub, in the dock or in its own window. Playback reads from the buffer
+  while it still holds the replay and from disk afterwards.
+- A sequence: the sources shown in the replay play one after another, in the order
+  you set.
+- On air: a replay goes on air over the program and back to live, with a transition,
+  and an optional intro and outro (video or image) set in the on-air settings.
+- Export: each source of a replay to an MP4 file without encoding it again, or the
+  whole replay to a single `.tplp` file that plays without its folder.
+- Hotkeys, set in the OBS hotkey settings, for starting and stopping the buffers,
+  capturing, going on and off air, play and pause, reverse, frames, speed, scrubbing,
+  skipping to the next source and moving between replays.
+
+## Not there yet
+
+- Replay audio. Replays play without sound for now.
+- Overlays on replays.
+- Stream Deck and MIDI controls.
+- On macOS the player draws nothing and MP4 export is not offered, because that build
+  has no FFmpeg yet. Replays are still captured and saved there.
 
 ## Requirements
 
 - OBS Studio 32.0 or newer.
 - Windows 10 or 11, x64. macOS on Apple Silicon is planned.
-- An NVIDIA GPU with NVENC. Intel Quick Sync and AMD AMF are planned.
+- A hardware encoder is recommended: NVIDIA NVENC, Intel Quick Sync or AMD AMF.
+  Without one Tapeloop falls back to x264, which costs CPU time.
 
 ## Building
 
