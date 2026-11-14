@@ -1,7 +1,8 @@
 # Tapeloop
 
 Instant replay for OBS Studio. Tapeloop keeps a rolling buffer of the sources you
-choose, so when something happens you can cut back to it from any angle, slowed down or sped up.
+choose, so when something happens you can cut back to it from any angle, slowed down
+or sped up.
 
 It is being built for live amateur sports production, where a dedicated replay server
 is out of budget and the existing OBS options either fill the RAM with raw frames or
@@ -18,30 +19,32 @@ one version to the next.
 - A buffer for each source you choose, encoded by a hardware encoder where one can
   take the source and by x264 on the CPU otherwise. Buffers hold 10 to 300 seconds
   (60 by default), at the height of the canvas, of the output or a fixed height, never
-  above the source's own and keeping its shape,
-  with their own length and resolution per source if you want. The buffers can follow
-  streaming and recording, and a memory limit (a quarter of the computer's memory by
-  default) shortens them evenly if the selected sources need more.
+  above the source's own and keeping its shape, with their own length and resolution
+  per source if you want. The buffers can follow streaming and recording, and a memory
+  limit (a quarter of the computer's memory by default) shortens them evenly if the
+  selected sources need more.
 - Encoder choice: automatic, which tries the encoders of the graphics card OBS renders
-  on first, or one picked in the advanced settings. Tapeloop can use NVENC, Quick Sync,
-  AMF, Apple VideoToolbox and x264. Replays are encoded in HEVC where the card can and
-  in H.264 elsewhere, or in H.264 only if you choose. The encoders you stream and
-  record with are never touched.
+  on first, or one picked in the advanced settings. Tapeloop can use NVENC, Quick
+  Sync, AMF, Apple VideoToolbox and x264. Replays are encoded in HEVC where the card
+  can and in H.264 elsewhere, or in H.264 only if you choose. The encoders you stream
+  and record with are never touched.
 - Capture replay: a hotkey or a button keeps everything each buffer holds as a replay.
   Replays are written to disk as they are captured, in a Tapeloop folder inside the
   OBS recording folder, and stay across restarts. The buffers keep recording.
 - A list of replays, newest first, with tags you can filter by.
 - A player with play and pause, reverse, speeds of 0.25x, 0.5x, 0.75x, 1x and 2x,
-  frame stepping and hold-to-scrub, which speeds up to 4x while held, in the dock or in its own window. Playback reads from the buffer
-  while it still holds the replay and from disk afterwards.
+  frame stepping and hold-to-scrub, which speeds up to 4x while held, in the dock or
+  in its own window. Playback reads from the buffer while it still holds the replay
+  and from disk afterwards.
 - A sequence: the sources shown in the replay play one after another, in the order
   you set.
 - On air: a replay goes on air over the program and back to live, with a transition,
   and an optional intro and outro (video or image) set in the on-air settings.
-- Export: each source of a replay to MP4 files (one per codec) without encoding it
-  again, or the whole replay to a single `.tplp` file. Placed in a folder inside
-  another computer's Tapeloop folder, it is listed the next time OBS starts, without
-  the rest of its broadcast folder. There is no import control.
+- Export: each source of a replay to MP4 without encoding it again, in one file, or
+  in several where its codec or picture size changed during the replay, or the whole
+  replay to a single `.tplp` file. Placed in a folder inside another computer's
+  Tapeloop folder, it is listed the next time OBS starts, without the rest of its
+  broadcast folder. There is no import control.
 - Hotkeys, set in the OBS hotkey settings, for starting and stopping the buffers,
   capturing, going on and off air, play and pause, reverse, frames, speed, scrubbing,
   skipping to the next source and moving between replays.
@@ -57,12 +60,12 @@ one version to the next.
 ## Requirements
 
 - OBS Studio 32.0 or newer.
-- Windows 10 or 11, x64. macOS on Apple Silicon is planned. The macOS build
-  has not been tried on a Mac yet, and it cannot play replays or export them to MP4,
+- Windows 10 or 11, x64. macOS on Apple Silicon is planned. The macOS build has not
+  been run in OBS on a Mac yet, and it cannot play replays or export them to MP4,
   because it has no FFmpeg.
 - A hardware encoder is recommended. NVIDIA NVENC is the one tried so far; Intel Quick
-  Sync and AMD AMF are used when present but have not been tried yet. Without any of
-  them Tapeloop falls back to x264, which costs CPU time.
+  Sync and AMD AMF can be used too, but have not been tried yet. Without any of them
+  Tapeloop falls back to x264, which costs CPU time.
 
 ## Building
 
