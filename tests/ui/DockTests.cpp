@@ -2322,6 +2322,31 @@ TEST_CASE("the mini player's window hides when closed and comes back from the do
 	}
 }
 
+TEST_CASE("the mini player's window opens with the main window while the dock is closed")
+{
+	FakeBackend backend;
+	loadPlayer(backend);
+	backend.current.playerPlace = PlayerPlace::Window;
+	QWidget mainWindow;
+	TapeloopDock dock(backend, localeText(), &mainWindow);
+	CHECK_FALSE(dock.playerWindow());
+
+	mainWindow.show();
+	QApplication::processEvents();
+	CHECK_FALSE(dock.isVisible());
+	QWidget *window = dock.playerWindow();
+	REQUIRE(window);
+	CHECK(window->isVisible());
+	CHECK(window->parentWidget() == &mainWindow);
+	CHECK(window->findChild<QSlider *>("position"));
+
+	// Put back in the dock, it closes, and waits for the dock to show.
+	backend.current.playerPlace = PlayerPlace::Dock;
+	dock.refresh();
+	CHECK_FALSE(window->isVisible());
+	CHECK_FALSE(child<QWidget>(dock, "playerSlot")->findChild<QSlider *>("position"));
+}
+
 TEST_CASE("every control of the mini player can be reached with the keyboard in order")
 {
 	FakeBackend backend;

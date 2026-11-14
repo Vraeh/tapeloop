@@ -311,6 +311,9 @@ TapeloopDock::TapeloopDock(DockBackend &backend, TextLookup text, QWidget *mainW
 	playerMoved_->setSingleShot(true);
 	playerMoved_->setInterval(1000);
 	connect(playerMoved_, &QTimer::timeout, this, [this] { savePlayerGeometry(); });
+	if (mainWindow_) {
+		mainWindow_->installEventFilter(this);
+	}
 	followsOutputs_->setObjectName("followsOutputs");
 	followsOutputs_->setWordWrap(true);
 	followsOutputs_->hide();
@@ -551,11 +554,13 @@ TapeloopDock::TapeloopDock(DockBackend &backend, TextLookup text, QWidget *mainW
 		refresh();
 	});
 
-	// OBS adds docks hidden; a hidden dock has nothing to show.
+	// OBS adds docks hidden; a hidden dock has nothing to show but the player's window.
 	auto *timer = new QTimer(this);
 	connect(timer, &QTimer::timeout, this, [this] {
 		if (isVisible()) {
 			refresh();
+		} else if (playerWindow_ && playerWindow_->isVisible()) {
+			guarded([this] { updatePlayer(backend_.settings()); });
 		}
 	});
 	timer->start(1000);
@@ -639,8 +644,14 @@ void TapeloopDock::updatePlayer(const BufferSettings &settings)
 {
 	const bool inWindow = settings.playerPlace == PlayerPlace::Window;
 	showPlayer_->setVisible(inWindow);
-	// OBS adds docks hidden, before its main window shows; the player waits for the dock.
-	if (!isVisible()) {
+	if (!inWindow && playerWindow_) {
+		playerWindow_->hide();
+	}
+	// OBS adds docks hidden, before its main window shows. The player waits for what
+	// holds it: the dock, or for its own window the main window, which then opens it with
+	// the dock closed.
+	const QWidget *holder = inWindow && mainWindow_ ? mainWindow_ : this;
+	if (!holder->isVisible()) {
 		return;
 	}
 	if (player_ && player_->shows() == settings.playerShows && playerPlaced_ == settings.playerPlace) {
@@ -650,9 +661,6 @@ void TapeloopDock::updatePlayer(const BufferSettings &settings)
 	delete player_.data();
 	playerPlaced_ = settings.playerPlace;
 	if (!inWindow) {
-		if (playerWindow_) {
-			playerWindow_->hide();
-		}
 		player_ = new MiniPlayer(backend_, text_, settings.playerShows, playerSlot_);
 		playerSlot_->layout()->addWidget(player_);
 		// A layout shows a widget added to a visible parent only on the next pass of the
@@ -712,6 +720,13 @@ void TapeloopDock::showEvent(QShowEvent *event)
 
 bool TapeloopDock::eventFilter(QObject *watched, QEvent *event)
 {
+	if (watched == mainWindow_) {
+		if (event->type() == QEvent::Show) {
+			// Once the main window is on screen, for the player's window to open over it.
+			QTimer::singleShot(0, this, [this] { guarded([this] { updatePlayer(backend_.settings()); }); });
+		}
+		return QWidget::eventFilter(watched, event);
+	}
 	if (watched == playerWindow_) {
 		switch (event->type()) {
 		case QEvent::Move:

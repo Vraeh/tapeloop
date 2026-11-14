@@ -33,7 +33,7 @@ class MiniPlayer;
 // stop. While shown it reads the backend again every second. Everything follows the OBS
 // theme. In the source list, Space toggles the current source and Enter opens its
 // settings. The replay player is in the dock or in a tool window of mainWindow, as the
-// settings choose.
+// settings choose; that window opens with mainWindow, also while the dock is closed.
 class TapeloopDock : public QWidget {
 public:
 	TapeloopDock(DockBackend &backend, TextLookup text, QWidget *mainWindow = nullptr, QWidget *parent = nullptr);
