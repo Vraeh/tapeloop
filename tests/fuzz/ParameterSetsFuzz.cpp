@@ -19,9 +19,11 @@ namespace {
 
 std::vector<uint8_t> filtered(VideoCodec codec, std::span<const uint8_t> config, std::span<const uint8_t> packet)
 {
+	tapeloop::KnownParameterSets known;
+	known.assign(codec, config);
 	// One byte more than the packet, to catch a write past what the filter may use.
 	std::vector<uint8_t> out(packet.size() + 1, 0xEE);
-	const size_t written = tapeloop::copyWithoutKnownParameterSets(codec, config, packet, out);
+	const size_t written = known.copyWithout(packet, out);
 	require(written <= packet.size());
 	require(out[packet.size()] == 0xEE);
 	out.resize(written);
@@ -90,7 +92,8 @@ bool parameterSet(VideoCodec codec, std::span<const uint8_t> nal)
 
 // What the filter has to give: the packet without the parameter sets before its first
 // slice when the configuration holds each of them and something else is left, and the
-// whole packet otherwise.
+// whole packet otherwise. A configuration of at most 255 bytes holds fewer parameter sets
+// than the filter knows, so every one of them counts.
 std::vector<uint8_t> expected(VideoCodec codec, std::span<const uint8_t> config, std::span<const uint8_t> packet)
 {
 	const std::vector<uint8_t> whole(packet.begin(), packet.end());
