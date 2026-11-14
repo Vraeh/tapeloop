@@ -2322,6 +2322,46 @@ TEST_CASE("the mini player's window hides when closed and comes back from the do
 	}
 }
 
+TEST_CASE("the mini player's window takes the place each scene collection keeps")
+{
+	FakeBackend backend;
+	loadPlayer(backend);
+	backend.current.playerPlace = PlayerPlace::Window;
+	TapeloopDock dock(backend, localeText());
+	dock.show();
+	QWidget *window = dock.playerWindow();
+	REQUIRE(window);
+	window->resize(700, 500);
+	const QSize firstSize = window->size();
+	const std::string first = window->saveGeometry().toBase64().toStdString();
+	window->resize(600, 400);
+	const QSize secondSize = window->size();
+	const std::string second = window->saveGeometry().toBase64().toStdString();
+	REQUIRE(firstSize != secondSize);
+
+	// Another collection's settings put the window where that collection kept it.
+	backend.current.playerGeometry = first;
+	dock.refresh();
+	CHECK(window->size() == firstSize);
+	CHECK(backend.current.playerGeometry == first);
+
+	// Closed before the dock has seen the next collection, the window does not write the
+	// place it had over the one that collection kept.
+	backend.current.playerGeometry = second;
+	CHECK(window->close());
+	CHECK(backend.current.playerGeometry == second);
+	CHECK(window->size() == secondSize);
+
+	// A collection that shows something else does not open the window the user closed.
+	backend.current.playerShows = PlayerShows::Picture;
+	dock.refresh();
+	CHECK_FALSE(window->isVisible());
+	CHECK(window->findChild<QWidget *>("picture"));
+	CHECK_FALSE(window->findChild<QSlider *>("position"));
+	child<QPushButton>(dock, "showPlayer")->click();
+	CHECK(window->isVisible());
+}
+
 TEST_CASE("the mini player's window opens with the main window while the dock is closed")
 {
 	FakeBackend backend;

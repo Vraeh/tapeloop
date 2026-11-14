@@ -69,10 +69,12 @@ private:
 	void openAirSettings();
 	void applyAirSettings(const AirSettings &opened, const AirSettings &chosen);
 	// Builds the player again where the settings put it and with what they show, when
-	// either changed.
+	// either changed, and moves its window where they keep it.
 	void updatePlayer(const BufferSettings &settings);
 	void showPlayerWindow();
-	// Keeps where the player's window is, when it moved since it was last kept.
+	bool restorePlayerGeometry(const std::string &geometry);
+	// Keeps where the player's window is, when it moved since it was last kept, in the
+	// settings it was placed from.
 	void savePlayerGeometry();
 
 	DockBackend &backend_;
@@ -118,6 +120,9 @@ private:
 	QPointer<MiniPlayer> player_;
 	PlayerPlace playerPlaced_ = PlayerPlace::Dock;
 	QPointer<QWidget> playerWindow_;
+	// The place of the window as last taken from the settings or kept in them. Another
+	// one in the settings came with another scene collection.
+	std::string playerGeometry_;
 	// Waits for the window to stop moving before its place is kept.
 	QTimer *playerMoved_;
 	// The ids the replay list shows, newest first, zero for the rows naming a broadcast,

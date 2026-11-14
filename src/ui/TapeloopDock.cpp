@@ -654,10 +654,15 @@ void TapeloopDock::updatePlayer(const BufferSettings &settings)
 	if (!holder->isVisible()) {
 		return;
 	}
+	if (inWindow && playerWindow_ && settings.playerGeometry != playerGeometry_) {
+		restorePlayerGeometry(settings.playerGeometry);
+	}
 	if (player_ && player_->shows() == settings.playerShows && playerPlaced_ == settings.playerPlace) {
 		player_->refresh();
 		return;
 	}
+	// Only a player moving into the window opens it; one the user closed stays closed.
+	const bool opens = !player_ || playerPlaced_ != PlayerPlace::Window;
 	delete player_.data();
 	playerPlaced_ = settings.playerPlace;
 	if (!inWindow) {
@@ -675,8 +680,7 @@ void TapeloopDock::updatePlayer(const BufferSettings &settings)
 		playerWindow_->setObjectName("playerWindow");
 		playerWindow_->setWindowTitle(text_("Dock.Player.Window"));
 		new QVBoxLayout(playerWindow_);
-		if (!playerWindow_->restoreGeometry(
-			    QByteArray::fromBase64(QByteArray::fromStdString(settings.playerGeometry)))) {
+		if (!restorePlayerGeometry(settings.playerGeometry)) {
 			playerWindow_->resize(playerWindow_->sizeHint());
 		}
 		playerWindow_->installEventFilter(this);
@@ -684,7 +688,9 @@ void TapeloopDock::updatePlayer(const BufferSettings &settings)
 	player_ = new MiniPlayer(backend_, text_, settings.playerShows, playerWindow_);
 	playerWindow_->layout()->addWidget(player_);
 	player_->show();
-	playerWindow_->show();
+	if (opens) {
+		playerWindow_->show();
+	}
 }
 
 void TapeloopDock::showPlayerWindow()
@@ -697,6 +703,12 @@ void TapeloopDock::showPlayerWindow()
 	playerWindow_->activateWindow();
 }
 
+bool TapeloopDock::restorePlayerGeometry(const std::string &geometry)
+{
+	playerGeometry_ = geometry;
+	return playerWindow_->restoreGeometry(QByteArray::fromBase64(QByteArray::fromStdString(geometry)));
+}
+
 void TapeloopDock::savePlayerGeometry()
 {
 	if (!playerWindow_) {
@@ -704,10 +716,16 @@ void TapeloopDock::savePlayerGeometry()
 	}
 	guarded([this] {
 		BufferSettings settings = backend_.settings();
+		// The collection changed since the dock last looked: its place is not this one's.
+		if (settings.playerGeometry != playerGeometry_) {
+			restorePlayerGeometry(settings.playerGeometry);
+			return;
+		}
 		std::string geometry = playerWindow_->saveGeometry().toBase64().toStdString();
 		if (geometry != settings.playerGeometry) {
-			settings.playerGeometry = std::move(geometry);
+			settings.playerGeometry = geometry;
 			backend_.setSettings(settings);
+			playerGeometry_ = std::move(geometry);
 		}
 	});
 }
