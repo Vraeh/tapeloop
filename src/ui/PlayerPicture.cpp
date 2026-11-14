@@ -47,10 +47,14 @@ bool PlayerPicture::event(QEvent *event)
 
 bool PlayerPicture::eventFilter(QObject *watched, QEvent *event)
 {
-	if (watched == window_ && event->type() == QEvent::PlatformSurface &&
-	    static_cast<QPlatformSurfaceEvent *>(event)->surfaceEventType() ==
-		    QPlatformSurfaceEvent::SurfaceAboutToBeDestroyed) {
-		detach();
+	if (watched == window_) {
+		if (event->type() == QEvent::Expose) {
+			sync();
+		} else if (event->type() == QEvent::PlatformSurface &&
+			   static_cast<QPlatformSurfaceEvent *>(event)->surfaceEventType() ==
+				   QPlatformSurfaceEvent::SurfaceAboutToBeDestroyed) {
+			detach();
+		}
 	}
 	return QWidget::eventFilter(watched, event);
 }
@@ -92,8 +96,13 @@ void PlayerPicture::sync()
 		const WId window = internalWinId();
 		if (drawn && !refused_ && window != 0 && testAttribute(Qt::WA_WState_Created)) {
 			watchWindow();
-			attached_ = surface_->attach(static_cast<uintptr_t>(window), pixelWidth, pixelHeight);
-			refused_ = !attached_;
+			// As with OBS's own displays, a window not yet on screen waits for its expose
+			// event: a swap chain made on it may fail, and a refusal stands until the
+			// picture is shown again.
+			if (window_ && window_->isExposed()) {
+				attached_ = surface_->attach(static_cast<uintptr_t>(window), pixelWidth, pixelHeight);
+				refused_ = !attached_;
+			}
 		}
 		return;
 	}

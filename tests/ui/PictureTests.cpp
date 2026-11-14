@@ -33,6 +33,15 @@ uint32_t pixels(const QWidget &widget, int length)
 	return static_cast<uint32_t>(std::lround(length * widget.devicePixelRatio()));
 }
 
+// The platform puts a window on screen after show() returns, and says so in an expose
+// event.
+void showOnScreen(QWidget &window)
+{
+	window.show();
+	QApplication::processEvents();
+	REQUIRE(window.windowHandle()->isExposed());
+}
+
 } // namespace
 
 TEST_CASE("the picture draws while shown with a size and follows the widget", "[ui][picture]")
@@ -45,7 +54,7 @@ TEST_CASE("the picture draws while shown with a size and follows the widget", "[
 	const SurfaceLog &log = backend.surface;
 	CHECK(log.attaches == 0);
 
-	window.show();
+	showOnScreen(window);
 	REQUIRE(log.attached);
 	CHECK(log.enabled);
 	CHECK(log.window == picture->winId());
@@ -91,7 +100,7 @@ TEST_CASE("the picture follows its window to another screen and a new resolution
 	window.resize(400, 300);
 	auto *picture = new PlayerPicture(std::make_unique<FakeSurface>(log), &window);
 	picture->setGeometry(0, 0, 320, 180);
-	window.show();
+	showOnScreen(window);
 	REQUIRE(log.attached);
 	QWindow *native = picture->windowHandle();
 	REQUIRE(native);
@@ -114,6 +123,28 @@ TEST_CASE("the picture follows its window to another screen and a new resolution
 	CHECK(log.misuses == 0);
 }
 
+TEST_CASE("the picture waits for its window to be on screen", "[ui][picture]")
+{
+	SurfaceLog log;
+	QWidget window;
+	window.resize(400, 300);
+	auto *picture = new PlayerPicture(std::make_unique<FakeSurface>(log), &window);
+	picture->setGeometry(0, 0, 320, 180);
+	window.show();
+	REQUIRE(picture->isVisible());
+	REQUIRE_FALSE(picture->windowHandle()->isExposed());
+	CHECK(log.attaches == 0);
+
+	// Nothing else happens to the widget: the expose event alone attaches it.
+	QApplication::processEvents();
+	REQUIRE(picture->windowHandle()->isExposed());
+	CHECK(log.attaches == 1);
+	CHECK(log.attached);
+	CHECK(log.enabled);
+	CHECK(log.width == pixels(*picture, 320));
+	CHECK(log.misuses == 0);
+}
+
 TEST_CASE("the picture waits for a size before it draws", "[ui][picture]")
 {
 	SurfaceLog log;
@@ -121,10 +152,12 @@ TEST_CASE("the picture waits for a size before it draws", "[ui][picture]")
 	window.resize(400, 300);
 	auto *picture = new PlayerPicture(std::make_unique<FakeSurface>(log), &window);
 	picture->setGeometry(0, 0, 0, 0);
-	window.show();
+	showOnScreen(window);
 	CHECK(log.attaches == 0);
 
+	// A native window with no size is not on screen until the platform has its new one.
 	picture->resize(100, 50);
+	QApplication::processEvents();
 	REQUIRE(log.attached);
 	CHECK(log.enabled);
 	CHECK(log.width == pixels(*picture, 100));
@@ -138,7 +171,7 @@ TEST_CASE("the picture lets go of a window before it goes", "[ui][picture]")
 	window.resize(400, 300);
 	auto *picture = new PlayerPicture(std::make_unique<FakeSurface>(log), &window);
 	picture->setGeometry(0, 0, 320, 180);
-	window.show();
+	showOnScreen(window);
 	REQUIRE(log.attached);
 	const WId first = picture->winId();
 	bool windowThere = false;
@@ -152,7 +185,7 @@ TEST_CASE("the picture lets go of a window before it goes", "[ui][picture]")
 	CHECK_FALSE(log.attached);
 	CHECK(log.detaches == 1);
 	CHECK(windowThere);
-	window.show();
+	showOnScreen(window);
 	REQUIRE(log.attached);
 	CHECK(log.attaches == 2);
 	CHECK(log.window == picture->winId());
@@ -174,7 +207,7 @@ TEST_CASE("a surface that refuses a window is asked again when the picture is sh
 	window.resize(400, 300);
 	auto *picture = new PlayerPicture(std::make_unique<FakeSurface>(log), &window);
 	picture->setGeometry(0, 0, 320, 180);
-	window.show();
+	showOnScreen(window);
 	CHECK(log.attaches == 1);
 	CHECK_FALSE(log.attached);
 	picture->resize(200, 100);
