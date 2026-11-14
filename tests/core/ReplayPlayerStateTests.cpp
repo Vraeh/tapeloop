@@ -9,12 +9,19 @@
 
 #include <catch2/catch_test_macros.hpp>
 
+#include <chrono>
+#include <condition_variable>
 #include <cstddef>
 #include <cstdint>
+#include <cstdio>
+#include <cstdlib>
 #include <limits>
+#include <mutex>
 #include <new>
 #include <string>
 #include <string_view>
+#include <thread>
+#include <utility>
 #include <vector>
 
 using tapeloop::AirConfig;
@@ -42,6 +49,39 @@ std::vector<std::string> keysOf(const ReplaySequence &sequence)
 	}
 	return keys;
 }
+
+// Ends the run should the test outlive `limit`, as a work bound: waiting for code that
+// takes hours to fail would hold up every check for those hours.
+class Watchdog {
+public:
+	explicit Watchdog(std::chrono::seconds limit)
+		: thread_([this, limit] {
+			  std::unique_lock lock(mutex_);
+			  if (!done_.wait_for(lock, limit, [this] { return finished_; })) {
+				  std::fputs("Watchdog: the test ran past its limit\n", stderr);
+				  std::_Exit(EXIT_FAILURE);
+			  }
+		  })
+	{
+	}
+	~Watchdog()
+	{
+		{
+			const std::lock_guard lock(mutex_);
+			finished_ = true;
+		}
+		done_.notify_one();
+		thread_.join();
+	}
+	Watchdog(const Watchdog &) = delete;
+	Watchdog &operator=(const Watchdog &) = delete;
+
+private:
+	std::mutex mutex_;
+	std::condition_variable done_;
+	bool finished_ = false;
+	std::thread thread_;
+};
 
 // Ends whatever is on air, as the caller would once it has played.
 void endPart(ReplayPlayerState &player)
@@ -79,6 +119,61 @@ TEST_CASE("ReplaySequence keeps an order that can change")
 	CHECK(sequence.nextShown(1, available) == 2u);
 	CHECK(sequence.nextShown(0, std::vector<std::string>{"c"}) == 2u);
 	CHECK_FALSE(sequence.nextShown(3, available));
+}
+
+TEST_CASE("ReplaySequence takes a replay with many sources in n log n")
+{
+	// Nothing but the size of its index bounds the sources a replay file brings. Removing
+	// duplicates or looking each source up with a pass over the list takes some 10^11 key
+	// comparisons here, over eight minutes even at -O2, where the sorted keys take under 20
+	// seconds under TSan: the watchdog's minute and a half tells the two apart.
+	constexpr size_t kSources = 300'000;
+	auto keyOf = [](size_t index) {
+		std::string key = std::to_string(index);
+		return "source-" + std::string(8 - key.size(), '0') + key;
+	};
+	std::vector<std::string> expected;
+	std::vector<SequenceEntry> list;
+	for (size_t i = 0; i < kSources; ++i) {
+		// A stride prime to the count visits every key once, out of order.
+		expected.push_back(keyOf(i * 7919 % kSources));
+		list.push_back({expected.back(), true});
+		if (i % 3 == 2) {
+			list.push_back({expected[i / 2], false});
+		}
+		if (i % 1000 == 0) {
+			list.push_back({"", true});
+		}
+	}
+
+	ReplaySequence sequence;
+	{
+		const Watchdog watchdog(std::chrono::seconds(90));
+		sequence.setEntries(std::move(list));
+		CHECK(keysOf(sequence) == expected);
+		size_t misplaced = 0;
+		for (size_t i = 0; i < expected.size(); ++i) {
+			if (!sequence.entries()[i].shown || sequence.indexOf(expected[i]) != i) {
+				++misplaced;
+			}
+		}
+		CHECK(misplaced == 0);
+		CHECK_FALSE(sequence.indexOf(keyOf(kSources)));
+		CHECK_FALSE(sequence.indexOf(""));
+
+		// Every place a move shifts is found again where it went.
+		REQUIRE(sequence.move(10, kSources - 10));
+		REQUIRE(sequence.move(kSources - 1, 0));
+		CHECK(sequence.entries()[0].sourceKey == expected[kSources - 1]);
+		CHECK(sequence.entries()[kSources - 9].sourceKey == expected[10]);
+		misplaced = 0;
+		for (size_t i = 0; i < kSources; ++i) {
+			if (sequence.indexOf(sequence.entries()[i].sourceKey) != i) {
+				++misplaced;
+			}
+		}
+		CHECK(misplaced == 0);
+	}
 }
 
 TEST_CASE("ReplayPlayerState plays every shown source with a clip, in list order")

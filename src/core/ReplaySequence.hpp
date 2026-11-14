@@ -36,6 +36,9 @@ public:
 
 private:
 	std::vector<SequenceEntry> entries_;
+	// The indexes of entries_ in key order, so that a replay with many sources can be
+	// looked up source by source without a pass over the list for each.
+	std::vector<size_t> byKey_;
 };
 
 } // namespace tapeloop
