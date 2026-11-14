@@ -358,6 +358,8 @@ TEST_CASE_METHOD(ObsFixture, "a dock edit waits for the replay on air to go off 
 		std::chrono::seconds(60)));
 	const uint64_t replay = backend.captureReplay();
 	REQUIRE(replay != 0);
+	// Cued as it is captured, and put on air from there.
+	CHECK(sequence.cuedReplay() == replay);
 	REQUIRE(sequence.putOnAir(replay));
 	REQUIRE(sequence.air().onAir());
 

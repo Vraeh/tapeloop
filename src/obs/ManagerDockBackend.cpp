@@ -94,6 +94,23 @@ std::vector<ui::DockSource> ManagerDockBackend::sources() const
 	return sources;
 }
 
+uint64_t ManagerDockBackend::captureReplay()
+{
+	const uint64_t id = manager_.captureReplay();
+	if (sequence_) {
+		sequence_->cueCurrent();
+	}
+	return id;
+}
+
+void ManagerDockBackend::pickReplay(uint64_t id)
+{
+	manager_.pickReplay(id);
+	if (sequence_) {
+		sequence_->cueCurrent();
+	}
+}
+
 bool ManagerDockBackend::setShown(const std::string &uuid, bool shown)
 {
 	if (!sequence_) {

@@ -246,19 +246,23 @@ void FrontendBridge::handleTick(void *data, float seconds) noexcept
 		return;
 	}
 	bridge.sincePoll_ = 0.0f;
-	bridge.onUiThread([](CaptureManager &manager) { manager.poll(); });
+	bridge.onUiThread([](FrontendBridge &self) {
+		self.manager_->poll();
+		// What the poll changed may change the current replay.
+		self.sequence_->cueCurrent();
+	});
 }
 
-void FrontendBridge::onUiThread(void (*work)(CaptureManager &)) noexcept
+void FrontendBridge::onUiThread(void (*work)(FrontendBridge &)) noexcept
 {
 	std::unique_ptr<std::function<void()>> task(new (std::nothrow) std::function<void()>);
 	if (!task) {
 		return;
 	}
 	try {
-		*task = [work, manager = manager_.get(), alive = std::weak_ptr<int>(alive_)] {
+		*task = [work, this, alive = std::weak_ptr<int>(alive_)] {
 			if (alive.lock()) {
-				work(*manager);
+				work(*this);
 			}
 		};
 	} catch (...) {

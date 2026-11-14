@@ -78,10 +78,10 @@ private:
 };
 
 // What each hotkey does: the buffers and the replay list through the manager, the replay
-// on air through the sequence. The controls of the player act only while a source is on
-// air. Newer and older move the replay that goes on air next through every replay that
-// is not damaged, newest first. None of them does anything while the sequence is closed.
-// UI thread.
+// on air through the sequence. The controls of the player act while a source is on air,
+// and off air on the replay cued. Newer and older move the replay that goes on air next
+// through every replay that is not damaged, newest first, and the cue with it, as does a
+// capture. None of them does anything while the sequence is closed. UI thread.
 void runHotkey(HotkeyAction action, bool pressed, CaptureManager &manager, SequencePlayer &sequence);
 
 } // namespace tapeloop::obs
