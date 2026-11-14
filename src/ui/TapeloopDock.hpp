@@ -6,6 +6,7 @@
 #include "ui/DockBackend.hpp"
 #include "ui/DockText.hpp"
 
+#include <QPointer>
 #include <QWidget>
 
 #include <optional>
@@ -21,20 +22,32 @@ class QListWidget;
 class QPushButton;
 class QSpinBox;
 class QTableWidget;
+class QTimer;
 
 namespace tapeloop::ui {
+
+class MiniPlayer;
 
 // The Tapeloop dock: the video sources of the scene collection with a checkbox each and
 // the state of the selected ones, the global buffer settings, and the manual start and
 // stop. While shown it reads the backend again every second. Everything follows the OBS
 // theme. In the source list, Space toggles the current source and Enter opens its
-// settings.
+// settings. The replay player is in the dock or in a tool window of mainWindow, as the
+// settings choose; that window opens with mainWindow, also while the dock is closed.
 class TapeloopDock : public QWidget {
 public:
-	TapeloopDock(DockBackend &backend, TextLookup text, QWidget *parent = nullptr);
+	TapeloopDock(DockBackend &backend, TextLookup text, QWidget *mainWindow = nullptr, QWidget *parent = nullptr);
+	~TapeloopDock() override;
+
+	TapeloopDock(const TapeloopDock &) = delete;
+	TapeloopDock &operator=(const TapeloopDock &) = delete;
+	TapeloopDock(TapeloopDock &&) = delete;
+	TapeloopDock &operator=(TapeloopDock &&) = delete;
 
 	// Reads the backend again.
 	void refresh();
+	// The player's own window, null until the settings first put the player there.
+	QWidget *playerWindow() const { return playerWindow_; }
 
 protected:
 	void showEvent(QShowEvent *event) override;
@@ -55,6 +68,14 @@ private:
 	void applySourceSettings(const std::string &uuid, const SourceSettings &chosen);
 	void openAirSettings();
 	void applyAirSettings(const AirSettings &opened, const AirSettings &chosen);
+	// Builds the player again where the settings put it and with what they show, when
+	// either changed, and moves its window where they keep it.
+	void updatePlayer(const BufferSettings &settings);
+	void showPlayerWindow();
+	bool restorePlayerGeometry(const std::string &geometry);
+	// Keeps where the player's window is, when it moved since it was last kept, in the
+	// settings it was placed from.
+	void savePlayerGeometry();
 
 	DockBackend &backend_;
 	TextLookup text_;
@@ -68,6 +89,8 @@ private:
 	QComboBox *resolution_;
 	QCheckBox *startWithOutputs_;
 	QCheckBox *activateOffAir_;
+	QComboBox *playerPlace_;
+	QComboBox *playerShows_;
 	QCheckBox *forceH264_;
 	QCheckBox *advanced_;
 	QWidget *advancedSettings_;
@@ -89,8 +112,19 @@ private:
 	QPushButton *removeTag_;
 	QPushButton *exportMp4_;
 	QPushButton *exportReplay_;
+	QPushButton *showPlayer_;
+	QWidget *playerSlot_;
 	QLabel *exportStatus_;
 	QLabel *airStatus_;
+	QWidget *mainWindow_;
+	QPointer<MiniPlayer> player_;
+	PlayerPlace playerPlaced_ = PlayerPlace::Dock;
+	QPointer<QWidget> playerWindow_;
+	// The place of the window as last taken from the settings or kept in them. Another
+	// one in the settings came with another scene collection.
+	std::string playerGeometry_;
+	// Waits for the window to stop moving before its place is kept.
+	QTimer *playerMoved_;
 	// The ids the replay list shows, newest first, zero for the rows naming a broadcast,
 	// and the text and tooltip of each.
 	std::vector<uint64_t> shownReplays_;

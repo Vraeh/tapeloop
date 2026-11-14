@@ -2256,6 +2256,31 @@ TEST_CASE("the advanced switch is saved with the settings", "[obs][manager]")
 	CHECK_FALSE(readSettingsData(data).showAdvanced);
 }
 
+TEST_CASE("the mini player settings are saved with the settings", "[obs][manager]")
+{
+	BufferSettings settings;
+	settings.playerPlace = tapeloop::PlayerPlace::Window;
+	settings.playerShows = tapeloop::PlayerShows::Picture;
+	settings.playerGeometry = "AdnQywADAAA=";
+	OBSDataAutoRelease data = createSettingsData(tapeloop::saveSettings(settings));
+	CHECK(std::string(obs_data_get_string(data, "player_place")) == "window");
+	CHECK(std::string(obs_data_get_string(data, "player_shows")) == "picture");
+	const std::optional<BufferSettings> loaded = tapeloop::loadSettings(readSettingsData(data));
+	REQUIRE(loaded);
+	CHECK(loaded->playerPlace == settings.playerPlace);
+	CHECK(loaded->playerShows == settings.playerShows);
+	CHECK(loaded->playerGeometry == settings.playerGeometry);
+	// Settings saved before the mini player put it in the dock with both parts.
+	obs_data_erase(data, "player_place");
+	obs_data_erase(data, "player_shows");
+	obs_data_erase(data, "player_geometry");
+	const std::optional<BufferSettings> older = tapeloop::loadSettings(readSettingsData(data));
+	REQUIRE(older);
+	CHECK(older->playerPlace == tapeloop::PlayerPlace::Dock);
+	CHECK(older->playerShows == tapeloop::PlayerShows::Both);
+	CHECK(older->playerGeometry.empty());
+}
+
 TEST_CASE("settings saved before the other-adapter setting allow other adapters", "[obs][manager]")
 {
 	OBSDataAutoRelease data = createSettingsData(tapeloop::saveSettings(BufferSettings{}));

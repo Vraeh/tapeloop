@@ -32,7 +32,8 @@ public:
 	bool running() const override { return manager_.running(); }
 	bool manualControlEnabled() const override { return manager_.manualControlEnabled(); }
 	bool toggleRunning() override { return manager_.running() ? manager_.manualStop() : manager_.manualStart(); }
-	uint64_t captureReplay() override { return manager_.captureReplay(); }
+	// The cue follows the replay captured or picked.
+	uint64_t captureReplay() override;
 	std::vector<ui::DockReplay> replays(const std::string &tag = {}) const override;
 	std::vector<std::string> replayTags() const override;
 	uint64_t physicalMemory() const override { return manager_.physicalMemory(); }
@@ -43,7 +44,7 @@ public:
 	bool deleteTag(const std::string &tag) override { return manager_.deleteReplayTag(tag); }
 	uint64_t currentReplay() const override { return manager_.library().current(); }
 	uint64_t lastCapture() const override { return manager_.library().lastCaptured(); }
-	void pickReplay(uint64_t id) override { manager_.pickReplay(id); }
+	void pickReplay(uint64_t id) override;
 	AirRefusal airRefusal() const override { return sequence_ ? sequence_->airRefusal() : AirRefusal::None; }
 	std::string missingIntro() const override
 	{
@@ -56,6 +57,10 @@ public:
 	bool canExport(ExportFormat format) const override { return manager_.canExport(format); }
 	bool exportReplay(uint64_t id, ExportFormat format) override { return manager_.exportReplay(id, format); }
 	std::vector<ui::DockExport> exports() const override;
+	std::unique_ptr<ui::PictureSurface> pictureSurface() override;
+	ui::DockPlayer player() const override;
+	void controlPlayer(ui::PlayerControl control, bool pressed) override;
+	void seekPlayer(Nanoseconds position) override;
 
 private:
 	// Adds the listed sources the sequence does not have yet after its own, in the order

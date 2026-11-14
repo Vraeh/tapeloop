@@ -311,24 +311,34 @@ TEST_CASE_METHOD(ObsFixture, "hotkeys run the buffers, pick replays and play the
 	const std::vector<uint64_t> replays = manager.library().list();
 	REQUIRE(replays.size() == 2);
 	CHECK(manager.library().current() == replays[0]);
+	// Each capture is cued as it becomes the current replay.
+	CHECK(sequence->cuedReplay() == replays[0]);
 
-	// Older and newer stop at the ends of the list.
+	// Older and newer stop at the ends of the list, and the cue follows.
 	press(HotkeyAction::NewerReplay);
 	CHECK(manager.library().current() == replays[0]);
 	press(HotkeyAction::OlderReplay);
 	CHECK(manager.library().current() == replays[1]);
+	CHECK(sequence->cuedReplay() == replays[1]);
 	press(HotkeyAction::OlderReplay);
 	CHECK(manager.library().current() == replays[1]);
 	press(HotkeyAction::NewerReplay);
 	CHECK(manager.library().current() == replays[0]);
+	CHECK(sequence->cuedReplay() == replays[0]);
+	CHECK(sequence->cuedSource() == uuid);
 
-	// The player's controls wait for a replay on air.
+	// Off air, the player's controls act on the replay cued, which goes on air as they left
+	// it.
 	press(HotkeyAction::Faster);
+	REQUIRE(playerUntil(*sequence, [](const PlayerState &state) { return state.rate == 2000; }));
+	CHECK(sequence->state().phase() == AirPhase::Live);
 	press(HotkeyAction::PutOnAir);
 	REQUIRE(sequence->state().phase() == AirPhase::Source);
 	CHECK(sequence->state().source() == uuid);
 	REQUIRE(playerUntil(*sequence, [](const PlayerState &state) { return state.loaded && state.playing; }));
-	CHECK(sequence->player()->state().rate == 1000);
+	CHECK(sequence->player()->state().rate == 2000);
+	press(HotkeyAction::NormalSpeed);
+	REQUIRE(playerUntil(*sequence, [](const PlayerState &state) { return state.rate == 1000; }));
 
 	// Paused first, so that the clip, a few seconds long, stays on air.
 	press(HotkeyAction::PlayPause);
@@ -361,7 +371,10 @@ TEST_CASE_METHOD(ObsFixture, "hotkeys run the buffers, pick replays and play the
 	CHECK(sequence->state().phase() == AirPhase::Source);
 	press(HotkeyAction::TakeOffAir);
 	CHECK(sequence->state().phase() == AirPhase::Live);
-	REQUIRE(playerUntil(*sequence, [](const PlayerState &state) { return !state.loaded; }));
+	CHECK(sequence->cuedReplay() == replays[0]);
+	REQUIRE(playerUntil(*sequence, [](const PlayerState &state) {
+		return state.loaded && !state.playing && state.frame == 0 && state.rate == 1000;
+	}));
 
 	// Presses that reach the UI thread after the collection went away change nothing.
 	Keys::press(*hotkeys, HotkeyAction::PutOnAir);
@@ -423,8 +436,11 @@ TEST_CASE_METHOD(ObsFixture, "newer and older step over a damaged replay", "[obs
 	CHECK(manager.library().current() == replays[0]);
 	press(HotkeyAction::OlderReplay);
 	CHECK(manager.library().current() == replays[2]);
+	// Read from its files on the way.
+	CHECK(sequence->cuedReplay() == replays[2]);
 	press(HotkeyAction::NewerReplay);
 	CHECK(manager.library().current() == replays[0]);
+	CHECK(sequence->cuedReplay() == replays[0]);
 
 	hotkeys.reset();
 	sequence.reset();

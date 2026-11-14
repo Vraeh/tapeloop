@@ -787,6 +787,46 @@ TEST_CASE_METHOD(ObsFixture, "a replay player shows nothing of the clip before a
 	CHECK_FALSE(screen.draw(player).drawn);
 }
 
+TEST_CASE_METHOD(ObsFixture, "a seek from the start given with a load lands in the new clip", "[obs][player]")
+{
+	const Clip clip = captureClip(4);
+	REQUIRE(clip.gops().size() >= 4);
+	const std::vector<ExpectedFrame> expected = expectedFrames(clip);
+	const Clip later({clip.gops().begin() + 2, clip.gops().end()}, Nanoseconds::min(), Nanoseconds::max());
+	const std::vector<ExpectedFrame> laterExpected = expectedFrames(later);
+	REQUIRE(laterExpected.size() > 3);
+	REQUIRE(laterExpected.front().time > expected.front().time);
+
+	ReplayPlayer player(makeDecoder);
+	REQUIRE(player.load(gopsOf(clip)));
+	player.tick(kTick);
+	CHECK(player.state().start == expected.front().time);
+
+	// state() still describes the clip before, whose start is earlier.
+	REQUIRE(player.load(gopsOf(later)));
+	player.seekFromStart(laterExpected[3].time - laterExpected.front().time);
+	player.tick(kTick);
+	PlayerState state = player.state();
+	CHECK(state.start == laterExpected.front().time);
+	CHECK(state.frame == 3);
+	CHECK(state.position == laterExpected[3].time);
+
+	// Past either end it stops there, as seek() does.
+	player.seekFromStart(-std::chrono::seconds(5));
+	player.tick(kTick);
+	CHECK(player.state().frame == 0);
+	player.seekFromStart(Nanoseconds::max());
+	player.tick(kTick);
+	CHECK(player.state().frame == laterExpected.size() - 1);
+
+	// With nothing loaded there is nothing to move.
+	REQUIRE(player.load(nullptr));
+	player.seekFromStart(std::chrono::seconds(1));
+	player.tick(kTick);
+	CHECK_FALSE(player.state().loaded);
+	CHECK(player.state().position.count() == 0);
+}
+
 TEST_CASE_METHOD(ObsFixture, "a replay player says when its clip played forward to the end", "[obs][player]")
 {
 	const Clip clip = captureClip(2);

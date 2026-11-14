@@ -19,6 +19,7 @@
 #include <cstddef>
 #include <cstdint>
 #include <memory>
+#include <optional>
 #include <string>
 #include <string_view>
 #include <vector>
@@ -28,12 +29,16 @@ namespace tapeloop::obs {
 // Plays the shown sources of one replay after another through a replay source of its
 // own, as a ReplayPlayerState decides: each source from the first frame of its clip at
 // the speed the last one had, the next one once the clip played forward to its end, and
-// back to live after the last, with nothing loaded once the way back is over. An
-// AirComposition shows each part on air: the intro and outro when there are any, the
-// replay source in between, and the way back. Everything here runs on the UI thread
-// except the player's controls, which may come from anywhere. A clip's end is seen on
-// the graphics thread and handed to the UI thread, which ignores it once the source it
-// was for is no longer on air or someone moved the playhead off the end.
+// back to live after the last. An AirComposition shows each part on air: the intro and
+// outro when there are any, the replay source in between, and the way back. With nothing
+// on air, the library's current replay is cued: the replay source holds the clip of the
+// first source it would show, paused on its first frame at real time, for a look at it
+// off air and for the controls, and nothing of it goes on the channel. Once the way back
+// is over the current replay is cued again, and with none nothing is loaded. Everything
+// here runs on the UI thread except the player's controls, which may come from anywhere.
+// A clip's end is seen on the graphics thread and handed to the UI thread, which ignores
+// it once the source it was for is no longer on air or someone moved the playhead off
+// the end.
 class SequencePlayer : private AirListener {
 public:
 	// Plays the library's replays, and the library outlives it. Creates the replay source;
@@ -58,7 +63,8 @@ public:
 	// The user's transitions; null, or one that outlives the sequence player.
 	void setTransitions(const TransitionCatalog *catalog) noexcept { air_.setCatalog(catalog); }
 
-	// As ReplayPlayerState's, live while a replay plays.
+	// As ReplayPlayerState's, live while a replay plays. Off air, the cue follows the
+	// first source shown.
 	void setEntries(std::vector<SequenceEntry> entries);
 	bool move(size_t from, size_t to);
 	bool setShown(std::string_view sourceKey, bool shown);
@@ -68,7 +74,8 @@ public:
 	// is left out. False while closed or a replay is on air, while another source holds
 	// the channel the replay goes on air through or takes it during this call, for an
 	// unknown or damaged replay or one whose index cannot be read, and when none of its
-	// shown sources has a clip.
+	// shown sources has a clip. The replay cued goes on from where the playhead of its
+	// first source stands, forward at the speed it has.
 	bool putOnAir(uint64_t replay);
 	// What the last putOnAir() found, kept for a dock that is not looking when a hotkey
 	// asks. None once a later one is not refused for one of these reasons, and on close().
@@ -92,11 +99,27 @@ public:
 	// unloaded.
 	void destroyAir();
 
+	// Cues the library's current replay while nothing is on air, or unloads the cue when
+	// there is none to show. For whatever may change the current replay: the list and
+	// the end of the way back cue on their own. Not while closed, nor for a replay that
+	// is damaged, cannot be read or has no source to show.
+	void cueCurrent();
+	// Zero and empty while nothing is cued.
+	uint64_t cuedReplay() const noexcept { return cued_; }
+	std::string_view cuedSource() const noexcept { return cuedSource_; }
+
 private:
 	void refuseChannel(uint64_t replay);
 	// What follows the state's part on air, if it changed: the clip of a source, or else
-	// nothing loaded.
+	// nothing loaded, and the cue once the replay is live.
 	void follow();
+	// Unloads the cue; uncue() also forgets the replay it looked at.
+	void unloadCue() noexcept;
+	void uncue() noexcept;
+	// The source of the replay in index_ that putOnAir() would show first.
+	std::optional<std::string> firstShown() const;
+	// Zero when it cannot be loaded.
+	uint64_t load(std::string_view sourceKey);
 	// Loads the source's clip and plays it; zero when it cannot be loaded.
 	uint64_t play(std::string_view sourceKey);
 	// Keeps the speed of the source on air for the next one, before anything that may
@@ -119,16 +142,24 @@ private:
 	// The token of the part follow() last set up, and the clip it loaded for a source.
 	uint64_t token_ = 0;
 	uint64_t clip_ = 0;
-	// The replay on air. Its files are shared with the clips of its sources, which read
-	// their GOPs on the player's decoding thread.
+	// The replay on air, or else the one the cue looked at last, which is not read again
+	// while it stays current. Its files are shared with the clips of its sources, which
+	// read their GOPs on the player's decoding thread.
 	uint64_t replay_ = 0;
 	std::shared_ptr<const ReplayFiles> files_;
 	std::shared_ptr<const ReplayIndex> index_;
 	std::vector<std::vector<std::weak_ptr<const Gop>>> live_;
-	// Set while a source plays, so that the graphics thread looks for its end only then.
-	// Relaxed is enough: the flag only gates a look at the player's state, which the
-	// player's own lock orders. A stale value costs a tick's delay, or an end that the UI
-	// thread checks again and ignores.
+	uint64_t cued_ = 0;
+	std::string cuedSource_;
+	// The cued clip, which the replay put on air keeps for its first source through the
+	// intro.
+	uint64_t carriedClip_ = 0;
+	std::string carriedSource_;
+	// Set while a source plays or a clip is cued, so that the graphics thread looks for its
+	// end only then; an end off air is seen and ignored, so that it is not taken for a new
+	// one once the clip goes on air. Relaxed is enough: the flag only gates a look at the
+	// player's state, which the player's own lock orders. A stale value costs a tick's
+	// delay, or an end that the UI thread checks again and ignores.
 	std::atomic<bool> watching_{false};
 	// The graphics thread only: the clip and end it saw last.
 	uint64_t seenClip_ = 0;

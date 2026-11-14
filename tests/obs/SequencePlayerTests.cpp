@@ -35,6 +35,7 @@
 #include <condition_variable>
 #include <cstddef>
 #include <cstdint>
+#include <cstdlib>
 #include <filesystem>
 #include <fstream>
 #include <functional>
@@ -45,6 +46,7 @@
 #include <span>
 #include <stdexcept>
 #include <string>
+#include <string_view>
 #include <thread>
 #include <utility>
 #include <vector>
@@ -293,6 +295,22 @@ std::string playing(SequencePlayer &sequence)
 	REQUIRE(playerUntil(sequence, [](const PlayerState &state) { return state.loaded && state.playing; }));
 	CHECK(sequence.state().token() == token);
 	return std::string(sequence.state().source());
+}
+
+// Whether, with nothing on air, the sequence comes to cue that source of the replay, and the
+// player to hold a clip loaded after the one given, paused on its first frame at real time.
+// A cue after another source took the channel comes with the UI task that says so.
+bool cuedOn(const SequencePlayer &sequence, uint64_t replay, std::string_view source, uint64_t after = 0)
+{
+	if (!runUntil([&] {
+		    return sequence.state().phase() == AirPhase::Live && sequence.cuedReplay() == replay &&
+			   sequence.cuedSource() == source;
+	    })) {
+		return false;
+	}
+	return playerUntil(sequence, [&](const PlayerState &state) {
+		return state.clip > after && state.loaded && !state.playing && state.frame == 0 && state.rate == 1000;
+	});
 }
 
 std::vector<std::string> keysOf(const SequencePlayer &sequence)
@@ -837,7 +855,8 @@ TEST_CASE_METHOD(ObsFixture, "a sequence plays the shown sources of a replay in 
 		return sequence->state().phase() == AirPhase::Live;
 	}));
 	CHECK(order == std::vector<std::string>{"c", "a", "b"});
-	REQUIRE(playerUntil(*sequence, [](const PlayerState &state) { return !state.loaded; }));
+	// Back to live, the replay, still the current one, is cued on the first source it shows.
+	CHECK(cuedOn(*sequence, captured.id(), "c"));
 
 	// Another goes on air from the start of the list.
 	REQUIRE(sequence->putOnAir(captured.id()));
@@ -880,7 +899,7 @@ TEST_CASE_METHOD(ObsFixture, "a sequence follows the list as it changes while a 
 	// So does a list without it; nothing followed it, so the replay is over.
 	sequence->setEntries({{"b", true}, {"a", true}, {"d", false}});
 	CHECK(sequence->state().phase() == AirPhase::Live);
-	REQUIRE(playerUntil(*sequence, [](const PlayerState &state) { return !state.loaded; }));
+	CHECK(cuedOn(*sequence, captured.id(), "b"));
 	CHECK_FALSE(sequence->setShown("c", true));
 
 	sequence.reset();
@@ -997,10 +1016,11 @@ TEST_CASE_METHOD(ObsFixture, "a sequence goes back to live when cut short, and n
 	sequence->player()->play();
 	REQUIRE(runUntil([&] { return sequence->state().source() == "b"; }));
 	CHECK(playing(*sequence) == "b");
+	const uint64_t onAir = sequence->player()->state().clip;
 
 	sequence->takeOffAir();
 	CHECK(sequence->state().phase() == AirPhase::Live);
-	REQUIRE(playerUntil(*sequence, [](const PlayerState &state) { return !state.loaded; }));
+	CHECK(cuedOn(*sequence, captured.id(), "a", onAir));
 	sequence->skip();
 	CHECK(sequence->state().phase() == AirPhase::Live);
 
@@ -1166,7 +1186,9 @@ TEST_CASE_METHOD(ObsFixture, "a replay that finds the channel taken on its way o
 	CHECK(setup.phase() == AirPhase::Live);
 	CHECK_FALSE(setup.sequence->air().onAir());
 	CHECK(channelName() == "Another plugin");
-	CHECK(playerUntil(*setup.sequence, [](const PlayerState &state) { return !state.loaded; }));
+	// Cued again, off the channel.
+	CHECK(cuedOn(*setup.sequence, setup.captured.id(), "a"));
+	CHECK(channelName() == "Another plugin");
 
 	obs_set_output_source(kAirChannel, nullptr);
 	setup.putOnAir();
@@ -1182,6 +1204,15 @@ TEST_CASE_METHOD(ObsFixture, "a replay out of memory on its way on air does not 
 	}
 	registerFade();
 	AirSetup setup;
+	std::optional<Captured> newer;
+	SECTION("with another replay cued")
+	{
+		// So that a clip of the replay is loaded each time.
+		newer.emplace(setup.library, std::vector<std::string>{"z"}, 2);
+	}
+	SECTION("with the replay cued") {}
+	setup.sequence->cueCurrent();
+	REQUIRE(setup.sequence->cuedReplay() != 0);
 	bool leftLive = false;
 	for (size_t skip = 0;; ++skip) {
 		CAPTURE(skip);
@@ -1210,7 +1241,10 @@ TEST_CASE_METHOD(ObsFixture, "a replay out of memory on its way on air does not 
 		}
 	}
 	// No clip could load in at least one of these, which is what the channel is told from.
-	CHECK(leftLive);
+	// The replay cued has its clip already.
+	if (newer) {
+		CHECK(leftLive);
+	}
 }
 
 TEST_CASE_METHOD(ObsFixture, "a closed sequence goes back to live and forgets its list until opened", "[obs][sequence]")
@@ -1570,6 +1604,7 @@ TEST_CASE_METHOD(ObsFixture, "a replay whose channel another source takes goes b
 	const Captured captured(library, {"a"}, 120);
 	REQUIRE(sequence->putOnAir(captured.id()));
 	CHECK(playing(*sequence) == "a");
+	const uint64_t onAir = sequence->player()->state().clip;
 
 	const OBSSourceAutoRelease other =
 		obs_source_create_private(tapeloop::test::kTestPatternId, "Another plugin", nullptr);
@@ -1578,7 +1613,8 @@ TEST_CASE_METHOD(ObsFixture, "a replay whose channel another source takes goes b
 	REQUIRE(runUntil([&] { return sequence->state().phase() == AirPhase::Live; }));
 	CHECK_FALSE(sequence->air().onAir());
 	CHECK(channelName() == "Another plugin");
-	REQUIRE(playerUntil(*sequence, [](const PlayerState &state) { return !state.loaded; }));
+	CHECK(cuedOn(*sequence, captured.id(), "a", onAir));
+	CHECK(channelName() == "Another plugin");
 
 	// The channel is the other source's until it lets go.
 	CHECK_FALSE(sequence->putOnAir(captured.id()));
@@ -2268,10 +2304,12 @@ TEST_CASE_METHOD(ObsFixture, "without OBS's fade, a replay cuts on air and off",
 		CHECK(onChannel.Get() == sequence->source());
 	}
 	CHECK(playing(*sequence) == "a");
+	const uint64_t onAir = sequence->player()->state().clip;
 	sequence->takeOffAir();
 	CHECK(sequence->state().phase() == AirPhase::Live);
 	CHECK(channelName().empty());
-	REQUIRE(playerUntil(*sequence, [](const PlayerState &state) { return !state.loaded; }));
+	CHECK(cuedOn(*sequence, captured.id(), "a", onAir));
+	CHECK(channelName().empty());
 
 	sequence.reset();
 	obs_wait_for_destroy_queue();
@@ -2485,6 +2523,7 @@ TEST_CASE_METHOD(ObsFixture,
 	AirSetup setup;
 	setup.putOnAir();
 	CHECK(playing(*setup.sequence) == "a");
+	const uint64_t onAir = setup.sequence->player()->state().clip;
 	const tapeloop::test::LogCounter said("Another source took the replay's channel");
 	const OBSSourceAutoRelease other =
 		obs_source_create_private(tapeloop::test::kTestPatternId, "Another plugin", nullptr);
@@ -2497,7 +2536,7 @@ TEST_CASE_METHOD(ObsFixture,
 	CHECK_FALSE(setup.leaving());
 	CHECK_FALSE(setup.sequence->air().onAir());
 	CHECK(channelName() == "Another plugin");
-	CHECK(playerUntil(*setup.sequence, [](const PlayerState &state) { return !state.loaded; }));
+	CHECK(cuedOn(*setup.sequence, setup.captured.id(), "a", onAir));
 	CHECK(holdsFor(100ms, [] { return channelName() == "Another plugin"; }));
 	// The task that was waiting finds nothing left to do.
 	CHECK(said.lines == 1);
@@ -2513,6 +2552,7 @@ TEST_CASE_METHOD(ObsFixture, "an outro just after another source took the channe
 	setup.sequence->setAir(air);
 	setup.putOnAir();
 	CHECK(playing(*setup.sequence) == "a");
+	const uint64_t onAir = setup.sequence->player()->state().clip;
 	const OBSSourceAutoRelease other =
 		obs_source_create_private(tapeloop::test::kTestPatternId, "Another plugin", nullptr);
 	REQUIRE(other);
@@ -2523,7 +2563,7 @@ TEST_CASE_METHOD(ObsFixture, "an outro just after another source took the channe
 	CHECK(setup.phase() == AirPhase::Live);
 	CHECK_FALSE(setup.sequence->air().onAir());
 	CHECK(channelName() == "Another plugin");
-	CHECK(playerUntil(*setup.sequence, [](const PlayerState &state) { return !state.loaded; }));
+	CHECK(cuedOn(*setup.sequence, setup.captured.id(), "a", onAir));
 	CHECK(holdsFor(100ms, [] { return channelName() == "Another plugin"; }));
 	obs_set_output_source(kAirChannel, nullptr);
 }
@@ -2547,7 +2587,7 @@ TEST_CASE_METHOD(ObsFixture, "a skip by a cut just after another source took the
 	CHECK(setup.phase() == AirPhase::Live);
 	CHECK_FALSE(setup.sequence->air().onAir());
 	CHECK(channelName() == "Another plugin");
-	CHECK(playerUntil(*setup.sequence, [](const PlayerState &state) { return !state.loaded; }));
+	CHECK(cuedOn(*setup.sequence, setup.captured.id(), "a"));
 	CHECK(holdsFor(100ms, [] { return channelName() == "Another plugin"; }));
 	obs_set_output_source(kAirChannel, nullptr);
 }
@@ -2698,11 +2738,26 @@ TEST_CASE_METHOD(ObsFixture, "a way back that ran out lets go of the replay's la
 	setup.sequence->setAir(air);
 	setup.putOnAir();
 	CHECK(playing(*setup.sequence) == "a");
+	const uint64_t onAir = setup.sequence->player()->state().clip;
+	bool current = true;
+	SECTION("for the current replay, cued anew") {}
+	SECTION("with no current replay")
+	{
+		REQUIRE(setup.library.remove(setup.captured.id()));
+		current = false;
+	}
 
 	setup.sequence->takeOffAir();
 	REQUIRE(setup.leaving());
+	// Nothing is cued while the way back shows the last frame.
+	CHECK(setup.sequence->cuedReplay() == 0);
 	REQUIRE(runUntil([&] { return !setup.sequence->air().onAir(); }));
-	CHECK(playerUntil(*setup.sequence, [](const PlayerState &state) { return !state.loaded; }));
+	if (current) {
+		CHECK(cuedOn(*setup.sequence, setup.captured.id(), "a", onAir));
+	} else {
+		CHECK(setup.sequence->cuedReplay() == 0);
+		CHECK(playerUntil(*setup.sequence, [](const PlayerState &state) { return !state.loaded; }));
+	}
 }
 
 TEST_CASE_METHOD(ObsFixture, "a replay closed during a way back lets go of its last frame", "[obs][sequence][air]")
@@ -2908,6 +2963,7 @@ TEST_CASE_METHOD(ObsFixture, "a program gone black during a way back lets go of 
 	setup.sequence->setAir(air);
 	setup.putOnAir();
 	CHECK(playing(*setup.sequence) == "a");
+	const uint64_t onAir = setup.sequence->player()->state().clip;
 
 	setup.sequence->takeOffAir();
 	REQUIRE(setup.leaving());
@@ -2915,7 +2971,8 @@ TEST_CASE_METHOD(ObsFixture, "a program gone black during a way back lets go of 
 
 	setup.sequence->programWentBlack();
 	CHECK_FALSE(setup.sequence->air().onAir());
-	CHECK(playerUntil(*setup.sequence, [](const PlayerState &state) { return !state.loaded; }));
+	CHECK(cuedOn(*setup.sequence, setup.captured.id(), "a", onAir));
+	CHECK(channelName().empty());
 }
 
 TEST_CASE_METHOD(ObsFixture, "a program gone black during an intro or an outro ends the replay", "[obs][sequence][air]")
@@ -2943,11 +3000,15 @@ TEST_CASE_METHOD(ObsFixture, "a program gone black during an intro or an outro e
 	};
 	setup.sequence->programWentBlack();
 	CHECK(isOff());
-	CHECK(playerUntil(*setup.sequence, [](const PlayerState &state) { return !state.loaded; }));
-	// Black again, with nothing on air to end.
+	REQUIRE(cuedOn(*setup.sequence, setup.captured.id(), "a"));
+	const uint64_t cued = setup.sequence->player()->state().clip;
+	// Black again, with nothing on air to end, and the cue stays.
 	setup.sequence->programWentBlack();
 	CHECK(isOff());
 	CHECK(holdsFor(300ms, isOff));
+	CHECK(setup.sequence->cuedReplay() == setup.captured.id());
+	CHECK(setup.sequence->player()->state().loaded);
+	CHECK(setup.sequence->player()->state().clip == cued);
 
 	setup.putOnAir();
 	CHECK(setup.phase() == AirPhase::Intro);
@@ -2974,4 +3035,208 @@ TEST_CASE_METHOD(ObsFixture, "a program with no transition is not black", "[obs]
 	obs_set_output_source(0, nullptr);
 	setup.answer(AirEvent::ProgramTransitionStopped);
 	setup.checkStillOn();
+}
+
+TEST_CASE_METHOD(ObsFixture, "with nothing on air the current replay is cued on the first source it shows",
+		 "[obs][sequence][cue]")
+{
+	registerReplaySource({});
+	const UiTasks ui;
+	ReplayLibrary library;
+	std::optional<SequencePlayer> sequence(std::in_place, library);
+	REQUIRE(sequence->player());
+	sequence->cueCurrent();
+	CHECK(sequence->cuedReplay() == 0);
+
+	const Captured older(library, {"a", "b"}, 4);
+	const Captured newer(library, {"b", "c"}, 4);
+	REQUIRE(library.current() == newer.id());
+	// The list cues on its own.
+	sequence->setEntries({{"c", true}, {"b", true}, {"a", true}});
+	REQUIRE(cuedOn(*sequence, newer.id(), "c"));
+	uint64_t clip = sequence->player()->state().clip;
+	CHECK(holdsFor(200ms, [&] {
+		const PlayerState state = sequence->player()->state();
+		return state.clip == clip && !state.playing && state.frame == 0 && channelName().empty() &&
+		       !sequence->air().onAir();
+	}));
+	// Asked again with nothing changed, it keeps the clip it has.
+	sequence->cueCurrent();
+	CHECK(holdsFor(100ms, [&] { return sequence->player()->state().clip == clip; }));
+
+	REQUIRE(sequence->move(0, 1));
+	CHECK(cuedOn(*sequence, newer.id(), "b", clip));
+	clip = sequence->player()->state().clip;
+	REQUIRE(sequence->setShown("b", false));
+	CHECK(cuedOn(*sequence, newer.id(), "c", clip));
+	clip = sequence->player()->state().clip;
+
+	REQUIRE(library.pick(older.id()));
+	sequence->cueCurrent();
+	CHECK(cuedOn(*sequence, older.id(), "a", clip));
+	clip = sequence->player()->state().clip;
+	// With none of its sources shown there is nothing to cue.
+	REQUIRE(sequence->setShown("a", false));
+	CHECK(sequence->cuedReplay() == 0);
+	CHECK(playerUntil(*sequence, [](const PlayerState &state) { return !state.loaded; }));
+	REQUIRE(sequence->setShown("b", true));
+	CHECK(cuedOn(*sequence, older.id(), "b", clip));
+	CHECK(channelName().empty());
+	sequence.reset();
+	obs_wait_for_destroy_queue();
+}
+
+TEST_CASE_METHOD(ObsFixture, "the replay cued goes on air from where its controls left it", "[obs][sequence][cue]")
+{
+	registerReplaySource({});
+	const UiTasks ui;
+	ReplayLibrary library;
+	std::optional<SequencePlayer> sequence(std::in_place, library);
+	REQUIRE(sequence->player());
+	tapeloop::obs::ReplayPlayer &player = *sequence->player();
+	const Captured captured(library, {"a", "b"}, 120);
+	sequence->cueCurrent();
+	REQUIRE(cuedOn(*sequence, captured.id(), "a"));
+	const uint64_t cued = player.state().clip;
+
+	int32_t rate = 0;
+	SECTION("faster")
+	{
+		player.faster();
+		rate = 2000;
+	}
+	SECTION("in reverse, which goes on forward")
+	{
+		player.setRate(-500);
+		rate = 500;
+	}
+	player.step(30);
+	REQUIRE(playerUntil(*sequence, [&](const PlayerState &state) {
+		return state.clip == cued && state.frame == 30 && std::abs(state.rate) == rate && !state.playing;
+	}));
+	CHECK(sequence->state().phase() == AirPhase::Live);
+	CHECK(channelName().empty());
+
+	REQUIRE(sequence->putOnAir(captured.id()));
+	CHECK(sequence->state().source() == "a");
+	CHECK(sequence->state().rate() == rate);
+	CHECK(sequence->cuedReplay() == 0);
+	CHECK(sequence->air().onAir());
+	REQUIRE(playerUntil(*sequence, [](const PlayerState &state) { return state.playing; }));
+	const PlayerState onAir = player.state();
+	CHECK(onAir.clip == cued);
+	CHECK(onAir.rate == rate);
+	CHECK(onAir.frame >= 30);
+
+	// The speed goes on to the next source, as for any other.
+	sequence->skip();
+	REQUIRE(sequence->state().phase() == AirPhase::Source);
+	CHECK(sequence->state().source() == "b");
+	REQUIRE(playerUntil(*sequence, [&](const PlayerState &state) { return state.clip > cued && state.playing; }));
+	CHECK(player.state().rate == rate);
+	sequence.reset();
+	obs_wait_for_destroy_queue();
+}
+
+TEST_CASE_METHOD(ObsFixture, "a replay other than the one cued goes on air from its start at real time",
+		 "[obs][sequence][cue]")
+{
+	AirSetup setup;
+	const Captured other(setup.library, {"a"}, 120);
+	setup.sequence->cueCurrent();
+	REQUIRE(cuedOn(*setup.sequence, other.id(), "a"));
+	tapeloop::obs::ReplayPlayer &player = *setup.sequence->player();
+	const uint64_t cued = player.state().clip;
+	player.faster();
+	player.step(30);
+	REQUIRE(playerUntil(*setup.sequence,
+			    [&](const PlayerState &state) { return state.rate == 2000 && state.frame == 30; }));
+
+	setup.putOnAir();
+	CHECK(setup.sequence->cuedReplay() == 0);
+	REQUIRE(playerUntil(*setup.sequence,
+			    [&](const PlayerState &state) { return state.clip > cued && state.playing; }));
+	const uint64_t onAir = player.state().clip;
+	CHECK(player.state().rate == 1000);
+
+	setup.sequence->takeOffAir();
+	CHECK(cuedOn(*setup.sequence, other.id(), "a", onAir));
+}
+
+TEST_CASE_METHOD(ObsFixture, "the replay cued waits through its intro on the frame it had", "[obs][sequence][cue]")
+{
+	AirSetup setup;
+	AirSettings air;
+	air.intro = {AirMediaKind::Image, fileIn(setup.folder, "intro.png"), 20000ms};
+	setup.sequence->setAir(air);
+	REQUIRE(setup.sequence->air().hasIntro());
+	setup.sequence->cueCurrent();
+	REQUIRE(cuedOn(*setup.sequence, setup.captured.id(), "a"));
+	tapeloop::obs::ReplayPlayer &player = *setup.sequence->player();
+	const uint64_t cued = player.state().clip;
+	player.step(30);
+	player.play();
+	REQUIRE(playerUntil(*setup.sequence,
+			    [&](const PlayerState &state) { return state.playing && state.frame > 30; }));
+
+	setup.putOnAir();
+	REQUIRE(setup.phase() == AirPhase::Intro);
+	REQUIRE(playerUntil(*setup.sequence,
+			    [&](const PlayerState &state) { return state.clip == cued && !state.playing; }));
+	const size_t held = player.state().frame;
+	CHECK(holdsFor(200ms, [&] {
+		const PlayerState state = player.state();
+		return state.clip == cued && !state.playing && state.frame == held;
+	}));
+
+	setup.sequence->skip();
+	REQUIRE(setup.phase() == AirPhase::Source);
+	CHECK(playerUntil(*setup.sequence, [&](const PlayerState &state) {
+		return state.clip == cued && state.playing && state.frame >= held;
+	}));
+}
+
+TEST_CASE_METHOD(ObsFixture, "a closed sequence unloads the replay cued and cues none until opened",
+		 "[obs][sequence][cue]")
+{
+	AirSetup setup;
+	setup.sequence->cueCurrent();
+	REQUIRE(cuedOn(*setup.sequence, setup.captured.id(), "a"));
+	const uint64_t cued = setup.sequence->player()->state().clip;
+	bool destroyed = false;
+	SECTION("closed") {}
+	SECTION("destroyed")
+	{
+		destroyed = true;
+	}
+	if (destroyed) {
+		setup.sequence->destroyAir();
+	} else {
+		setup.sequence->close();
+	}
+	CHECK(setup.sequence->cuedReplay() == 0);
+	CHECK(playerUntil(*setup.sequence, [](const PlayerState &state) { return !state.loaded; }));
+	setup.sequence->cueCurrent();
+	CHECK(setup.sequence->cuedReplay() == 0);
+
+	setup.sequence->open();
+	setup.sequence->cueCurrent();
+	if (destroyed) {
+		CHECK(setup.sequence->cuedReplay() == 0);
+		CHECK(holdsFor(100ms, [&] { return !setup.sequence->player()->state().loaded; }));
+	} else {
+		CHECK(cuedOn(*setup.sequence, setup.captured.id(), "a", cued));
+	}
+	CHECK(channelName().empty());
+}
+
+TEST_CASE_METHOD(ObsFixture, "a scene collection that loads cues the current replay", "[obs][sequence][cue]")
+{
+	EventSetup setup;
+	setup.answer(AirEvent::CollectionCleanup);
+	setup.checkCut();
+	CHECK(setup.sequence->cuedReplay() == 0);
+	setup.answer(AirEvent::CollectionChanged);
+	CHECK(cuedOn(*setup.sequence, setup.captured.id(), "a"));
+	CHECK(channelName().empty());
 }
