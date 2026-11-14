@@ -12,6 +12,7 @@
 #include "core/ReplayWriter.hpp"
 #include "obs/CaptureManager.hpp"
 #include "obs/ManagerDockBackend.hpp"
+#include "obs/ReplayHotkeys.hpp"
 #include "obs/ReplaySource.hpp"
 #include "obs/SequencePlayer.hpp"
 
@@ -646,6 +647,32 @@ TEST_CASE_METHOD(ObsFixture, "the dock's player controls act on the cued replay 
 	backend.controlPlayer(PlayerControl::ScrubForward, false);
 	REQUIRE(tapeloop::test::waitFor([&] { return !sequence.player()->state().scrubbing; },
 					std::chrono::seconds(10)));
+
+	// The keys and the dock each let go of their own hold only, and the scrub goes on the
+	// way of the one still held.
+	using tapeloop::obs::HotkeyAction;
+	using tapeloop::obs::runHotkey;
+	const auto scrubbing = [&] {
+		return sequence.player()->state().scrubbing;
+	};
+	const auto stillScrubbing = [&] {
+		return !tapeloop::test::waitFor([&] { return !scrubbing(); }, std::chrono::milliseconds(500));
+	};
+	backend.controlPlayer(PlayerControl::ScrubForward, true);
+	runHotkey(HotkeyAction::ScrubBackward, true, manager, sequence);
+	REQUIRE(tapeloop::test::waitFor(scrubbing, std::chrono::seconds(10)));
+	runHotkey(HotkeyAction::ScrubBackward, false, manager, sequence);
+	const tapeloop::Nanoseconds turned = backend.player().position;
+	REQUIRE(tapeloop::test::waitFor([&] { return scrubbing() && backend.player().position > turned; },
+					std::chrono::seconds(10)));
+	runHotkey(HotkeyAction::ScrubForward, true, manager, sequence);
+	backend.controlPlayer(PlayerControl::ScrubForward, false);
+	CHECK(stillScrubbing());
+	backend.controlPlayer(PlayerControl::ScrubBackward, true);
+	runHotkey(HotkeyAction::ScrubForward, false, manager, sequence);
+	CHECK(stillScrubbing());
+	backend.controlPlayer(PlayerControl::ScrubBackward, false);
+	REQUIRE(tapeloop::test::waitFor([&] { return !scrubbing(); }, std::chrono::seconds(10)));
 	sequence.takeOffAir();
 
 	REQUIRE(backend.toggleRunning());

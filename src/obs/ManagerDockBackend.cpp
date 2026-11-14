@@ -215,11 +215,11 @@ void ManagerDockBackend::controlPlayer(ui::PlayerControl control, bool pressed)
 		action = HotkeyAction::NormalSpeed;
 		break;
 	case ui::PlayerControl::ScrubBackward:
-		action = HotkeyAction::ScrubBackward;
-		break;
+		runScrub(ScrubHolder::Dock, ScrubDirection::Backward, pressed, *sequence_);
+		return;
 	case ui::PlayerControl::ScrubForward:
-		action = HotkeyAction::ScrubForward;
-		break;
+		runScrub(ScrubHolder::Dock, ScrubDirection::Forward, pressed, *sequence_);
+		return;
 	}
 	runHotkey(action, pressed, manager_, *sequence_);
 }

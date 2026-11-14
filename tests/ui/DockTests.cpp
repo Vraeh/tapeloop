@@ -2170,6 +2170,32 @@ TEST_CASE("a scrub button of the mini player scrubs for as long as it is held")
 	}
 }
 
+TEST_CASE("the mini player lets go only of a scrub it holds")
+{
+	// The scrub keys may hold a scrub of their own, which the dock must not end.
+	FakeBackend backend;
+	loadPlayer(backend);
+	{
+		TapeloopDock dock(backend, localeText());
+		dock.show();
+		auto *forward = child<QPushButton>(dock, "scrubForward");
+		auto *backward = child<QPushButton>(dock, "scrubBackward");
+		sendKey(forward, QEvent::KeyPress, Qt::Key_Space);
+		sendKey(forward, QEvent::KeyRelease, Qt::Key_Space);
+		backend.controls.clear();
+
+		sendKey(backward, QEvent::KeyRelease, Qt::Key_Space);
+		QFocusEvent focusOut(QEvent::FocusOut, Qt::ActiveWindowFocusReason);
+		QApplication::sendEvent(forward, &focusOut);
+		dock.hide();
+		dock.show();
+		backend.playerState = {};
+		dock.refresh();
+		CHECK(backend.controls.empty());
+	}
+	CHECK(backend.controls.empty());
+}
+
 TEST_CASE("the mini player's slider seeks and follows the player")
 {
 	FakeBackend backend;

@@ -189,8 +189,9 @@ public:
 	// player.
 	virtual std::unique_ptr<PictureSurface> pictureSurface() = 0;
 	virtual DockPlayer player() const = 0;
-	// Acts as the hotkey of the control does: a scrub runs from its press to its
-	// release, every other control acts on the press.
+	// Acts as the hotkey of the control does, every control on its press but a scrub,
+	// which the dock holds from its press to its release. The release lets go of the
+	// dock's hold only: a scrub the keys hold goes on.
 	virtual void controlPlayer(PlayerControl control, bool pressed) = 0;
 	// From the clip's first frame.
 	virtual void seekPlayer(Nanoseconds position) = 0;

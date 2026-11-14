@@ -4,7 +4,9 @@
 #include "core/Playhead.hpp"
 
 #include <algorithm>
+#include <cstddef>
 #include <functional>
+#include <iterator>
 #include <limits>
 #include <utility>
 
@@ -46,6 +48,7 @@ void Playhead::load(std::vector<Nanoseconds> frameTimes)
 	remainder_ = 0;
 	playing_ = false;
 	scrubbing_ = false;
+	holdCount_ = 0;
 	rate_ = rate_ < 0 ? -rate_ : rate_;
 }
 
@@ -127,6 +130,54 @@ void Playhead::seek(Nanoseconds time) noexcept
 }
 
 void Playhead::beginScrub(ScrubDirection direction) noexcept
+{
+	holdCount_ = 0;
+	startScrub(direction);
+}
+
+void Playhead::endScrub() noexcept
+{
+	holdCount_ = 0;
+	scrubbing_ = false;
+}
+
+void Playhead::holdScrub(ScrubHolder holder, ScrubDirection direction) noexcept
+{
+	const auto end = holds_.begin() + static_cast<std::ptrdiff_t>(holdCount_);
+	const auto held = std::find_if(holds_.begin(), end, [&](const ScrubHold &hold) {
+		return hold.holder == holder && hold.direction == direction;
+	});
+	if (held != end) {
+		std::rotate(held, std::next(held), end);
+	} else {
+		holds_[holdCount_++] = {holder, direction};
+	}
+	startScrub(direction);
+}
+
+void Playhead::releaseScrub(ScrubHolder holder, ScrubDirection direction) noexcept
+{
+	const auto end = holds_.begin() + static_cast<std::ptrdiff_t>(holdCount_);
+	const auto held = std::find_if(holds_.begin(), end, [&](const ScrubHold &hold) {
+		return hold.holder == holder && hold.direction == direction;
+	});
+	if (held == end) {
+		return;
+	}
+	const bool latest = std::next(held) == end;
+	std::rotate(held, std::next(held), end);
+	--holdCount_;
+	if (!latest) {
+		return;
+	}
+	if (holdCount_ == 0) {
+		scrubbing_ = false;
+	} else if (holds_[holdCount_ - 1].direction != scrubDirection_) {
+		startScrub(holds_[holdCount_ - 1].direction);
+	}
+}
+
+void Playhead::startScrub(ScrubDirection direction) noexcept
 {
 	scrubbing_ = true;
 	scrubDirection_ = direction;
