@@ -275,15 +275,20 @@ TEST_CASE_METHOD(ObsFixture, "an overlay of a source the collection does not hav
 	// Neither the composition itself nor a source without video can be an overlay.
 	OverlayItem itself;
 	itself.uuid = obs_source_get_uuid(composition.source());
-	overlays.items = {gone, overlayOf(silence), itself, overlayOf(logo)};
+	// libobs alone would read past an empty key and take the longer one for the logo.
+	OverlayItem empty;
+	empty.name = "Empty";
+	OverlayItem longer = overlayOf(logo);
+	longer.uuid += "0";
+	overlays.items = {gone, overlayOf(silence), itself, empty, longer, overlayOf(logo)};
 	composition.setOverlays(overlays);
 	composition.apply();
 	CHECK(sourcesOf(composition.source()) == std::vector<obs_source_t *>{replay, logo});
-	CHECK(said.lines == 3);
+	CHECK(said.lines == 5);
 
 	// Nothing changed, so nothing is built or said again.
 	composition.apply();
-	CHECK(said.lines == 3);
+	CHECK(said.lines == 5);
 }
 
 TEST_CASE_METHOD(ObsFixture, "an overlay whose source OBS removes is let go of", "[obs][composition]")
@@ -391,7 +396,11 @@ TEST_CASE_METHOD(ObsFixture, "overlays are saved with the collection and loaded 
 	OverlayItem gone;
 	gone.uuid = "9f1c0a7e-0000-4000-8000-000000000003";
 	gone.name = "Gone";
-	settings.overlays.items = {gone, item, item};
+	OverlayItem empty;
+	empty.name = "Empty";
+	OverlayItem longer = item;
+	longer.uuid += "0";
+	settings.overlays.items = {gone, empty, item, longer, item};
 
 	OBSDataAutoRelease collection = obs_data_create();
 	{
@@ -405,7 +414,8 @@ TEST_CASE_METHOD(ObsFixture, "overlays are saved with the collection and loaded 
 	OBSDataAutoRelease canvas = obs_data_get_obj(overlays, "canvas");
 	CHECK(obs_data_get_int(canvas, "width") == 640);
 	OBSDataArrayAutoRelease items = obs_data_get_array(overlays, "items");
-	// The overlay of a source that is gone is dropped; one shown twice stays twice.
+	// The overlay of a source that is gone, or of a key that is no UUID, is dropped; one
+	// shown twice stays twice.
 	REQUIRE(obs_data_array_count(items) == 2);
 	OBSDataAutoRelease first = obs_data_array_item(items, 0);
 	CHECK(std::string(obs_data_get_string(first, "name")) == "Logo");

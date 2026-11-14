@@ -7,9 +7,9 @@
 
 #include "obs/ObsEncoders.hpp"
 #include "obs/ReplayView.hpp"
+#include "obs/SourceLookup.hpp"
 
 #include <obs.hpp>
-#include <util/platform.h>
 
 #include <algorithm>
 #include <cctype>
@@ -235,11 +235,7 @@ std::vector<OverlayScene> ManagerDockBackend::scenes() const
 
 bool ManagerDockBackend::sceneHoldsReplay(const std::string &uuid) const
 {
-	// libobs would read a whole UUID's length from a shorter key.
-	if (uuid.size() != UUID_STR_LENGTH) {
-		return false;
-	}
-	const OBSSourceAutoRelease scene = obs_get_source_by_uuid(uuid.c_str());
+	const OBSSourceAutoRelease scene = sourceByUuid(uuid.c_str());
 	if (!scene || !obs_scene_from_source(scene) || obs_source_removed(scene)) {
 		return false;
 	}

@@ -14,6 +14,7 @@
 #include <array>
 #include <cstdint>
 #include <cstring>
+#include <string>
 
 using tapeloop::obs::createOverlayOpacity;
 using tapeloop::obs::kOverlayOpacityId;
@@ -164,6 +165,26 @@ TEST_CASE_METHOD(ObsFixture, "an overlay below full opacity shows its target and
 	translucent = nullptr;
 	obs_wait_for_destroy_queue();
 	CHECK(obs_weak_source_expired(weakLogo));
+}
+
+TEST_CASE_METHOD(ObsFixture, "an overlay below full opacity is not made for a key that is no UUID",
+		 "[obs][composition]")
+{
+	// A collection edited by hand can hold such a source. libobs alone would read past an
+	// empty key and take the longer one for the logo.
+	registerOverlayOpacity(TAPELOOP_OPACITY_EFFECT);
+	const OBSSourceAutoRelease logo = createTestPattern(64, 36, "Logo");
+	const std::string longer = std::string(obs_source_get_uuid(logo)) + "0";
+	for (const char *target : {"", longer.c_str(), static_cast<const char *>(nullptr)}) {
+		const OBSDataAutoRelease settings = obs_data_create();
+		if (target) {
+			obs_data_set_string(settings, "target", target);
+		}
+		const OBSSourceAutoRelease made = obs_source_create_private(kOverlayOpacityId, "Hand-made", settings);
+		REQUIRE(made);
+		CHECK(obs_obj_get_data(made) == nullptr);
+		CHECK(overlayTarget(made) == made.Get());
+	}
 }
 
 TEST_CASE_METHOD(ObsFixture, "an overlay below full opacity is not made without its effect", "[obs][composition]")

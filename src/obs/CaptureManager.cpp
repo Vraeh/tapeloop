@@ -13,6 +13,7 @@
 #include "obs/Composition.hpp"
 #include "obs/ObsEncoders.hpp"
 #include "obs/SettingsData.hpp"
+#include "obs/SourceLookup.hpp"
 
 #include <obs.hpp>
 #include <util/base.h>
@@ -112,17 +113,6 @@ bool matchSceneByName(OverlayScene &scene, const std::vector<SourceIdentity> &sc
 	}
 	scene.uuid = named->uuid;
 	return true;
-}
-
-// libobs reads a whole UUID's length from the key it is given, whatever the key's own
-// length, and gives sources UUIDs of that length only. Saved settings can hold any
-// string, so a key of another length is a source not found.
-OBSSourceAutoRelease sourceByUuid(const std::string &uuid)
-{
-	if (uuid.size() != UUID_STR_LENGTH) {
-		return nullptr;
-	}
-	return obs_get_source_by_uuid(uuid.c_str());
 }
 
 // Sources that restart, unpause or refresh when they become active. Holding one active
@@ -324,7 +314,7 @@ void CaptureManager::save(obs_data_t *collection) const
 	// Settings of a source the collection no longer has would only pile up.
 	std::vector<SavedSource> kept;
 	for (SavedSource &source : saved.sources) {
-		OBSSourceAutoRelease found = sourceByUuid(source.uuid);
+		OBSSourceAutoRelease found = sourceByUuid(source.uuid.c_str());
 		if (found) {
 			source.name = obs_source_get_name(found);
 			kept.push_back(std::move(source));
@@ -334,7 +324,7 @@ void CaptureManager::save(obs_data_t *collection) const
 	// The same for overlays. One shown twice is kept twice.
 	std::vector<SavedOverlay> shown;
 	for (SavedOverlay &overlay : saved.overlays.items) {
-		OBSSourceAutoRelease found = obs_get_source_by_uuid(overlay.uuid.c_str());
+		OBSSourceAutoRelease found = sourceByUuid(overlay.uuid.c_str());
 		if (found) {
 			overlay.name = obs_source_get_name(found);
 			shown.push_back(std::move(overlay));
@@ -342,12 +332,7 @@ void CaptureManager::save(obs_data_t *collection) const
 	}
 	saved.overlays.items = std::move(shown);
 	// A scene that is not there keeps its UUID and name, so that it shows as missing.
-	// libobs reads a whole UUID's length from the key, whatever the key's own length.
-	OBSSourceAutoRelease scene;
-	if (saved.overlays.sceneUuid.size() == UUID_STR_LENGTH) {
-		scene = obs_get_source_by_uuid(saved.overlays.sceneUuid.c_str());
-	}
-	if (scene) {
+	if (OBSSourceAutoRelease scene = sourceByUuid(saved.overlays.sceneUuid.c_str())) {
 		const char *name = obs_source_get_name(scene);
 		saved.overlays.sceneName = name ? name : "";
 	}
@@ -399,7 +384,7 @@ void CaptureManager::load(obs_data_t *collection)
 	settings_ = std::move(settings);
 	lifecycle_.reset(settings_.startWithOutputs, host_.streamingActive(), host_.recordingActive());
 	for (const std::string &uuid : settings_.selectedSources()) {
-		OBSSourceAutoRelease source = sourceByUuid(uuid);
+		OBSSourceAutoRelease source = sourceByUuid(uuid.c_str());
 		if (!source) {
 			const auto name = savedNames_.find(uuid);
 			blog(LOG_INFO, "[tapeloop] The selected source '%s' is not in this scene collection",
@@ -467,7 +452,7 @@ uint64_t CaptureManager::captureReplay()
 	capture.start = cut.moment.start;
 	capture.end = cut.moment.end;
 	for (MomentClip &clip : cut.moment.clips) {
-		OBSSourceAutoRelease source = sourceByUuid(clip.sourceKey);
+		OBSSourceAutoRelease source = sourceByUuid(clip.sourceKey.c_str());
 		const char *name = source ? obs_source_get_name(source) : nullptr;
 		capture.sources.push_back({std::move(clip.sourceKey), name ? name : "", std::move(clip.clip)});
 	}
@@ -857,7 +842,7 @@ uint64_t CaptureManager::memoryNeeded() const
 		const auto found = entries_.find(uuid);
 		size_t need = found != entries_.end() ? found->second->capture.byteNeed() : 0;
 		if (need == 0) {
-			OBSSourceAutoRelease source = sourceByUuid(uuid);
+			OBSSourceAutoRelease source = sourceByUuid(uuid.c_str());
 			if (source) {
 				need = SourceCapture::estimateByteNeed(source, captureSettings(uuid, candidates));
 			}
@@ -879,7 +864,7 @@ CaptureManager::StartOutcome CaptureManager::start(const std::string &uuid, Entr
 {
 	entry.retry = false;
 	entry.retryKeepsBuffer = keepBuffer;
-	OBSSourceAutoRelease source = sourceByUuid(uuid);
+	OBSSourceAutoRelease source = sourceByUuid(uuid.c_str());
 	// A removed source can still be found while something holds it.
 	if (source && obs_source_removed(source)) {
 		return StartOutcome::SourceRemoved;

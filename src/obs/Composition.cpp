@@ -4,6 +4,7 @@
 #include "obs/Composition.hpp"
 
 #include "obs/OverlayOpacity.hpp"
+#include "obs/SourceLookup.hpp"
 
 #include <obs.hpp>
 #include <util/base.h>
@@ -254,7 +255,7 @@ void Composition::apply()
 		if (!item.visible) {
 			continue;
 		}
-		OBSSourceAutoRelease source = obs_get_source_by_uuid(item.uuid.c_str());
+		OBSSourceAutoRelease source = sourceByUuid(item.uuid.c_str());
 		const bool shown = showable(source);
 		found.push_back(shown);
 		if (shown) {

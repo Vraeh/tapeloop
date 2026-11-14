@@ -44,6 +44,8 @@ target_sources(
     SettingsData.hpp
     SourceCapture.cpp
     SourceCapture.hpp
+    SourceLookup.cpp
+    SourceLookup.hpp
 )
 
 # Pictures the decoder keeps on the GPU reach OBS through shared textures only on

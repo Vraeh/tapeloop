@@ -3,6 +3,8 @@
 
 #include "obs/AirComposition.hpp"
 
+#include "obs/SourceLookup.hpp"
+
 #include <obs.hpp>
 #include <util/base.h>
 #include <util/platform.h>
@@ -457,10 +459,8 @@ void AirComposition::applyScene()
 {
 	const OverlaySettings &overlays = composition_.overlays();
 	OBSSourceAutoRelease wanted;
-	// libobs reads a whole UUID's length from the key it is given, whatever the key's own
-	// length, so a saved key of another length is a scene not found.
-	if (overlays.mode == OverlayMode::Scene && overlays.scene.uuid.size() == UUID_STR_LENGTH) {
-		wanted = obs_get_source_by_uuid(overlays.scene.uuid.c_str());
+	if (overlays.mode == OverlayMode::Scene) {
+		wanted = sourceByUuid(overlays.scene.uuid.c_str());
 	}
 	// The lookup finds private and removed sources too.
 	if (wanted && (!obs_scene_from_source(wanted) || obs_obj_is_private(wanted) || obs_source_removed(wanted))) {

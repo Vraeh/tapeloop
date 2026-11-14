@@ -3,6 +3,8 @@
 
 #include "obs/OverlayOpacity.hpp"
 
+#include "obs/SourceLookup.hpp"
+
 #include <obs.hpp>
 #include <util/base.h>
 
@@ -76,7 +78,7 @@ void *create(obs_data_t *settings, obs_source_t *source) noexcept
 	}
 	bfree(error);
 
-	wrapper->target = obs_get_source_by_uuid(obs_data_get_string(settings, kTargetKey));
+	wrapper->target = obs_source_get_ref(sourceByUuid(obs_data_get_string(settings, kTargetKey)));
 	if (!loaded || !wrapper->texture || !wrapper->target) {
 		destroy(wrapper.release());
 		return nullptr;
