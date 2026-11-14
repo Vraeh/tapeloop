@@ -5,6 +5,8 @@
 
 #include "core/FileIo.hpp"
 
+#include "FifoWatchdog.hpp"
+#include "LeaseHolder.hpp"
 #include "StoredReplays.hpp"
 #include "SyntheticEncoder.hpp"
 #include "TempDirectory.hpp"
@@ -12,6 +14,7 @@
 #include <catch2/catch_test_macros.hpp>
 
 #include <algorithm>
+#include <chrono>
 #include <cstddef>
 #include <cstdint>
 #include <filesystem>
@@ -503,6 +506,51 @@ TEST_CASE("tags are written only into an intact manifest and when they fit")
 	CHECK_THROWS_AS(writer.writeTags(dir.path() / "missing.tplp", std::vector<std::string>{"Goal"}),
 			std::system_error);
 }
+
+#ifndef _WIN32
+TEST_CASE("a named pipe in place of a manifest is refused without waiting for a writer")
+{
+	TempDirectory dir;
+	ReplayWriter writer;
+	const fs::path manifest = writer.write(captureOf(dir.path(), {sourceOf("a", makeGops(2))})).manifest;
+	fs::remove(manifest);
+	// The watchdog lets a read that waits for a writer go, so that it fails the test
+	// instead of hanging it.
+	const tapeloop::test::FifoWatchdog watchdog(manifest);
+	CHECK_FALSE(tapeloop::readReplayIndex(manifest));
+	CHECK_THROWS_AS(writer.writeTags(manifest, std::vector<std::string>{"Goal"}), std::system_error);
+	CHECK_FALSE(watchdog.released());
+}
+#endif
+
+#ifdef __linux__
+TEST_CASE("a lease on a manifest delays a scan and a tag write without failing them")
+{
+	using tapeloop::test::LeaseHolder;
+	TempDirectory dir;
+	ReplayWriter writer;
+	const fs::path manifest =
+		writer.write(captureOf(dir.path() / "Liga 2026-10-09 21-00", {sourceOf("a", makeGops(2))})).manifest;
+	{
+		LeaseHolder holder(manifest, LeaseHolder::Kind::Write, std::chrono::milliseconds(200));
+		if (!holder.held()) {
+			SKIP("no lease can be taken here");
+		}
+		const tapeloop::ReplayScan scan = tapeloop::scanReplays(dir.path());
+		CHECK(scan.errors.empty());
+		REQUIRE(scan.replays.size() == 1);
+		CHECK(scan.replays[0].intact);
+		CHECK(holder.letGo());
+	}
+	{
+		LeaseHolder holder(manifest, LeaseHolder::Kind::Read, std::chrono::milliseconds(200));
+		REQUIRE(holder.held());
+		writer.writeTags(manifest, std::vector<std::string>{"Goal"});
+		CHECK(holder.letGo());
+	}
+	CHECK(tapeloop::decodeTags(fileBytes(manifest)) == std::vector<std::string>{"Goal"});
+}
+#endif
 
 TEST_CASE("a scan finds every replay of every broadcast")
 {

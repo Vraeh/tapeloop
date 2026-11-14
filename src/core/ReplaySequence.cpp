@@ -4,38 +4,60 @@
 #include "core/ReplaySequence.hpp"
 
 #include <algorithm>
-#include <iterator>
+#include <limits>
 #include <utility>
 
 namespace tapeloop {
 
 void ReplaySequence::setEntries(std::vector<SequenceEntry> entries)
 {
-	std::vector<SequenceEntry> unique;
-	unique.reserve(entries.size());
-	for (SequenceEntry &entry : entries) {
-		if (entry.sourceKey.empty()) {
-			continue;
-		}
-		const bool seen = std::any_of(unique.begin(), unique.end(), [&entry](const SequenceEntry &kept) {
-			return kept.sourceKey == entry.sourceKey;
-		});
-		if (!seen) {
-			unique.push_back(std::move(entry));
+	std::vector<size_t> byKey;
+	byKey.reserve(entries.size());
+	for (size_t i = 0; i < entries.size(); ++i) {
+		if (!entries[i].sourceKey.empty()) {
+			byKey.push_back(i);
 		}
 	}
+	// Ties go by place, so the first entry for a source leads its run and is the one kept.
+	std::sort(byKey.begin(), byKey.end(), [&entries](size_t a, size_t b) {
+		const int order = entries[a].sourceKey.compare(entries[b].sourceKey);
+		return order < 0 || (order == 0 && a < b);
+	});
+	byKey.erase(
+		std::unique(byKey.begin(), byKey.end(),
+			    [&entries](size_t a, size_t b) { return entries[a].sourceKey == entries[b].sourceKey; }),
+		byKey.end());
+
+	constexpr size_t kDropped = std::numeric_limits<size_t>::max();
+	std::vector<size_t> placeOf(entries.size(), kDropped);
+	for (const size_t index : byKey) {
+		placeOf[index] = 0;
+	}
+	std::vector<SequenceEntry> unique;
+	unique.reserve(byKey.size());
+	for (size_t i = 0; i < entries.size(); ++i) {
+		if (placeOf[i] != kDropped) {
+			placeOf[i] = unique.size();
+			unique.push_back(std::move(entries[i]));
+		}
+	}
+	for (size_t &index : byKey) {
+		index = placeOf[index];
+	}
 	entries_ = std::move(unique);
+	byKey_ = std::move(byKey);
 }
 
 std::optional<size_t> ReplaySequence::indexOf(std::string_view sourceKey) const noexcept
 {
-	const auto found = std::find_if(entries_.begin(), entries_.end(), [sourceKey](const SequenceEntry &entry) {
-		return entry.sourceKey == sourceKey;
-	});
-	if (found == entries_.end()) {
+	const auto found =
+		std::lower_bound(byKey_.begin(), byKey_.end(), sourceKey, [this](size_t index, std::string_view key) {
+			return std::string_view(entries_[index].sourceKey) < key;
+		});
+	if (found == byKey_.end() || entries_[*found].sourceKey != sourceKey) {
 		return std::nullopt;
 	}
-	return static_cast<size_t>(std::distance(entries_.begin(), found));
+	return *found;
 }
 
 bool ReplaySequence::move(size_t from, size_t to) noexcept
@@ -50,6 +72,16 @@ bool ReplaySequence::move(size_t from, size_t to) noexcept
 	} else if (to < from) {
 		std::rotate(first + static_cast<ptrdiff_t>(to), first + static_cast<ptrdiff_t>(from),
 			    first + static_cast<ptrdiff_t>(from) + 1);
+	}
+	// The keys keep their order; only the places between the two indexes shift by one.
+	for (size_t &index : byKey_) {
+		if (index == from) {
+			index = to;
+		} else if (from < to && index > from && index <= to) {
+			--index;
+		} else if (to < from && index >= to && index < from) {
+			++index;
+		}
 	}
 	return true;
 }

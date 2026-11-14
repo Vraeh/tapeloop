@@ -23,8 +23,10 @@
 #include <windows.h>
 #else
 #include <cerrno>
+#include <chrono>
 #include <fcntl.h>
 #include <sys/stat.h>
+#include <thread>
 #include <unistd.h>
 #if defined(__linux__)
 #include <cstdio>
@@ -91,6 +93,55 @@ int openFile(const std::filesystem::path &path, int flags)
 		// NOLINTNEXTLINE(cppcoreguidelines-pro-type-vararg): open takes the mode of a new file as a variadic argument.
 		fd = ::open(path.c_str(), flags | O_CLOEXEC, 0644);
 	} while (fd < 0 && errno == EINTR);
+	return fd;
+}
+
+[[noreturn]] void closeAndThrow(int fd, int code, std::string_view what, const std::filesystem::path &path)
+{
+	::close(fd);
+	throw std::system_error(code, std::generic_category(), describe(what, path));
+}
+
+// A non-blocking open of a file under a lease fails at once while the kernel asks the
+// holder to let go, and NFS and Samba servers take leases for the clients that have a
+// file open. A blocking open would wait for as long as the kernel gives the holder, 45 s
+// by default, and Put on air can open a manifest on the UI thread, so the open is tried
+// again for this long at most.
+constexpr auto kLeaseBreakWait = std::chrono::seconds(2);
+constexpr auto kLeaseRetryEvery = std::chrono::milliseconds(10);
+
+// A named pipe put where a replay file was would hold the open until a writer came, and
+// what a path was when it was listed says nothing of what is there now. So the open
+// neither waits for a writer nor takes a terminal as the controlling one, and the type
+// comes from the descriptor.
+int openRegularFile(const std::filesystem::path &path, int flags)
+{
+	flags |= O_NONBLOCK | O_NOCTTY;
+	const auto deadline = std::chrono::steady_clock::now() + kLeaseBreakWait;
+	int fd = openFile(path, flags);
+	int error = fd < 0 ? errno : 0;
+	while (error == EWOULDBLOCK && std::chrono::steady_clock::now() < deadline) {
+		std::this_thread::sleep_for(kLeaseRetryEvery);
+		fd = openFile(path, flags);
+		error = fd < 0 ? errno : 0;
+	}
+	if (fd < 0) {
+		throw std::system_error(error, std::generic_category(), describe("cannot open", path));
+	}
+	struct stat info{};
+	if (::fstat(fd, &info) != 0) {
+		closeAndThrow(fd, errno, "cannot open", path);
+	}
+	if (!S_ISREG(info.st_mode)) {
+		closeAndThrow(fd, EINVAL, "not a regular file:", path);
+	}
+	// Only the open is kept from waiting: reads and writes wait as they did.
+	// NOLINTNEXTLINE(cppcoreguidelines-pro-type-vararg): fcntl takes its argument as a variadic one.
+	const int status = ::fcntl(fd, F_GETFL);
+	// NOLINTNEXTLINE(cppcoreguidelines-pro-type-vararg): fcntl takes its argument as a variadic one.
+	if (status < 0 || ::fcntl(fd, F_SETFL, status & ~O_NONBLOCK) != 0) {
+		closeAndThrow(fd, errno, "cannot open", path);
+	}
 	return fd;
 }
 
@@ -191,6 +242,16 @@ File::File(const std::filesystem::path &path, Mode mode)
 	HANDLE handle = CreateFileW(path.c_str(), access, share, nullptr, disposition, FILE_ATTRIBUTE_NORMAL, nullptr);
 	if (handle == INVALID_HANDLE_VALUE) {
 		throwLastError("cannot open", &path);
+	}
+	// A path can lead to a named pipe or a device, whose reads can wait for a writer
+	// with no end, and what the path was when it was listed says nothing of what is
+	// there now. So the handle's type is checked instead. The disk type also covers a
+	// volume or a whole disk, which POSIX systems refuse as block devices; their reads
+	// return, and only an elevated process can open them.
+	if (GetFileType(handle) != FILE_TYPE_DISK) {
+		CloseHandle(handle);
+		throw std::system_error(std::make_error_code(std::errc::invalid_argument),
+					describe("not a regular file:", path));
 	}
 	handle_ = handle;
 }
@@ -307,10 +368,7 @@ File::File(const std::filesystem::path &path, Mode mode)
 	} else if (mode == Mode::ReadWrite) {
 		flags = O_RDWR;
 	}
-	fd_ = openFile(path, flags);
-	if (fd_ < 0) {
-		throwErrno("cannot open", &path);
-	}
+	fd_ = openRegularFile(path, flags);
 }
 
 bool File::isOpen() const noexcept

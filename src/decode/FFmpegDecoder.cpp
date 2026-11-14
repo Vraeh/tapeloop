@@ -230,11 +230,10 @@ DecodeStatus FFmpegDecoder::open(VideoCodec codec, std::span<const uint8_t> conf
 	}
 
 	try {
-		runConfig_.assign(config.begin(), config.end());
+		knownSets_.assign(codec, config);
 	} catch (...) {
 		return DecodeStatus::OutOfMemory;
 	}
-	codec_ = codec;
 
 	context->thread_type = FF_THREAD_SLICE;
 	context->thread_count = config_.threads;
@@ -299,7 +298,7 @@ DecodeStatus FFmpegDecoder::send(std::span<const uint8_t> data, int64_t pts, int
 		return DecodeStatus::OutOfMemory;
 	}
 	const std::span<uint8_t> bytes(buffer->data, needed);
-	const size_t size = copyWithoutKnownParameterSets(codec_, runConfig_, data, bytes.first(data.size()));
+	const size_t size = knownSets_.copyWithout(data, bytes.first(data.size()));
 	std::memset(bytes.subspan(size).data(), 0, AV_INPUT_BUFFER_PADDING_SIZE);
 	skippedBytes_ += data.size() - size;
 

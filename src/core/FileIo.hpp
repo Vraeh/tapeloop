@@ -20,6 +20,10 @@ std::string utf8FromPath(const std::filesystem::path &path);
 
 // A file for positioned reads and writes, which never move a shared file position, so
 // one thread can write a file while another reads it. Failures throw std::system_error.
+// Only a regular file opens, and on Windows a volume or a whole disk as well: a named
+// pipe or another device at the path is refused at once. On POSIX systems an open waits
+// up to two seconds for a lease another process holds on the file to be let go, and
+// then fails.
 class File {
 public:
 	enum class Mode {
