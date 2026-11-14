@@ -10,12 +10,14 @@
 #include "core/OverlayLayout.hpp"
 #include "obs/CaptureManager.hpp"
 #include "obs/Composition.hpp"
+#include "obs/OverlayOpacity.hpp"
 #include "obs/SettingsData.hpp"
 
 #include <catch2/catch_test_macros.hpp>
 #include <graphics/matrix4.h>
 #include <obs.hpp>
 
+#include <cstring>
 #include <string>
 #include <vector>
 
@@ -28,6 +30,9 @@ using tapeloop::OverlayItem;
 using tapeloop::OverlaySettings;
 using tapeloop::obs::CaptureManager;
 using tapeloop::obs::Composition;
+using tapeloop::obs::kOverlayOpacityId;
+using tapeloop::obs::overlayTarget;
+using tapeloop::obs::registerOverlayOpacity;
 using tapeloop::test::createTestPattern;
 using tapeloop::test::ObsFixture;
 using tapeloop::test::UiTasks;
@@ -181,6 +186,76 @@ TEST_CASE_METHOD(ObsFixture, "overlays stack in their order and hidden ones are 
 	composition.apply();
 	CHECK(sourcesOf(composition.source()) == std::vector<obs_source_t *>{replay, third, first, second});
 	CHECK(composition.overlays() == overlays);
+}
+
+TEST_CASE_METHOD(ObsFixture, "only an overlay below full opacity is drawn through a source of its own",
+		 "[obs][composition]")
+{
+	registerOverlayOpacity(TAPELOOP_OPACITY_EFFECT);
+	OBSSourceAutoRelease replay = createTestPattern(320, 180, "Replay");
+	OBSSourceAutoRelease solid = createTestPattern(100, 50, "Solid");
+	OBSSourceAutoRelease faded = createTestPattern(100, 50, "Faded");
+	Composition composition(replay);
+
+	OverlaySettings overlays;
+	overlays.canvas = {640, 360};
+	overlays.items = {overlayOf(solid), overlayOf(faded)};
+	for (OverlayItem &item : overlays.items) {
+		item.anchor = OverlayAnchor::Center;
+		item.width = 160;
+		item.height = 90;
+	}
+	overlays.items[1].opacity = 60;
+	composition.setOverlays(overlays);
+	composition.apply();
+
+	const std::vector<obs_sceneitem_t *> items = itemsOf(composition.source());
+	REQUIRE(items.size() == 3);
+	CHECK(obs_sceneitem_get_source(items[1]) == solid.Get());
+	obs_source_t *translucent = obs_sceneitem_get_source(items[2]);
+	CHECK(std::strcmp(obs_source_get_unversioned_id(translucent), kOverlayOpacityId) == 0);
+	CHECK(obs_obj_is_private(translucent));
+	CHECK(overlayTarget(translucent) == faded.Get());
+	// Placed where the same overlay at full opacity is.
+	matrix4 opaqueBox = {};
+	matrix4 translucentBox = {};
+	obs_sceneitem_get_box_transform(items[1], &opaqueBox);
+	obs_sceneitem_get_box_transform(items[2], &translucentBox);
+	CHECK(std::memcmp(&opaqueBox, &translucentBox, sizeof(matrix4)) == 0);
+
+	OBSWeakSourceAutoRelease weakTranslucent = obs_source_get_weak_source(translucent);
+	overlays.items[1].opacity = 100;
+	composition.setOverlays(overlays);
+	composition.apply();
+	CHECK(sourcesOf(composition.source()) == std::vector<obs_source_t *>{replay, solid, faded});
+	CHECK(obs_weak_source_expired(weakTranslucent));
+}
+
+TEST_CASE_METHOD(ObsFixture, "an overlay below full opacity whose source OBS removes is let go of",
+		 "[obs][composition]")
+{
+	const UiTasks ui;
+	registerOverlayOpacity(TAPELOOP_OPACITY_EFFECT);
+	OBSSourceAutoRelease replay = createTestPattern(320, 180, "Replay");
+	OBSSourceAutoRelease faded = createTestPattern(64, 64, "Faded");
+	OBSWeakSourceAutoRelease weak = obs_source_get_weak_source(faded);
+	Composition composition(replay);
+
+	OverlaySettings overlays;
+	overlays.canvas = {640, 360};
+	overlays.items = {overlayOf(faded)};
+	overlays.items[0].opacity = 30;
+	composition.setOverlays(overlays);
+	composition.apply();
+	REQUIRE(sourcesOf(composition.source()).size() == 2);
+
+	obs_source_remove(faded);
+	faded = nullptr;
+	UiTasks::run();
+	CHECK(sourcesOf(composition.source()) == std::vector<obs_source_t *>{replay});
+	// The source of its own lets go of it as libobs destroys that.
+	obs_wait_for_destroy_queue();
+	CHECK(obs_weak_source_expired(weak));
 }
 
 TEST_CASE_METHOD(ObsFixture, "an overlay of a source the collection does not have is left out", "[obs][composition]")

@@ -3,6 +3,8 @@
 
 #include "obs/Composition.hpp"
 
+#include "obs/OverlayOpacity.hpp"
+
 #include <obs.hpp>
 #include <util/base.h>
 
@@ -149,7 +151,7 @@ struct Pruning {
 bool removeIfRemoved(obs_scene_t *, obs_sceneitem_t *item, void *param) noexcept
 {
 	auto &pruning = *static_cast<Pruning *>(param);
-	if (item != pruning.replayItem && obs_source_removed(obs_sceneitem_get_source(item))) {
+	if (item != pruning.replayItem && obs_source_removed(overlayTarget(obs_sceneitem_get_source(item)))) {
 		obs_sceneitem_remove(item);
 		pruning.dropped = true;
 	}
@@ -272,6 +274,18 @@ void Composition::apply()
 		if (!found[layer++]) {
 			blog(LOG_INFO, "[tapeloop] The overlay '%s' is not in this scene collection, so it is left out",
 			     item.name.empty() ? item.uuid.c_str() : item.name.c_str());
+		}
+	}
+	// Below full opacity an overlay is drawn through a source of its own, made here for
+	// this scene only and held by it alone. Should one fail, the overlay shows opaque.
+	for (Layer &layer : layers) {
+		if (layer.item->opacity >= 100) {
+			continue;
+		}
+		OBSSourceAutoRelease translucent = createOverlayOpacity(layer.source, layer.item->opacity);
+		if (translucent) {
+			layer.source = translucent.Get();
+			held.push_back(std::move(translucent));
 		}
 	}
 	Build build{replayItem_, canvas, &layers};

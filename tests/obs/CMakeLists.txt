@@ -138,6 +138,7 @@ target_sources(
     Mp4Reader.hpp
     ObsFixture.cpp
     ObsFixture.hpp
+    OverlayOpacityTests.cpp
     PictureTests.cpp
     PlayerClips.cpp
     PlayerClips.hpp
@@ -161,6 +162,7 @@ target_compile_definitions(
     TAPELOOP_OBS_GRAPHICS_MODULE="${_obs_graphics_module}"
     TAPELOOP_OBS_MODULE_SUFFIX="${CMAKE_SHARED_MODULE_SUFFIX}"
     TAPELOOP_LOCALE_FILE="${CMAKE_CURRENT_SOURCE_DIR}/../../data/locale/en-US.ini"
+    TAPELOOP_OPACITY_EFFECT="${CMAKE_CURRENT_SOURCE_DIR}/../../data/effects/opacity.effect"
     TAPELOOP_TEST_DATA_DIR="${CMAKE_CURRENT_SOURCE_DIR}/data"
     TAPELOOP_TEST_UNLOAD_MODULE="$<TARGET_FILE:tapeloop-test-unload>"
 )

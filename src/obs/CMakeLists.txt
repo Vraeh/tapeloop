@@ -22,6 +22,8 @@ target_sources(
     ManagerDockBackend.hpp
     ObsEncoders.cpp
     ObsEncoders.hpp
+    OverlayOpacity.cpp
+    OverlayOpacity.hpp
     PictureRenderer.cpp
     PictureRenderer.hpp
     ProfileHotkeys.cpp

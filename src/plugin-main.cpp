@@ -8,6 +8,7 @@
 #include "obs/CaptureOutput.hpp"
 #include "obs/FrontendBridge.hpp"
 #include "obs/ManagerDockBackend.hpp"
+#include "obs/OverlayOpacity.hpp"
 #include "obs/RenderAdapter.hpp"
 #include "obs/ReplaySource.hpp"
 #include "ui/TapeloopDock.hpp"
@@ -19,6 +20,7 @@
 #include <cstdint>
 #include <memory>
 #include <optional>
+#include <string>
 
 OBS_DECLARE_MODULE()
 OBS_MODULE_USE_DEFAULT_LOCALE(PLUGIN_NAME, "en-US")
@@ -66,6 +68,16 @@ tapeloop::obs::ReplayPlayer::DecoderFactory replayDecoders()
 #endif
 }
 
+std::string overlayOpacityEffect()
+{
+	const std::unique_ptr<char, decltype(&bfree)> path(obs_module_file("effects/opacity.effect"), bfree);
+	if (!path) {
+		obs_log(LOG_ERROR, "effects/opacity.effect is missing, so overlays are drawn at full opacity");
+		return {};
+	}
+	return path.get();
+}
+
 } // namespace
 
 const char *obs_module_name()
@@ -83,6 +95,7 @@ bool obs_module_load()
 	try {
 		tapeloop::obs::registerCaptureOutput();
 		tapeloop::obs::registerReplaySource(replayDecoders());
+		tapeloop::obs::registerOverlayOpacity(overlayOpacityEffect());
 		bridge = std::make_unique<tapeloop::obs::FrontendBridge>();
 		addDock();
 	} catch (...) {
