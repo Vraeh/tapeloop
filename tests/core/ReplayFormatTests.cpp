@@ -497,6 +497,18 @@ TEST_CASE("a manifest whose index reads part of its blob twice, or leaves part o
 		payload.erase(from, from + static_cast<std::ptrdiff_t>(stringsB));
 		CHECK_FALSE(tapeloop::decodeManifest(withIndexPayload(manifest, payload)));
 	}
+	SECTION("a byte between a source's name and its first config")
+	{
+		const uint64_t gapAt = getLe(written, firstRun + 20, 4);
+		std::vector<uint8_t> payload = written;
+		// Everything from the first run's config on moves one byte further.
+		for (const size_t field : {firstRun + 20, firstRun + 32 + 20, sourceB + 32, lastRun + 20}) {
+			putLe(payload, field, 4, getLe(written, field, 4) + 1);
+		}
+		putLe(payload, 16, 4, blobSize + 1);
+		payload.insert(payload.begin() + static_cast<std::ptrdiff_t>(blobAt + gapAt), 0);
+		CHECK_FALSE(tapeloop::decodeManifest(withIndexPayload(manifest, payload)));
+	}
 	SECTION("a byte after the last config")
 	{
 		std::vector<uint8_t> payload = written;
