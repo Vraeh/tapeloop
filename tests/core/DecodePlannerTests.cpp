@@ -78,6 +78,26 @@ Clip makeClip(const std::vector<Run> &runs)
 	return Clip(gops, gops.front()->startTime(), gops.back()->lastTime());
 }
 
+// GOPs of `length` frames of a byte each, in one run.
+Clip makeLongClip(int64_t length, int count)
+{
+	SyntheticEncoder::Config config = encoderConfig();
+	config.gopLength = length;
+	config.keyframeSize = 1;
+	config.frameSize = 1;
+	SyntheticEncoder encoder(config);
+	GopBuilder builder(encoder.frameDuration());
+	builder.setCodecConfig(VideoCodec::H264, nullptr);
+	std::vector<std::shared_ptr<const tapeloop::Gop>> gops;
+	for (int gop = 0; gop < count; ++gop) {
+		for (int64_t i = 0; i < length; ++i) {
+			builder.append(encoder.next());
+		}
+		gops.push_back(builder.seal());
+	}
+	return Clip(gops, gops.front()->startTime(), gops.back()->lastTime());
+}
+
 FakeDecoder makeDecoder(size_t delay = 0)
 {
 	return FakeDecoder([](int64_t pts) { return pts % kGopLength == 0; }, delay);
@@ -110,7 +130,7 @@ public:
 		if (!pending_) {
 			return flushed_ ? DecodeStatus::Drained : DecodeStatus::NeedMore;
 		}
-		frame = {nextId_++, *pending_, Nanoseconds{0}};
+		frame = {nextId_++, *pending_, Nanoseconds{0}, frameBytes};
 		pending_.reset();
 		return DecodeStatus::Ok;
 	}
@@ -122,6 +142,8 @@ public:
 	void reset() noexcept override { restart(); }
 	void release(const DecodedFrame &) noexcept override {}
 	void close() noexcept override { restart(); }
+
+	size_t frameBytes = 0;
 
 private:
 	DecodeStatus restart() noexcept
@@ -842,6 +864,47 @@ TEST_CASE("DecodePlanner lets go of a later GOP from its end")
 		REQUIRE(shows(planner, decoder, frame));
 	}
 	CHECK(planner.work().packetsSent == sent);
+}
+
+TEST_CASE("DecodePlanner finds the packet of each frame without reading through its GOP")
+{
+	// Reading the GOP from its start to find the packet of each frame, one pass over a GOP of
+	// two million packets would take about two million million steps, far past the time a
+	// test is given.
+	constexpr int64_t kLength = int64_t{1} << 21;
+	PassThroughDecoder decoder;
+	DecodePlanner planner(decoder);
+	planner.load(makeLongClip(kLength, 1));
+	const DecodeResult result = planner.frameAt(timeOf(kLength - 1));
+	REQUIRE(result.status == DecodeStatus::Ok);
+	CHECK(result.frame.pts == kLength - 1);
+	CHECK(planner.heldFrames() == static_cast<size_t>(kLength));
+}
+
+TEST_CASE("DecodePlanner makes room without walking again over the frames it gave back")
+{
+	// Room for one frame, so that each frame that comes out gives back the one before it:
+	// halfway into the first of two long GOPs, then to the end of the second and a few steps
+	// back in it, a pass from its keyframe each. Walking from an end of a GOP over the
+	// frames given back, every frame would cost about as many steps as the GOP has packets.
+	constexpr int64_t kLength = int64_t{1} << 18;
+	constexpr int64_t kStepsBack = 8;
+	PassThroughDecoder decoder;
+	decoder.frameBytes = 1;
+	DecodePlannerConfig config;
+	config.maxBytes = 1;
+	DecodePlanner planner(decoder, config);
+	planner.load(makeLongClip(kLength, 2));
+	std::vector<int64_t> frames = {kLength / 2};
+	for (int64_t frame = 2 * kLength - 1; frame >= 2 * kLength - 1 - kStepsBack; --frame) {
+		frames.push_back(frame);
+	}
+	for (const int64_t frame : frames) {
+		const DecodeResult result = planner.frameAt(timeOf(frame));
+		REQUIRE(result.status == DecodeStatus::Ok);
+		REQUIRE(result.frame.pts == frame);
+	}
+	CHECK(planner.heldFrames() == 1);
 }
 
 TEST_CASE("DecodePlanner reports a frame the decoder never gives once, under the cap too")
