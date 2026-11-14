@@ -10,6 +10,7 @@
 #include "TempDirectory.hpp"
 
 #include <catch2/catch_test_macros.hpp>
+#include <catch2/matchers/catch_matchers_string.hpp>
 
 #include <algorithm>
 #include <cstdint>
@@ -22,6 +23,7 @@
 #include <system_error>
 #include <vector>
 
+using Catch::Matchers::ContainsSubstring;
 using tapeloop::CaptureSource;
 using tapeloop::Clip;
 using tapeloop::File;
@@ -335,7 +337,8 @@ TEST_CASE("a writer never numbers a segment kOwnFile, and the next capture write
 	// 4294967293 is free; past it are a taken number and kOwnFile.
 	File(dir.path() / "data" / "a-4294967292.tpls", File::Mode::CreateNew).close();
 	File(dir.path() / "data" / "a-4294967294.tpls", File::Mode::CreateNew).close();
-	CHECK_THROWS_AS(writer.write(captureOf(dir.path(), {sourceOf("a", gops)}, "one")), std::runtime_error);
+	CHECK_THROWS_WITH(writer.write(captureOf(dir.path(), {sourceOf("a", gops)}, "one")),
+			  ContainsSubstring("no free segment number"));
 	CHECK(segmentsOf(dir.path()) ==
 	      std::vector<std::string>{"a-4294967292.tpls", "a-4294967293.tpls", "a-4294967294.tpls"});
 
@@ -345,6 +348,64 @@ TEST_CASE("a writer never numbers a segment kOwnFile, and the next capture write
 								 "a-4294967293.tpls", "a-4294967294.tpls"});
 	const std::optional<ReplayIndex> index = readManifest(two.manifest);
 	REQUIRE(index);
+	requireReadsBack(two.manifest, index->sources[0], gops);
+}
+
+namespace {
+
+std::string lowerCase(std::string text)
+{
+	for (char &c : text) {
+		if (c >= 'A' && c <= 'Z') {
+			c = static_cast<char>(c - 'A' + 'a');
+		}
+	}
+	return text;
+}
+
+void createIgnoringCase(const fs::path &path)
+{
+	const std::string name = lowerCase(path.filename().string());
+	for (const fs::directory_entry &entry : fs::directory_iterator(path.parent_path())) {
+		if (lowerCase(entry.path().filename().string()) == name) {
+			throw std::system_error(std::make_error_code(std::errc::file_exists), path.string());
+		}
+	}
+}
+
+// While it lives, a File created new fails as on a file system that ignores letter case,
+// as NTFS and APFS do by default, when the folder holds its name in any case.
+class CaseInsensitiveCreates {
+public:
+	CaseInsensitiveCreates() { tapeloop::setCreateHook(createIgnoringCase); }
+	~CaseInsensitiveCreates() { tapeloop::setCreateHook(nullptr); }
+	CaseInsensitiveCreates(const CaseInsensitiveCreates &) = delete;
+	CaseInsensitiveCreates &operator=(const CaseInsensitiveCreates &) = delete;
+};
+
+} // namespace
+
+TEST_CASE("segment names taken in another letter case fail one capture, not every one")
+{
+	TempDirectory dir;
+	const Gops gops = makeGops(2);
+	fs::create_directories(dir.path() / "data");
+	File(dir.path() / "data" / "a-4294967293.tpls", File::Mode::CreateNew).close();
+	File(dir.path() / "data" / "a-4294967294.TPLS", File::Mode::CreateNew).close();
+	const CaseInsensitiveCreates creates;
+	ReplayWriter writer;
+	// The listing shows only the first name, so the writer goes for 4294967294, finds it
+	// taken, and reaches kOwnFile.
+	CHECK_THROWS_WITH(writer.write(captureOf(dir.path(), {sourceOf("a", gops)}, "one")),
+			  ContainsSubstring("no free segment number"));
+
+	// The number found taken counts now, so the writer starts below the run up to kOwnFile.
+	const WrittenReplay two = writer.write(captureOf(dir.path(), {sourceOf("a", gops)}, "two"));
+	CHECK(segmentsOf(dir.path()) ==
+	      std::vector<std::string>{"a-000001.tpls", "a-4294967293.tpls", "a-4294967294.TPLS"});
+	const std::optional<ReplayIndex> index = readManifest(two.manifest);
+	REQUIRE(index);
+	CHECK(index->sources[0].gops.front().segment == 1);
 	requireReadsBack(two.manifest, index->sources[0], gops);
 }
 

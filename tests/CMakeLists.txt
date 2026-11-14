@@ -36,6 +36,9 @@ FetchContent_MakeAvailable(Catch2)
 set_target_properties(Catch2 Catch2WithMain PROPERTIES COMPILE_WARNING_AS_ERROR OFF)
 
 add_subdirectory(../src/core core)
+# The tests make the creation of the core's files fail through a hook that the plugin is
+# built without.
+target_compile_definitions(tapeloop-core PUBLIC TAPELOOP_FILE_HOOK)
 
 add_executable(tapeloop-core-tests)
 target_sources(

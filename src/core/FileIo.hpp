@@ -72,4 +72,11 @@ bool renameIfFree(const std::filesystem::path &from, const std::filesystem::path
 // such setting.
 bool lowerThreadIoPriority() noexcept;
 
+#ifdef TAPELOOP_FILE_HOOK
+// Built only into the core tests: a File created new calls the hook first, so that a test
+// can make the creation fail by throwing, as a file system would. Null removes it.
+using CreateHook = void (*)(const std::filesystem::path &path);
+void setCreateHook(CreateHook hook) noexcept;
+#endif
+
 } // namespace tapeloop

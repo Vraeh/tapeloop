@@ -9,6 +9,10 @@
 #include <system_error>
 #include <utility>
 
+#ifdef TAPELOOP_FILE_HOOK
+#include <atomic>
+#endif
+
 #ifdef _WIN32
 #ifndef WIN32_LEAN_AND_MEAN
 #define WIN32_LEAN_AND_MEAN
@@ -125,6 +129,32 @@ std::string utf8FromPath(const std::filesystem::path &path)
 
 #endif
 
+#ifdef TAPELOOP_FILE_HOOK
+
+namespace {
+
+std::atomic<CreateHook> &createHook() noexcept
+{
+	static std::atomic<CreateHook> hook{nullptr};
+	return hook;
+}
+
+void beforeCreate(const std::filesystem::path &path)
+{
+	if (const CreateHook hook = createHook().load()) {
+		hook(path);
+	}
+}
+
+} // namespace
+
+void setCreateHook(CreateHook hook) noexcept
+{
+	createHook().store(hook);
+}
+
+#endif
+
 File::File(File &&other) noexcept
 #ifdef _WIN32
 	: handle_(std::exchange(other.handle_, nullptr))
@@ -156,6 +186,11 @@ File::~File()
 
 File::File(const std::filesystem::path &path, Mode mode)
 {
+#ifdef TAPELOOP_FILE_HOOK
+	if (mode == Mode::CreateNew) {
+		beforeCreate(path);
+	}
+#endif
 	const DWORD access = mode == Mode::ReadOnly ? GENERIC_READ : GENERIC_READ | GENERIC_WRITE;
 	const DWORD disposition = mode == Mode::CreateNew ? CREATE_NEW : OPEN_EXISTING;
 	// Readers share with the writer that appends to the same segment.
@@ -267,6 +302,11 @@ bool lowerThreadIoPriority() noexcept
 
 File::File(const std::filesystem::path &path, Mode mode)
 {
+#ifdef TAPELOOP_FILE_HOOK
+	if (mode == Mode::CreateNew) {
+		beforeCreate(path);
+	}
+#endif
 	int flags = O_RDONLY;
 	if (mode == Mode::CreateNew) {
 		flags = O_RDWR | O_CREAT | O_EXCL;

@@ -15,6 +15,7 @@
 #include <memory>
 #include <mutex>
 #include <optional>
+#include <set>
 #include <span>
 #include <string>
 #include <unordered_map>
@@ -160,6 +161,12 @@ private:
 	std::filesystem::path folder_;
 	ReplayId broadcast_{};
 	std::map<std::string, SourceState> sources_;
+	// For each source, the segment numbers whose name was found taken on creating it,
+	// counted with the folder listing when the source starts over. The listing can miss
+	// such a name: a file system that ignores letter case, as NTFS and APFS do by default,
+	// takes one that differs from it only in case. Names planted that way up to kOwnFile
+	// would otherwise fail every capture of the source.
+	std::map<std::string, std::set<uint32_t>> takenSequences_;
 	// Segments rolled over during the capture being written, still to be flushed.
 	std::vector<File> retired_;
 	bool newSegments_ = false;

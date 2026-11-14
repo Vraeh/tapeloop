@@ -274,6 +274,7 @@ WrittenReplay ReplayWriter::write(const ReplayCapture &capture)
 	}
 	if (capture.folder != folder_) {
 		sources_.clear();
+		takenSequences_.clear();
 		folder_ = capture.folder;
 		broadcast_ = newReplayId();
 	}
@@ -348,6 +349,10 @@ ReplayWriter::SourceState &ReplayWriter::stateOf(const std::string &key)
 	}
 	if (!errors.empty()) {
 		throw std::runtime_error(errors.front());
+	}
+	const auto remembered = takenSequences_.find(key);
+	if (remembered != takenSequences_.end()) {
+		taken.insert(taken.end(), remembered->second.begin(), remembered->second.end());
 	}
 	SourceState state;
 	state.nextSequence = nextSequenceAfter(std::move(taken));
@@ -426,9 +431,9 @@ void ReplayWriter::writeBatch(SourceState &state)
 ReplayWriter::Segment &ReplayWriter::openSegment(SourceState &state, const CaptureSource &source)
 {
 	Segment segment;
-	// A name taken since the folder was listed is passed over. Numbers never go back down to a
-	// free one: it can be the name of a segment of this writer, deleted since, that the places
-	// of the GOPs it wrote still refer to.
+	// A name taken since the folder was listed, or one the listing missed, is passed over and
+	// remembered. Numbers never go back down to a free one: it can be the name of a segment of
+	// this writer, deleted since, that the places of the GOPs it wrote still refer to.
 	while (!segment.file.isOpen()) {
 		if (state.nextSequence == kOwnFile) {
 			throw std::runtime_error("no free segment number for a source in " + utf8FromPath(folder_));
@@ -442,6 +447,7 @@ ReplayWriter::Segment &ReplayWriter::openSegment(SourceState &state, const Captu
 			if (error.code() != std::errc::file_exists) {
 				throw;
 			}
+			takenSequences_[source.key].insert(segment.sequence);
 		}
 	}
 	newSegments_ = true;
