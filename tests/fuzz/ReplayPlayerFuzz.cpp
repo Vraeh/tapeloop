@@ -118,6 +118,9 @@ extern "C" int LLVMFuzzerTestOneInput(const uint8_t *data, size_t size)
 		const std::optional<size_t> index = player.sequence().indexOf(source);
 		const std::vector<SequenceEntry> before(player.sequence().entries().begin(),
 							player.sequence().entries().end());
+		for (size_t i = 0; i < kKeys; ++i) {
+			require(player.sequence().indexOf(keyOf(i)) == placeOf(before, keyOf(i)));
+		}
 		// Where the rules say the replay goes when the source on air leaves the list or is
 		// hidden: from `from` in the list as it is after the edit. Empty to stay as it is.
 		std::optional<size_t> expectedFrom;
