@@ -269,7 +269,6 @@ void ReplayPlayer::tick(Nanoseconds elapsed) noexcept
 			playhead_.load(std::move(loadingTimes_));
 			clip_ = loaded;
 			ended_ = false;
-			onScreen_.reset();
 		}
 		if (i < count) {
 			apply(playhead_, applying_[i]);
@@ -304,7 +303,7 @@ void ReplayPlayer::tick(Nanoseconds elapsed) noexcept
 		state_.frames = frames_;
 		state_.clip = clip_;
 		state_.ended = ended_;
-		if (!onScreen_) {
+		if (loadAt) {
 			state_.drawn.reset();
 		}
 	}
@@ -329,6 +328,17 @@ bool ReplayPlayer::render(PictureRenderer &renderer, uint32_t width, uint32_t he
 		gpuWidth = gpuWidth_;
 		gpuHeight = gpuHeight_;
 	}
+	// The clip the last tick took in, which a tick on another thread may change while
+	// this render() draws. Taken after the copy, so that the copy is never of a later
+	// clip, which would be dropped.
+	uint64_t clip = 0;
+	{
+		const std::lock_guard lock(mutex_);
+		clip = state_.clip;
+	}
+	if (onScreen_ && onScreen_->clip != clip) {
+		onScreen_.reset();
+	}
 	if (gpu_) {
 		// A picture of a size the GpuPictures is not prepared for could not be published.
 		// Preparing it changes the generation, which brings that picture back; when it
@@ -349,10 +359,10 @@ bool ReplayPlayer::render(PictureRenderer &renderer, uint32_t width, uint32_t he
 	}
 
 	const Copy &copy = copies_[front_];
-	const bool current = took && copy.clip == clip_;
+	const bool current = took && copy.clip == clip;
 	if (current && !copy.onGpu) {
 		if (renderer.upload(copy.picture)) {
-			onScreen_ = Shown{copy.frame, copy.picture.width, copy.picture.height, false};
+			onScreen_ = Shown{clip, copy.frame, copy.picture.width, copy.picture.height, false};
 		} else {
 			onScreen_.reset();
 		}
@@ -360,8 +370,8 @@ bool ReplayPlayer::render(PictureRenderer &renderer, uint32_t width, uint32_t he
 		// The picture published last may be newer than the copy that said one was, but
 		// it is of the same clip or of one after it, never of one before.
 		const std::optional<GpuPictures::Tag> tag = gpu_->latch();
-		if (tag && tag->clip == clip_) {
-			onScreen_ = Shown{tag->frame, tag->width, tag->height, true};
+		if (tag && tag->clip == clip) {
+			onScreen_ = Shown{clip, tag->frame, tag->width, tag->height, true};
 		} else {
 			onScreen_.reset();
 		}
@@ -373,9 +383,11 @@ bool ReplayPlayer::render(PictureRenderer &renderer, uint32_t width, uint32_t he
 
 	const std::lock_guard lock(mutex_);
 	if (drawn) {
-		state_.drawn = onScreen_->frame;
 		state_.width = onScreen_->width;
 		state_.height = onScreen_->height;
+	}
+	if (drawn && clip == state_.clip) {
+		state_.drawn = onScreen_->frame;
 	} else {
 		state_.drawn.reset();
 	}

@@ -14,8 +14,8 @@ namespace tapeloop::obs {
 
 // Where the replay player puts pictures a decoder keeps on the GPU, which it cannot copy
 // into memory of its own, for render() to draw: SharedPictures on Direct3D 11. publish()
-// runs on the decoding thread; everything else on the graphics thread, inside the
-// graphics context.
+// runs on the decoding thread; everything else inside the graphics context, on whichever
+// thread draws the player.
 class GpuPictures {
 public:
 	// What a picture was published as, given back while it is the one on screen.
