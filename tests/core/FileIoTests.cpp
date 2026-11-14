@@ -3,6 +3,7 @@
 
 #include "core/FileIo.hpp"
 
+#include "FifoWatchdog.hpp"
 #include "TempDirectory.hpp"
 
 #include <catch2/catch_test_macros.hpp>
@@ -10,6 +11,7 @@
 #include <algorithm>
 #include <cstdint>
 #include <filesystem>
+#include <initializer_list>
 #include <string>
 #include <system_error>
 #include <thread>
@@ -108,6 +110,37 @@ TEST_CASE("a directory cannot be read as a file")
 	};
 	CHECK_THROWS_AS(readDirectory(), std::system_error);
 }
+
+TEST_CASE("a device is not opened as a file")
+{
+#ifdef _WIN32
+	const std::filesystem::path device = L"\\\\.\\NUL";
+#else
+	const std::filesystem::path device = "/dev/null";
+#endif
+	for (const File::Mode mode : {File::Mode::ReadOnly, File::Mode::ReadWrite}) {
+		try {
+			File file(device, mode);
+			FAIL("opened a device as a file");
+		} catch (const std::system_error &e) {
+			CHECK(e.code() == std::errc::invalid_argument);
+		}
+	}
+}
+
+#ifndef _WIN32
+TEST_CASE("a named pipe is refused without waiting for a writer")
+{
+	TempDirectory dir;
+	const auto path = dir.path() / "replay.tplp";
+	// The watchdog lets an open that waits for a writer go, so that it fails the test
+	// instead of hanging it.
+	const tapeloop::test::FifoWatchdog watchdog(path);
+	CHECK_THROWS_AS(File(path, File::Mode::ReadOnly), std::system_error);
+	CHECK_THROWS_AS(File(path, File::Mode::ReadWrite), std::system_error);
+	CHECK_FALSE(watchdog.released());
+}
+#endif
 
 TEST_CASE("a failed call reports the error it got and the path")
 {

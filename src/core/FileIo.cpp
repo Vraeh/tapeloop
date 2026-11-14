@@ -73,6 +73,39 @@ int openFile(const std::filesystem::path &path, int flags)
 	return fd;
 }
 
+[[noreturn]] void closeAndThrow(int fd, int code, std::string_view what, const std::filesystem::path &path)
+{
+	::close(fd);
+	throw std::system_error(code, std::generic_category(), describe(what, path));
+}
+
+// A named pipe put where a replay file was would hold the open until a writer came, and
+// what a path was when it was listed says nothing of what is there now. So the open
+// neither waits nor makes a terminal the process's own, and the type is taken from the
+// descriptor it gives.
+int openRegularFile(const std::filesystem::path &path, int flags)
+{
+	const int fd = openFile(path, flags | O_NONBLOCK | O_NOCTTY);
+	if (fd < 0) {
+		throwErrno("cannot open", &path);
+	}
+	struct stat info{};
+	if (::fstat(fd, &info) != 0) {
+		closeAndThrow(fd, errno, "cannot open", path);
+	}
+	if (!S_ISREG(info.st_mode)) {
+		closeAndThrow(fd, EINVAL, "not a regular file:", path);
+	}
+	// Only the open is kept from waiting: reads and writes wait as they did.
+	// NOLINTNEXTLINE(cppcoreguidelines-pro-type-vararg): fcntl takes its argument as a variadic one.
+	const int status = ::fcntl(fd, F_GETFL);
+	// NOLINTNEXTLINE(cppcoreguidelines-pro-type-vararg): fcntl takes its argument as a variadic one.
+	if (status < 0 || ::fcntl(fd, F_SETFL, status & ~O_NONBLOCK) != 0) {
+		closeAndThrow(fd, errno, "cannot open", path);
+	}
+	return fd;
+}
+
 #endif
 
 } // namespace
@@ -163,6 +196,14 @@ File::File(const std::filesystem::path &path, Mode mode)
 	HANDLE handle = CreateFileW(path.c_str(), access, share, nullptr, disposition, FILE_ATTRIBUTE_NORMAL, nullptr);
 	if (handle == INVALID_HANDLE_VALUE) {
 		throwLastError("cannot open", &path);
+	}
+	// A path can lead to a named pipe or a device, whose reads can wait for a writer
+	// with no end. Anything but a file on a disk is refused by the handle's type, as
+	// what the path was when it was listed says nothing of what is there now.
+	if (GetFileType(handle) != FILE_TYPE_DISK) {
+		CloseHandle(handle);
+		throw std::system_error(std::make_error_code(std::errc::invalid_argument),
+					describe("not a regular file:", path));
 	}
 	handle_ = handle;
 }
@@ -273,10 +314,7 @@ File::File(const std::filesystem::path &path, Mode mode)
 	} else if (mode == Mode::ReadWrite) {
 		flags = O_RDWR;
 	}
-	fd_ = openFile(path, flags);
-	if (fd_ < 0) {
-		throwErrno("cannot open", &path);
-	}
+	fd_ = openRegularFile(path, flags);
 }
 
 bool File::isOpen() const noexcept

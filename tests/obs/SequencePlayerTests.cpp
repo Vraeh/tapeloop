@@ -3,6 +3,7 @@
 
 #include "../core/AllocationCounter.hpp"
 #include "../core/FakeDecoder.hpp"
+#include "../core/FifoWatchdog.hpp"
 #include "../core/StoredReplays.hpp"
 #include "../core/TempDirectory.hpp"
 #include "LogCounter.hpp"
@@ -1117,6 +1118,28 @@ TEST_CASE_METHOD(ObsFixture, "a replay that did not go on air says why until the
 	// With a replay on air, the press does nothing whatever it names.
 	CHECK(refusalOf(damaged) == AirRefusal::None);
 }
+
+#ifndef _WIN32
+TEST_CASE_METHOD(ObsFixture, "a replay whose manifest is a named pipe is refused without waiting for a writer",
+		 "[obs][sequence][air]")
+{
+	AirSetup setup;
+	tapeloop::FoundReplay found;
+	found.manifest = setup.folder.path() / "pipe.tplp";
+	// The watchdog lets a press that waits for a writer go, so that it fails the test
+	// instead of hanging it.
+	const tapeloop::test::FifoWatchdog watchdog(found.manifest);
+	found.broadcast = "Broadcast";
+	found.intact = true;
+	found.id = tapeloop::newReplayId();
+	found.sources = {{"a", "Camera a"}};
+	const uint64_t id = setup.library.addFound(found);
+	REQUIRE(id != 0);
+	CHECK_FALSE(setup.sequence->putOnAir(id));
+	CHECK(setup.sequence->airRefusal() == AirRefusal::Unreadable);
+	CHECK_FALSE(watchdog.released());
+}
+#endif
 
 TEST_CASE_METHOD(ObsFixture, "a replay that finds the channel taken on its way on air says so and leaves it",
 		 "[obs][sequence][air]")

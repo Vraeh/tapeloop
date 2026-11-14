@@ -5,6 +5,7 @@
 
 #include "core/FileIo.hpp"
 
+#include "FifoWatchdog.hpp"
 #include "StoredReplays.hpp"
 #include "SyntheticEncoder.hpp"
 #include "TempDirectory.hpp"
@@ -402,6 +403,22 @@ TEST_CASE("tags are written only into an intact manifest and when they fit")
 	CHECK_THROWS_AS(writer.writeTags(dir.path() / "missing.tplp", std::vector<std::string>{"Goal"}),
 			std::system_error);
 }
+
+#ifndef _WIN32
+TEST_CASE("a named pipe in place of a manifest is refused without waiting for a writer")
+{
+	TempDirectory dir;
+	ReplayWriter writer;
+	const fs::path manifest = writer.write(captureOf(dir.path(), {sourceOf("a", makeGops(2))})).manifest;
+	fs::remove(manifest);
+	// The watchdog lets a read that waits for a writer go, so that it fails the test
+	// instead of hanging it.
+	const tapeloop::test::FifoWatchdog watchdog(manifest);
+	CHECK_FALSE(tapeloop::readReplayIndex(manifest));
+	CHECK_THROWS_AS(writer.writeTags(manifest, std::vector<std::string>{"Goal"}), std::system_error);
+	CHECK_FALSE(watchdog.released());
+}
+#endif
 
 TEST_CASE("a scan finds every replay of every broadcast")
 {
