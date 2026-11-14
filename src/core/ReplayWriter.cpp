@@ -7,6 +7,7 @@
 #include "core/ReplayNames.hpp"
 
 #include <algorithm>
+#include <atomic>
 #include <functional>
 #include <memory>
 #include <optional>
@@ -113,9 +114,25 @@ std::optional<ReplayIndex> decodeManifestBytes(const ManifestBytes &bytes)
 	return decodeManifest(bytes.head, bytes.index, bytes.footer, bytes.size);
 }
 
+#ifdef TAPELOOP_COUNT_LOOKUPS
+std::atomic<size_t> &lookupCount() noexcept
+{
+	static std::atomic<size_t> count{0};
+	return count;
+}
+
+void countLookup() noexcept
+{
+	lookupCount().fetch_add(1, std::memory_order_relaxed);
+}
+#else
+void countLookup() noexcept {}
+#endif
+
 bool segmentsExist(const std::filesystem::path &manifest, const ReplayIndex &index)
 {
 	for (const SegmentFile &file : segmentFilesOf(index)) {
+		countLookup();
 		std::error_code error;
 		if (!std::filesystem::is_regular_file(segmentPath(manifest, index.sources[file.source], file.segment),
 						      error)) {
@@ -564,5 +581,12 @@ std::vector<SegmentFile> segmentFilesOf(const ReplayIndex &index)
 	files.erase(std::unique(files.begin(), files.end()), files.end());
 	return files;
 }
+
+#ifdef TAPELOOP_COUNT_LOOKUPS
+size_t segmentLookups() noexcept
+{
+	return lookupCount().load(std::memory_order_relaxed);
+}
+#endif
 
 } // namespace tapeloop

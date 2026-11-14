@@ -36,6 +36,9 @@ FetchContent_MakeAvailable(Catch2)
 set_target_properties(Catch2 Catch2WithMain PROPERTIES COMPILE_WARNING_AS_ERROR OFF)
 
 add_subdirectory(../src/core core)
+# Counts the segment files a scan looks up, for a test that bounds a scan's lookups
+# without timing it.
+target_compile_definitions(tapeloop-core PUBLIC TAPELOOP_COUNT_LOOKUPS)
 
 add_executable(tapeloop-core-tests)
 target_sources(

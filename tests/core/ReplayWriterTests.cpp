@@ -13,6 +13,7 @@
 #include <catch2/catch_test_macros.hpp>
 
 #include <algorithm>
+#include <cstddef>
 #include <cstdint>
 #include <filesystem>
 #include <memory>
@@ -564,6 +565,46 @@ TEST_CASE("a scan checks a segment a manifest goes back to")
 	CHECK_FALSE(tapeloop::scanReplays(dir.path()).replays.at(0).intact);
 	fs::copy_file(folder / "data" / "a-000001.tpls", folder / "data" / "a-000002.tpls");
 	CHECK(tapeloop::scanReplays(dir.path()).replays.at(0).intact);
+}
+
+TEST_CASE("a scan checks the segments of every source")
+{
+	TempDirectory dir;
+	const fs::path folder = dir.path() / "Liga 2026-10-09 21-00";
+	ReplayWriter().write(captureOf(folder, {sourceOf("a", makeGops(2)), sourceOf("b", makeGops(2))}));
+	CHECK(tapeloop::scanReplays(dir.path()).replays.at(0).intact);
+
+	fs::remove(folder / "data" / "b-000001.tpls");
+	CHECK_FALSE(tapeloop::scanReplays(dir.path()).replays.at(0).intact);
+}
+
+TEST_CASE("a scan looks up each segment file once")
+{
+	// Looked up once per change of segment in each source, a manifest whose GOPs go back
+	// and forth between two segments kept the store thread busy for seconds.
+	TempDirectory dir;
+	const fs::path folder = dir.path() / "Liga 2026-10-09 21-00";
+	const WrittenReplay written =
+		ReplayWriter().write(captureOf(folder, {sourceOf("a", makeGops(500)), sourceOf("b", makeGops(500))}));
+	REQUIRE(segmentsOf(folder) == std::vector<std::string>{"a-000001.tpls", "b-000001.tpls"});
+	std::optional<ReplayIndex> index = readManifest(written.manifest);
+	REQUIRE(index);
+	for (StoredSource &source : index->sources) {
+		for (size_t g = 1; g < source.gops.size(); g += 2) {
+			source.gops[g].segment = 2;
+		}
+	}
+	fs::remove(written.manifest);
+	File(written.manifest, File::Mode::CreateNew).writeAt(0, tapeloop::encodeManifest(*index, {}));
+	fs::copy_file(folder / "data" / "a-000001.tpls", folder / "data" / "a-000002.tpls");
+	fs::copy_file(folder / "data" / "b-000001.tpls", folder / "data" / "b-000002.tpls");
+
+	const size_t before = tapeloop::segmentLookups();
+	CHECK(tapeloop::scanReplays(dir.path()).replays.at(0).intact);
+	CHECK(tapeloop::segmentLookups() - before == 4);
+
+	fs::remove(folder / "data" / "b-000002.tpls");
+	CHECK_FALSE(tapeloop::scanReplays(dir.path()).replays.at(0).intact);
 }
 
 TEST_CASE("each file that holds a replay's GOPs is listed once")

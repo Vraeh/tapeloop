@@ -221,10 +221,18 @@ struct SegmentFile {
 	bool operator==(const SegmentFile &) const = default;
 };
 
-// Each file that holds GOPs of the replay once, by source and then sequence, however many
-// GOPs it holds and in whatever order the index lists them. Sources whose keys give one
-// file name share their files, known by the first of those sources. What is done per
-// file then grows with the files that exist, not with the length of the index.
+// Lists each file that holds GOPs of the replay once, ordered by source and sequence.
+// Sources whose keys give one file name share their files, listed under the first of
+// them. A scan looks up only these, so it makes one lookup per distinct file name and
+// sequence the replay uses, however many GOPs refer to each. Where file names are not
+// case sensitive, names that differ only in case are still looked up apart, so the
+// lookups can be more than the files that exist.
 std::vector<SegmentFile> segmentFilesOf(const ReplayIndex &index);
+
+#ifdef TAPELOOP_COUNT_LOOKUPS
+// The segment files scans have looked up so far, so that a test can bound what a scan
+// costs without timing it. Only the core tests and fuzzers build it.
+size_t segmentLookups() noexcept;
+#endif
 
 } // namespace tapeloop
