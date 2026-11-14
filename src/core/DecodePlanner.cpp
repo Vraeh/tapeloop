@@ -76,6 +76,9 @@ void DecodePlanner::load(std::unique_ptr<GopSource> gops)
 		decoder_.close();
 		started_.reset();
 	}
+	// Sized for the longest GOP a pass went over, the index goes with the clip. Assigning {}
+	// would keep its memory, as that picks the initializer list overload.
+	packetsByPts_ = decltype(packetsByPts_)();
 	fresh_ = true;
 	gops_ = std::move(gops);
 	streamGop_.reset();
@@ -152,6 +155,11 @@ size_t DecodePlanner::heldFrames() const noexcept
 		held += kept.received;
 	}
 	return held;
+}
+
+size_t DecodePlanner::indexBytes() const noexcept
+{
+	return packetsByPts_.capacity() * sizeof(decltype(packetsByPts_)::value_type);
 }
 
 DecodePlanner::KeptGop &DecodePlanner::keep(size_t gop)
@@ -244,9 +252,6 @@ bool DecodePlanner::makeRoom(KeptGop &kept, size_t bytes, size_t wanted) noexcep
 		// one shown.
 		const size_t stop = std::max(wanted + 1, passNext_);
 		kept.high = dropDown(kept, std::min(kept.high, count), std::max(stop, kept.low), bytes);
-		if (kept.spared >= stop) {
-			dropSpared(kept, bytes, wanted);
-		}
 	}
 	dropSpared(kept, bytes, wanted);
 	// Then the earliest, in two parts: the pass brings frames out right behind passNext_,
@@ -258,7 +263,9 @@ bool DecodePlanner::makeRoom(KeptGop &kept, size_t bytes, size_t wanted) noexcep
 	kept.low = behind;
 	const size_t from = std::max(passNext_, aheadFrom_);
 	const size_t ahead = dropUp(kept, from, std::min(kept.high, count), bytes, wanted);
-	aheadFrom_ = from <= wanted && wanted < ahead && kept.frames[wanted] ? wanted : ahead;
+	// The walk skips the frame asked for, yet leaves nothing held: a pass is asked only for
+	// a frame not held, and once it holds it, passNext_ is past it.
+	aheadFrom_ = ahead;
 	return fits(bytes);
 }
 
@@ -379,6 +386,7 @@ DecodeStatus DecodePlanner::fail(DecodeStatus status) noexcept
 		releaseAll();
 		decoder_.close();
 		started_.reset();
+		packetsByPts_ = decltype(packetsByPts_)();
 		fresh_ = true;
 	}
 	return status;

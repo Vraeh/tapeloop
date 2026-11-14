@@ -110,6 +110,9 @@ public:
 	size_t keptGopCount() const noexcept { return kept_.size(); }
 	size_t heldFrames() const noexcept;
 	size_t heldBytes() const noexcept { return heldBytes_; }
+	// The memory taken to find the packet of each frame that comes out: as much as the
+	// longest GOP a pass went over since the clip was loaded or the device was lost.
+	size_t indexBytes() const noexcept;
 
 private:
 	struct KeptGop {
@@ -160,8 +163,8 @@ private:
 	DecodeStatus receiveAll(KeptGop &kept, size_t wanted);
 	// The packet of started_ a frame of that presentation time comes from.
 	std::optional<size_t> packetOf(int64_t pts) const noexcept;
-	// Ends a pass that failed. A lost device also lets go of every kept frame and of
-	// the decoder, which the next pass opens again.
+	// Ends a pass that failed. A lost device also lets go of every kept frame, of the
+	// index and of the decoder, which the next pass opens again.
 	DecodeStatus fail(DecodeStatus status) noexcept;
 
 	FrameDecoder &decoder_;

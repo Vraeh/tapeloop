@@ -907,6 +907,29 @@ TEST_CASE("DecodePlanner makes room without walking again over the frames it gav
 	CHECK(planner.heldFrames() == 1);
 }
 
+TEST_CASE("DecodePlanner lets go of a long GOP's index with the clip and with a lost device")
+{
+	// The index grows to the longest GOP a pass went over, so kept on, one long GOP would
+	// hold its memory for as long as the player.
+	constexpr int64_t kLength = 4096;
+	FakeDecoder decoder([](int64_t pts) { return pts % kLength == 0; }, 0);
+	DecodePlanner planner(decoder);
+	const Clip clip = makeLongClip(kLength, 1);
+	planner.load(clip);
+	REQUIRE(planner.frameAt(timeOf(kLength - 1)).status == DecodeStatus::Ok);
+	CHECK(planner.indexBytes() >= static_cast<size_t>(kLength));
+	planner.load(nullptr);
+	CHECK(planner.indexBytes() == 0);
+
+	planner.load(clip);
+	REQUIRE(planner.frameAt(timeOf(kLength / 2)).status == DecodeStatus::Ok);
+	REQUIRE(planner.indexBytes() >= static_cast<size_t>(kLength));
+	decoder.receiveFailure = DecodeStatus::DeviceLost;
+	REQUIRE(planner.frameAt(timeOf(kLength - 1)).status == DecodeStatus::DeviceLost);
+	CHECK(planner.indexBytes() == 0);
+	CHECK(decoder.violations == 0);
+}
+
 TEST_CASE("DecodePlanner reports a frame the decoder never gives once, under the cap too")
 {
 	FakeDecoder decoder = makeDecoder();
