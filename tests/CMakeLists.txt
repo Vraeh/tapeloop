@@ -39,6 +39,8 @@ add_subdirectory(../src/core core)
 # Counts what a parameter set lookup compares, for a test that must fail rather than hang
 # when a lookup reads the whole configuration again.
 target_compile_definitions(tapeloop-core PUBLIC TAPELOOP_COUNT_COMPARISONS)
+# Shows a test which directories are flushed, which no file system call can tell after.
+target_compile_definitions(tapeloop-core PUBLIC TAPELOOP_OBSERVE_DIRECTORY_SYNCS)
 
 add_executable(tapeloop-core-tests)
 target_sources(

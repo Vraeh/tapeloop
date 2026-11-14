@@ -59,6 +59,14 @@ private:
 // its renames are written through and its file creation is durable with the file.
 void syncDirectory(const std::filesystem::path &directory);
 
+#ifdef TAPELOOP_OBSERVE_DIRECTORY_SYNCS
+// Called with each directory syncDirectory flushed, so that a test can see which entries
+// were made durable; nullptr stops it. Only the test project builds it. On Windows it is
+// called too, for what the code asked of a platform that has nothing to flush.
+using DirectorySyncObserver = void (*)(const std::filesystem::path &directory);
+void observeDirectorySyncs(DirectorySyncObserver observer) noexcept;
+#endif
+
 // Renames from to to, replacing to if it exists, and returns once the rename is durable.
 void renameFile(const std::filesystem::path &from, const std::filesystem::path &to);
 

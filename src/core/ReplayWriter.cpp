@@ -304,12 +304,18 @@ void ReplayWriter::prepareFolder()
 	if (std::filesystem::is_directory(data)) {
 		return;
 	}
-	const bool newFolder = !std::filesystem::exists(folder_);
-	std::filesystem::create_directories(data);
-	if (newFolder) {
-		syncDirectory(folder_.parent_path());
+	// Each directory made is a new entry of its parent, up to the first one that existed:
+	// the recording folder itself when the base folder is new.
+	std::vector<std::filesystem::path> made;
+	for (std::filesystem::path level = data; level.has_relative_path() && !std::filesystem::exists(level);
+	     level = level.parent_path()) {
+		made.push_back(level);
 	}
-	syncDirectory(folder_);
+	std::filesystem::create_directories(data);
+	for (const std::filesystem::path &level : made) {
+		const std::filesystem::path parent = level.parent_path();
+		syncDirectory(parent.empty() ? std::filesystem::path(".") : parent);
+	}
 }
 
 ReplayWriter::SourceState &ReplayWriter::stateOf(const std::string &key)

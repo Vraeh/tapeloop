@@ -9,6 +9,10 @@
 #include <system_error>
 #include <utility>
 
+#ifdef TAPELOOP_OBSERVE_DIRECTORY_SYNCS
+#include <atomic>
+#endif
+
 #ifdef _WIN32
 #ifndef WIN32_LEAN_AND_MEAN
 #define WIN32_LEAN_AND_MEAN
@@ -45,6 +49,24 @@ std::string describe(std::string_view what, const std::filesystem::path &path)
 	return text;
 }
 
+#ifdef TAPELOOP_OBSERVE_DIRECTORY_SYNCS
+std::atomic<DirectorySyncObserver> &directorySyncObserver() noexcept
+{
+	static std::atomic<DirectorySyncObserver> observer{nullptr};
+	return observer;
+}
+
+void noteDirectorySync(const std::filesystem::path &directory)
+{
+	const DirectorySyncObserver observer = directorySyncObserver().load();
+	if (observer != nullptr) {
+		observer(directory);
+	}
+}
+#else
+void noteDirectorySync(const std::filesystem::path &) noexcept {}
+#endif
+
 #ifdef _WIN32
 
 // The code is read before the message is built, which can change it.
@@ -76,6 +98,13 @@ int openFile(const std::filesystem::path &path, int flags)
 #endif
 
 } // namespace
+
+#ifdef TAPELOOP_OBSERVE_DIRECTORY_SYNCS
+void observeDirectorySyncs(DirectorySyncObserver observer) noexcept
+{
+	directorySyncObserver().store(observer);
+}
+#endif
 
 #ifdef _WIN32
 
@@ -236,7 +265,10 @@ void File::close() noexcept
 	}
 }
 
-void syncDirectory(const std::filesystem::path &) {}
+void syncDirectory(const std::filesystem::path &directory)
+{
+	noteDirectorySync(directory);
+}
 
 void renameFile(const std::filesystem::path &from, const std::filesystem::path &to)
 {
@@ -375,6 +407,7 @@ void syncDirectory(const std::filesystem::path &directory)
 		throw std::system_error(error, std::generic_category(),
 					describe("cannot flush the directory", directory));
 	}
+	noteDirectorySync(directory);
 }
 
 void renameFile(const std::filesystem::path &from, const std::filesystem::path &to)

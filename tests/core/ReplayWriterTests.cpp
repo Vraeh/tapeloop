@@ -279,6 +279,46 @@ TEST_CASE("a writer appends only to segments it created")
 	requireReadsBack(after.manifest, second->sources[0], gops);
 }
 
+namespace {
+
+std::vector<fs::path> &syncedDirectories()
+{
+	static std::vector<fs::path> synced;
+	return synced;
+}
+
+void noteSync(const fs::path &directory)
+{
+	syncedDirectories().push_back(directory);
+}
+
+} // namespace
+
+TEST_CASE("a new base folder is made durable in the folder that holds it")
+{
+	TempDirectory dir;
+	const fs::path recordings = dir.path() / "Videos";
+	fs::create_directory(recordings);
+	const fs::path base = recordings / "Tapeloop";
+	const fs::path folder = base / "Liga 2026-10-09 21-00";
+
+	syncedDirectories().clear();
+	tapeloop::observeDirectorySyncs(noteSync);
+	ReplayWriter().write(captureOf(folder, {sourceOf("a", makeGops(2))}));
+	tapeloop::observeDirectorySyncs(nullptr);
+
+	const std::vector<fs::path> &synced = syncedDirectories();
+	const auto wasSynced = [&synced](const fs::path &directory) {
+		return std::find(synced.begin(), synced.end(), directory) != synced.end();
+	};
+	// Each folder that gained an entry, the recording folder that already existed too.
+	CHECK(wasSynced(recordings));
+	CHECK(wasSynced(base));
+	CHECK(wasSynced(folder));
+	CHECK(wasSynced(folder / "data"));
+	CHECK_FALSE(wasSynced(dir.path()));
+}
+
 TEST_CASE("a writer starts over in another broadcast folder")
 {
 	TempDirectory dir;
