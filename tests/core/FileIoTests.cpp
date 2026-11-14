@@ -4,11 +4,13 @@
 #include "core/FileIo.hpp"
 
 #include "FifoWatchdog.hpp"
+#include "LeaseHolder.hpp"
 #include "TempDirectory.hpp"
 
 #include <catch2/catch_test_macros.hpp>
 
 #include <algorithm>
+#include <chrono>
 #include <cstdint>
 #include <filesystem>
 #include <initializer_list>
@@ -17,6 +19,12 @@
 #include <thread>
 #include <utility>
 #include <vector>
+
+#ifndef _WIN32
+#include <fcntl.h>
+#include <sys/resource.h>
+#include <sys/stat.h>
+#endif
 
 using tapeloop::File;
 using tapeloop::test::TempDirectory;
@@ -38,6 +46,30 @@ std::vector<uint8_t> readAll(File &file)
 	REQUIRE(file.readAt(0, bytes) == bytes.size());
 	return bytes;
 }
+
+#ifndef _WIN32
+// The status flags of the one descriptor this process has open on the file at path.
+int statusFlagsOf(const std::filesystem::path &path)
+{
+	struct stat wanted{};
+	REQUIRE(::stat(path.c_str(), &wanted) == 0);
+	rlimit limit{};
+	REQUIRE(::getrlimit(RLIMIT_NOFILE, &limit) == 0);
+	const int end = static_cast<int>(std::min<rlim_t>(limit.rlim_cur, 65536));
+	int found = -1;
+	for (int fd = 0; fd < end; ++fd) {
+		struct stat info{};
+		if (::fstat(fd, &info) == 0 && info.st_dev == wanted.st_dev && info.st_ino == wanted.st_ino) {
+			REQUIRE(found < 0);
+			found = fd;
+		}
+	}
+	REQUIRE(found >= 0);
+	const int flags = ::fcntl(found, F_GETFL);
+	REQUIRE(flags >= 0);
+	return flags;
+}
+#endif
 
 } // namespace
 
@@ -139,6 +171,68 @@ TEST_CASE("a named pipe is refused without waiting for a writer")
 	CHECK_THROWS_AS(File(path, File::Mode::ReadOnly), std::system_error);
 	CHECK_THROWS_AS(File(path, File::Mode::ReadWrite), std::system_error);
 	CHECK_FALSE(watchdog.released());
+}
+
+TEST_CASE("only the open of a file is kept from waiting")
+{
+	TempDirectory dir;
+	const auto path = dir.path() / "segment";
+	{
+		const File created(path, File::Mode::CreateNew);
+		CHECK((statusFlagsOf(path) & O_NONBLOCK) == 0);
+	}
+	for (const File::Mode mode : {File::Mode::ReadOnly, File::Mode::ReadWrite}) {
+		const File file(path, mode);
+		CHECK((statusFlagsOf(path) & O_NONBLOCK) == 0);
+	}
+}
+#endif
+
+#ifdef __linux__
+TEST_CASE("an open waits for a lease on the file to be let go")
+{
+	using tapeloop::test::LeaseHolder;
+	TempDirectory dir;
+	const auto path = dir.path() / "replay.tplp";
+	File(path, File::Mode::CreateNew).writeAt(0, pattern(40, 8));
+	{
+		LeaseHolder holder(path, LeaseHolder::Kind::Write, std::chrono::milliseconds(200));
+		if (!holder.held()) {
+			SKIP("no lease can be taken here");
+		}
+		File file(path, File::Mode::ReadOnly);
+		CHECK(readAll(file) == pattern(40, 8));
+		CHECK(holder.letGo());
+	}
+	{
+		LeaseHolder holder(path, LeaseHolder::Kind::Read, std::chrono::milliseconds(200));
+		REQUIRE(holder.held());
+		File(path, File::Mode::ReadWrite).writeAt(0, pattern(40, 9));
+		CHECK(holder.letGo());
+	}
+	File file(path, File::Mode::ReadOnly);
+	CHECK(readAll(file) == pattern(40, 9));
+}
+
+TEST_CASE("an open gives up on a lease that is not let go")
+{
+	using tapeloop::test::LeaseHolder;
+	TempDirectory dir;
+	const auto path = dir.path() / "replay.tplp";
+	File(path, File::Mode::CreateNew).writeAt(0, pattern(40, 8));
+	// Longer than the open waits and shorter than the kernel gives a holder by default,
+	// so an open that waited for the holder would succeed.
+	LeaseHolder holder(path, LeaseHolder::Kind::Write, std::chrono::seconds(10));
+	if (!holder.held()) {
+		SKIP("no lease can be taken here");
+	}
+	try {
+		File file(path, File::Mode::ReadOnly);
+		FAIL("opened a file whose lease was not let go");
+	} catch (const std::system_error &e) {
+		CHECK(e.code() == std::errc::operation_would_block);
+	}
+	CHECK(holder.letGo());
 }
 #endif
 

@@ -19,8 +19,10 @@
 #include <windows.h>
 #else
 #include <cerrno>
+#include <chrono>
 #include <fcntl.h>
 #include <sys/stat.h>
+#include <thread>
 #include <unistd.h>
 #if defined(__linux__)
 #include <cstdio>
@@ -79,15 +81,31 @@ int openFile(const std::filesystem::path &path, int flags)
 	throw std::system_error(code, std::generic_category(), describe(what, path));
 }
 
+// A non-blocking open of a file under a lease fails at once while the kernel asks the
+// holder to let go, and NFS and Samba servers take leases for the clients that have a
+// file open. A blocking open would wait for as long as the kernel gives the holder, 45 s
+// by default, and Put on air can open a manifest on the UI thread, so the open is tried
+// again for this long at most.
+constexpr auto kLeaseBreakWait = std::chrono::seconds(2);
+constexpr auto kLeaseRetryEvery = std::chrono::milliseconds(10);
+
 // A named pipe put where a replay file was would hold the open until a writer came, and
 // what a path was when it was listed says nothing of what is there now. So the open
-// neither waits nor makes a terminal the process's own, and the type is taken from the
-// descriptor it gives.
+// neither waits for a writer nor takes a terminal as the controlling one, and the type
+// comes from the descriptor.
 int openRegularFile(const std::filesystem::path &path, int flags)
 {
-	const int fd = openFile(path, flags | O_NONBLOCK | O_NOCTTY);
+	flags |= O_NONBLOCK | O_NOCTTY;
+	const auto deadline = std::chrono::steady_clock::now() + kLeaseBreakWait;
+	int fd = openFile(path, flags);
+	int error = fd < 0 ? errno : 0;
+	while (error == EWOULDBLOCK && std::chrono::steady_clock::now() < deadline) {
+		std::this_thread::sleep_for(kLeaseRetryEvery);
+		fd = openFile(path, flags);
+		error = fd < 0 ? errno : 0;
+	}
 	if (fd < 0) {
-		throwErrno("cannot open", &path);
+		throw std::system_error(error, std::generic_category(), describe("cannot open", path));
 	}
 	struct stat info{};
 	if (::fstat(fd, &info) != 0) {
@@ -198,8 +216,10 @@ File::File(const std::filesystem::path &path, Mode mode)
 		throwLastError("cannot open", &path);
 	}
 	// A path can lead to a named pipe or a device, whose reads can wait for a writer
-	// with no end. Anything but a file on a disk is refused by the handle's type, as
-	// what the path was when it was listed says nothing of what is there now.
+	// with no end, and what the path was when it was listed says nothing of what is
+	// there now. So the handle's type is checked instead. The disk type also covers a
+	// volume or a whole disk, which POSIX systems refuse as block devices; their reads
+	// return, and only an elevated process can open them.
 	if (GetFileType(handle) != FILE_TYPE_DISK) {
 		CloseHandle(handle);
 		throw std::system_error(std::make_error_code(std::errc::invalid_argument),

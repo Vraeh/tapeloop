@@ -58,6 +58,7 @@ target_sources(
     core/FileIoTests.cpp
     core/GopReaderTests.cpp
     core/GopTests.cpp
+    core/LeaseHolder.hpp
     core/MediaTimeTests.cpp
     core/MomentCutterTests.cpp
     core/NalUnitWriter.hpp
