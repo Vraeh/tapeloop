@@ -50,8 +50,8 @@ std::vector<std::string> keysOf(const ReplaySequence &sequence)
 	return keys;
 }
 
-// Ends the run should the test outlive `limit`, as a work bound: waiting for code that
-// takes hours to fail would hold up every check for those hours.
+// Ends the run should the test outlive `limit`. ctest stops each test at 300 s anyway; this
+// only makes a failure show up sooner.
 class Watchdog {
 public:
 	explicit Watchdog(std::chrono::seconds limit)
@@ -125,8 +125,8 @@ TEST_CASE("ReplaySequence takes a replay with many sources in n log n")
 {
 	// Nothing but the size of its index bounds the sources a replay file brings. Removing
 	// duplicates or looking each source up with a pass over the list takes some 10^11 key
-	// comparisons here, over eight minutes even at -O2, where the sorted keys take under 20
-	// seconds under TSan: the watchdog's minute and a half tells the two apart.
+	// comparisons at this size, far past the watchdog's limit on any build, while the sorted
+	// keys finish well within it even under TSan.
 	constexpr size_t kSources = 300'000;
 	auto keyOf = [](size_t index) {
 		std::string key = std::to_string(index);
