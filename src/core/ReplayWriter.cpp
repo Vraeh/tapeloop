@@ -298,6 +298,10 @@ void ReplayWriter::writeTags(const std::filesystem::path &manifest, std::span<co
 	file.writeAt(next.offset, slot);
 	file.flush();
 	if (next.then) {
+		// The older slot is on the disk before the newer one is overwritten, so that a cut
+		// between the writes leaves the newer slot's tags. The other order, or no flush on
+		// a disk that reorders writes, could leave the older slot's instead, from before
+		// the last edit.
 		file.writeAt(*next.then, slot);
 		file.flush();
 	}

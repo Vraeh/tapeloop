@@ -55,6 +55,18 @@ private:
 #endif
 };
 
+#ifdef TAPELOOP_FILE_HOOK
+// Built only into the core tests: every File calls the hook before each write and each
+// flush, so that a test can follow their order, or cut one short by throwing. Null
+// removes it.
+enum class FileStep {
+	Write,
+	Flush,
+};
+using FileHook = void (*)(FileStep step, uint64_t offset, size_t size);
+void setFileHook(FileHook hook) noexcept;
+#endif
+
 // Makes a new or renamed entry of the directory durable. Windows has nothing to do here:
 // its renames are written through and its file creation is durable with the file.
 void syncDirectory(const std::filesystem::path &directory);

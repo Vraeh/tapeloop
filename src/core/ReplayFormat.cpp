@@ -504,18 +504,23 @@ std::vector<std::string> decodeTags(std::span<const uint8_t> manifestHead)
 
 TagWrite nextTagWrite(std::span<const uint8_t> manifestHead)
 {
-	const auto generationAt = [&](uint64_t offset) -> uint64_t {
+	const auto generationAt = [&](uint64_t offset) -> std::optional<uint64_t> {
 		if (manifestHead.size() < offset + kTagSlotSize) {
-			return 0;
+			return std::nullopt;
 		}
 		const std::optional<TagSlot> slot = decodeTagSlot(manifestHead.subspan(offset, kTagSlotSize));
-		return slot ? slot->generation : 0;
+		if (!slot) {
+			return std::nullopt;
+		}
+		return slot->generation;
 	};
-	const uint64_t a = generationAt(kTagSlotA);
-	const uint64_t b = generationAt(kTagSlotB);
-	const uint64_t older = a < b ? kTagSlotA : kTagSlotB;
+	const std::optional<uint64_t> a = generationAt(kTagSlotA);
+	const std::optional<uint64_t> b = generationAt(kTagSlotB);
+	// Not generation 0 for a slot that does not decode: an intact slot at 0 would tie with
+	// it and, as B, take the edit, which a torn write would then leave with no tags.
+	const uint64_t older = b && (!a || *a < *b) ? kTagSlotA : kTagSlotB;
 	const uint64_t newer = older == kTagSlotA ? kTagSlotB : kTagSlotA;
-	const uint64_t newest = std::max(a, b);
+	const uint64_t newest = std::max(a.value_or(0), b.value_or(0));
 	if (newest == std::numeric_limits<uint64_t>::max()) {
 		return {older, 1, newer};
 	}

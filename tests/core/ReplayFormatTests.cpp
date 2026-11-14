@@ -704,6 +704,41 @@ TEST_CASE("a tag edit goes to the older slot, and a torn edit leaves the previou
 	CHECK_THROWS_AS(tapeloop::encodeTagSlot(tooMany, 1), std::length_error);
 }
 
+TEST_CASE("a tag edit goes to a slot that does not decode before one at generation 0")
+{
+	std::vector<uint8_t> file = tapeloop::encodeManifest(twoSources(), std::vector<std::string>{"goal"});
+	const auto head = [&] {
+		return std::span<const uint8_t>(file).first(tapeloop::kManifestIndexOffset);
+	};
+	const auto put = [&](uint64_t offset, const std::vector<uint8_t> &bytes, size_t count) {
+		std::copy(bytes.begin(), bytes.begin() + static_cast<std::ptrdiff_t>(count),
+			  file.begin() + static_cast<std::ptrdiff_t>(offset));
+	};
+	const std::vector<uint8_t> damaged(64, 0xEE);
+
+	// Only a crafted file has a slot at generation 0, here B, the only intact one.
+	const std::vector<std::string> before = {"foul"};
+	const std::vector<uint8_t> zero = tapeloop::encodeTagSlot(before, 0);
+	put(tapeloop::kTagSlotA, damaged, damaged.size());
+	put(tapeloop::kTagSlotB, zero, zero.size());
+	REQUIRE(tapeloop::decodeTags(head()) == before);
+	const tapeloop::TagWrite write = tapeloop::nextTagWrite(head());
+	CHECK(write.offset == tapeloop::kTagSlotA);
+	CHECK(write.generation == 1);
+	CHECK_FALSE(write.then);
+
+	const std::vector<std::string> after = {"save"};
+	const std::vector<uint8_t> slot = tapeloop::encodeTagSlot(after, write.generation);
+	put(write.offset, slot, 20);
+	CHECK(tapeloop::decodeTags(head()) == before);
+	put(write.offset, slot, slot.size());
+	CHECK(tapeloop::decodeTags(head()) == after);
+
+	put(tapeloop::kTagSlotA, zero, zero.size());
+	put(tapeloop::kTagSlotB, damaged, damaged.size());
+	CHECK(tapeloop::nextTagWrite(head()).offset == tapeloop::kTagSlotB);
+}
+
 TEST_CASE("a tag edit past the last generation starts both slots over, the older first")
 {
 	constexpr uint64_t kLast = std::numeric_limits<uint64_t>::max();
