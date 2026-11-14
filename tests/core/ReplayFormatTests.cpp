@@ -10,6 +10,7 @@
 
 #include <algorithm>
 #include <chrono>
+#include <cstddef>
 #include <cstdint>
 #include <limits>
 #include <memory>
@@ -172,6 +173,48 @@ void requireSame(const ReplayIndex &a, const ReplayIndex &b)
 			CHECK(x.gops[g].run == y.gops[g].run);
 		}
 	}
+}
+
+uint64_t getLe(std::span<const uint8_t> bytes, size_t at, size_t size)
+{
+	uint64_t value = 0;
+	for (size_t i = 0; i < size; ++i) {
+		value |= uint64_t{bytes[at + i]} << (8 * i);
+	}
+	return value;
+}
+
+void putLe(std::span<uint8_t> bytes, size_t at, size_t size, uint64_t value)
+{
+	for (size_t i = 0; i < size; ++i) {
+		bytes[at + i] = static_cast<uint8_t>(value >> (8 * i));
+	}
+}
+
+// The index payload of a manifest, between its chunk header and its footer.
+std::vector<uint8_t> indexPayloadOf(const std::vector<uint8_t> &manifest)
+{
+	const auto at = static_cast<std::ptrdiff_t>(tapeloop::kManifestIndexOffset + tapeloop::kChunkHeaderSize);
+	return {manifest.begin() + at, manifest.end() - tapeloop::kManifestFooterSize};
+}
+
+// The manifest with another index payload, and the sizes and CRCs that depend on it
+// written again, so that only what the payload says can be wrong.
+std::vector<uint8_t> withIndexPayload(const std::vector<uint8_t> &manifest, const std::vector<uint8_t> &payload)
+{
+	const size_t chunkAt = tapeloop::kManifestIndexOffset;
+	std::vector<uint8_t> file(manifest.begin(),
+				  manifest.begin() + static_cast<std::ptrdiff_t>(chunkAt + tapeloop::kChunkHeaderSize));
+	putLe(file, chunkAt + 8, 8, payload.size());
+	putLe(file, chunkAt + 24, 4, tapeloop::crc32c(payload));
+	putLe(file, chunkAt + 28, 4, tapeloop::crc32c(std::span<const uint8_t>(file).subspan(chunkAt, 28)));
+	file.insert(file.end(), payload.begin(), payload.end());
+	const size_t footerAt = file.size();
+	file.insert(file.end(), manifest.end() - tapeloop::kManifestFooterSize, manifest.end());
+	putLe(file, footerAt + 24, 8, tapeloop::kChunkHeaderSize + payload.size());
+	putLe(file, footerAt + 48, 8, file.size());
+	putLe(file, footerAt + 60, 4, tapeloop::crc32c(std::span<const uint8_t>(file).subspan(footerAt, 60)));
+	return file;
 }
 
 } // namespace
@@ -410,6 +453,69 @@ TEST_CASE("a manifest whose frame lengths or frame times cannot be counted with 
 	source.frameTimes.back() = Nanoseconds::max();
 	source.out = source.frameTimes.back();
 	CHECK_FALSE(decodes(index));
+}
+
+TEST_CASE("a manifest whose index reads part of its blob twice, or leaves part out, is refused")
+{
+	// The blob holds each source's key and name, then the configs of its runs. Each edit
+	// below has its CRCs computed again and decodes if the blob may be read in any order:
+	// a small file could then decode into gigabytes.
+	const std::vector<uint8_t> manifest = tapeloop::encodeManifest(twoSources(), {});
+	const std::vector<uint8_t> written = indexPayloadOf(manifest);
+	REQUIRE(tapeloop::decodeManifest(withIndexPayload(manifest, written)));
+	const uint64_t blobSize = getLe(written, 16, 4);
+	const size_t blobAt = written.size() - blobSize;
+	// A 40-byte head, then 48 bytes for each source and 32 for each run.
+	const size_t sourceA = 40;
+	const size_t sourceB = sourceA + 48;
+	const size_t firstRun = sourceB + 48;
+	const size_t lastRun = firstRun + 2 * 32;
+	// The first and the last run have the same config, the last one at the end of the blob.
+	const uint64_t configSize = getLe(written, lastRun + 24, 4);
+	REQUIRE(getLe(written, firstRun + 24, 4) == configSize);
+	REQUIRE(getLe(written, lastRun + 20, 4) + configSize == blobSize);
+
+	SECTION("two runs on the same config bytes")
+	{
+		std::vector<uint8_t> payload = written;
+		putLe(payload, lastRun + 20, 4, getLe(written, firstRun + 20, 4));
+		putLe(payload, 16, 4, blobSize - configSize);
+		payload.resize(payload.size() - configSize);
+		CHECK_FALSE(tapeloop::decodeManifest(withIndexPayload(manifest, payload)));
+	}
+	SECTION("a source's key and name on another source's")
+	{
+		// Both sources have keys and names of the same sizes.
+		REQUIRE(getLe(written, sourceA + 36, 4) == getLe(written, sourceB + 36, 4));
+		const uint64_t keyB = getLe(written, sourceB + 32, 4);
+		const uint64_t stringsB = getLe(written, sourceB + 36, 2) + getLe(written, sourceB + 38, 2);
+		std::vector<uint8_t> payload = written;
+		putLe(payload, sourceB + 32, 4, getLe(written, sourceA + 32, 4));
+		putLe(payload, lastRun + 20, 4, getLe(written, lastRun + 20, 4) - stringsB);
+		putLe(payload, 16, 4, blobSize - stringsB);
+		const auto from = payload.begin() + static_cast<std::ptrdiff_t>(blobAt + keyB);
+		payload.erase(from, from + static_cast<std::ptrdiff_t>(stringsB));
+		CHECK_FALSE(tapeloop::decodeManifest(withIndexPayload(manifest, payload)));
+	}
+	SECTION("a byte between a source's name and its first config")
+	{
+		const uint64_t gapAt = getLe(written, firstRun + 20, 4);
+		std::vector<uint8_t> payload = written;
+		// Everything from the first run's config on moves one byte further.
+		for (const size_t field : {firstRun + 20, firstRun + 32 + 20, sourceB + 32, lastRun + 20}) {
+			putLe(payload, field, 4, getLe(written, field, 4) + 1);
+		}
+		putLe(payload, 16, 4, blobSize + 1);
+		payload.insert(payload.begin() + static_cast<std::ptrdiff_t>(blobAt + gapAt), 0);
+		CHECK_FALSE(tapeloop::decodeManifest(withIndexPayload(manifest, payload)));
+	}
+	SECTION("a byte after the last config")
+	{
+		std::vector<uint8_t> payload = written;
+		payload.push_back(0);
+		putLe(payload, 16, 4, blobSize + 1);
+		CHECK_FALSE(tapeloop::decodeManifest(withIndexPayload(manifest, payload)));
+	}
 }
 
 TEST_CASE("a self-contained replay holds its GOP chunks between its tag slots and its index")

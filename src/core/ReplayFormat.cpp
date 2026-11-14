@@ -739,8 +739,17 @@ std::optional<ReplayIndex> decodeManifest(std::span<const uint8_t> head, std::sp
 		return std::nullopt;
 	}
 	const std::span<const uint8_t> blob = payload.subspan(blobAt, blobSize);
-	const auto inBlob = [&](uint64_t at, uint64_t size) {
-		return at <= blob.size() && size <= blob.size() - at;
+	// The blob holds each source's key and name, then the configs of its runs, in the
+	// order of the tables. Read in that order, with every part right after the one before
+	// and nothing left over, no byte of it is decoded twice: references that overlap would
+	// let a small file decode into gigabytes.
+	uint64_t blobRead = 0;
+	const auto takeFromBlob = [&](uint64_t at, uint64_t size) {
+		if (at != blobRead || size > blob.size() - at) {
+			return false;
+		}
+		blobRead += size;
+		return true;
 	};
 
 	ReplayIndex index;
@@ -764,7 +773,7 @@ std::optional<ReplayIndex> decodeManifest(std::span<const uint8_t> head, std::sp
 		if (get32(payload, entry) != run || get32(payload, entry + 8) != gop ||
 		    get32(payload, entry + 40) != frame || sourceRuns == 0 || sourceGops == 0 ||
 		    sourceRuns > runCount - run || sourceGops > gopCount - gop || sourceFrames > frameCount - frame ||
-		    !inBlob(keyAt, keySize + nameSize)) {
+		    !takeFromBlob(keyAt, keySize + nameSize)) {
 			return std::nullopt;
 		}
 		StoredSource source;
@@ -778,7 +787,7 @@ std::optional<ReplayIndex> decodeManifest(std::span<const uint8_t> head, std::sp
 			const uint64_t configAt = get32(payload, at + 20);
 			const uint64_t configSize = get32(payload, at + 24);
 			const Nanoseconds frameDuration = getTime(payload, at + 8);
-			if (!codec || get32(payload, at + 4) != kConfigAsGiven || !inBlob(configAt, configSize) ||
+			if (!codec || get32(payload, at + 4) != kConfigAsGiven || !takeFromBlob(configAt, configSize) ||
 			    frameDuration <= Nanoseconds{0} || frameDuration > kMaxFrameDuration) {
 				return std::nullopt;
 			}
@@ -839,7 +848,7 @@ std::optional<ReplayIndex> decodeManifest(std::span<const uint8_t> head, std::sp
 		}
 		index.sources.push_back(std::move(source));
 	}
-	if (run != runCount || gop != gopCount || frame != frameCount) {
+	if (run != runCount || gop != gopCount || frame != frameCount || blobRead != blob.size()) {
 		return std::nullopt;
 	}
 	return index;

@@ -118,6 +118,16 @@ std::vector<uint8_t> encodeAgain(const ReplayIndex &index, std::span<const uint8
 	return file;
 }
 
+// What decodes encodes again to a file that decodes the same. That file is no larger than
+// the original, or some part of the original was decoded more than once.
+void requireEncodesAgain(const ReplayIndex &index, std::span<const uint8_t> original)
+{
+	const std::vector<uint8_t> file = encodeAgain(index, original);
+	require(file.size() <= original.size());
+	const std::optional<ReplayIndex> again = tapeloop::decodeManifest(file);
+	require(again && sameIndex(*again, index));
+}
+
 // A manifest of real GOP chunks, or a self-contained replay holding them, damaged a
 // little: it either decodes to what was written or is refused, and every GOP it lists
 // reads back or is refused. Resealed, the damage passes the CRCs: the file is then
@@ -175,8 +185,7 @@ void writtenThenDamaged(FuzzInput &input)
 	}
 	const std::optional<ReplayIndex> read = tapeloop::decodeManifest(manifest);
 	if (read && reseal) {
-		const std::optional<ReplayIndex> again = tapeloop::decodeManifest(encodeAgain(*read, manifest));
-		require(again && sameIndex(*again, *read));
+		requireEncodesAgain(*read, manifest);
 	} else if (read) {
 		require(sameIndex(*read, index));
 	}
@@ -213,10 +222,7 @@ extern "C" int LLVMFuzzerTestOneInput(const uint8_t *data, size_t size)
 	case 0: {
 		const std::span<const uint8_t> bytes = input.bytes(size);
 		if (const std::optional<ReplayIndex> index = tapeloop::decodeManifest(bytes)) {
-			// What decodes encodes again to a file that decodes the same; a self-contained
-			// replay keeps its GOP chunks where they were.
-			const std::optional<ReplayIndex> again = tapeloop::decodeManifest(encodeAgain(*index, bytes));
-			require(again && sameIndex(*again, *index));
+			requireEncodesAgain(*index, bytes);
 		}
 		(void)tapeloop::decodeTags(bytes);
 		(void)tapeloop::decodeTagSlot(bytes);
