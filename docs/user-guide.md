@@ -13,10 +13,11 @@ that is the default of this version.
 Tapeloop needs OBS Studio 32.0 or newer on Windows 10 or 11, x64.
 
 The Windows package is a zip with one folder, `tapeloop`. It holds `bin\64bit` (the
-plugin) and `data` (texts and licence notices). To install it,
+plugin) and `data` (texts and license notices). To install it,
 close OBS and copy the `tapeloop` folder into `C:\ProgramData\obs-studio\plugins`,
-creating the `plugins` folder if it is not there. Start OBS and open View, Docks,
-Tapeloop. OBS adds a new dock hidden, so it has to be ticked there once.
+creating the `plugins` folder if it is not there. Start OBS, open the Docks menu and
+tick Tapeloop. OBS adds a new dock hidden and as a floating window, so tick it once
+and drag it into place.
 
 A hardware encoder is recommended. NVIDIA NVENC is the only one tried so far. Intel
 Quick Sync and AMD AMF can be used, but have not been tried. Without a usable
@@ -65,26 +66,27 @@ source keeps its shape. A 720p source set to 1080p stays 720p.
 "Own buffer length", "Own resolution" and "Own activation off air" replace the
 shared setting for that source alone.
 
-Changes reach a running buffer at its next start, except activation, which applies
-at once.
+Changes reach a running buffer at its next start, except activation, "Memory for
+buffers" and "Start with streaming or recording", which apply at once.
 
 ## Starting the buffers
 
 With "Start with streaming or recording" on, the buffers start when you start
-streaming or recording and stop when both have stopped. The "Start buffers" and
-"Stop buffers" button is disabled meanwhile, and the dock says "The buffers follow
-streaming and recording while either runs."
+streaming or recording and stop when both have stopped. While either runs, the "Start
+buffers" and "Stop buffers" button is disabled and the dock says "The buffers follow
+streaming and recording while either runs." While neither runs, the button and the
+hotkey "Tapeloop: Start or stop buffers" start and stop them by hand, for instance to
+try them before the match.
 
-With it off, only the button or the hotkey "Tapeloop: Start or stop buffers" moves
-them, at any time.
+With it off, only the button or the hotkey moves them, at any time.
 
 Each start names a new broadcast, a folder for the replays captured until the buffers
 stop.
 
 ## Capturing a replay
 
-Press "Capture replay" or the hotkey "Tapeloop: Capture replay". The buffers must be
-running. A new replay selects itself in the list and is cued in the player.
+Press "Capture replay" or the hotkey "Tapeloop: Capture replay". A new replay selects
+itself in the list and is cued in the player.
 
 Each source's clip reaches back as far as its own buffer holds, so the replay is as
 long as the longest buffer. A source whose buffer holds nothing is left out.
@@ -94,14 +96,21 @@ of the broadcast, inside a `Tapeloop` folder in the recording folder of OBS. Wit
 a recording folder in OBS the replay is not saved, it is listed as "not saved", and it
 plays only while the buffers still hold it. Replays stay on disk across restarts.
 
+The buffers keep what they hold for one buffer length after they stop, so a replay
+captured just after the stream or recording ends still holds the last moments. Once a
+buffer starts again, it starts empty.
+
 ## The replay list
 
-The list shows the replays of every broadcast, newest first. The one selected is the
+The list shows the replays of every broadcast, newest first, under a heading row for
+each broadcast. The one selected is the
 one that goes on air next. A replay that cannot play is listed as damaged and cannot
 be selected. While one is being written the list says "saving".
 
-The hotkeys "Tapeloop: Newer replay" and "Tapeloop: Older replay" move through the
-list and skip damaged replays.
+The hotkeys "Tapeloop: Newer replay" and "Tapeloop: Older replay" move through
+every replay, newest to oldest, whatever the filter shows, and skip damaged replays.
+A replay the filter hides can be the current one: it is then not selected in the
+list, but it is still the one that goes on air next.
 
 ## Tags
 
@@ -111,8 +120,9 @@ Tags help to find a replay later: type a name in the "Tag" field and press "Add 
 after the replay in the list, as `#name`.
 
 A tag is trimmed of spaces and tabs at both ends, cannot be empty or hold control
-characters, and is matched without regard to upper and lower case: typing "Goal" when
-"goal" exists uses "goal". All the tags of one replay must fit in about 4 KB.
+characters, and is matched without regard to case for the letters A to Z: typing
+"Goal" when "goal" exists uses "goal". Accented letters are matched as typed, so
+"Ñuble" and "ñuble" are two tags. All the tags of one replay must fit in about 4 KB.
 
 The filter above the list ("All replays" or a tag) shows only the replays that carry
 the tag. "Delete tag" takes the filtered tag off every replay and deletes it, after
@@ -122,12 +132,12 @@ asking. The replays stay. Tags are saved with the replay.
 
 The mini player has a position slider, a line of status ("Cued" or "On air", "playing"
 or "paused", the speed and the position in seconds), and these buttons: "<< Hold",
-"< Frame", "Play" and "Pause", "Frame >", "Hold >>", "Reverse", "Slower", "1x" and
-"Faster".
+"< Frame", "Play" (which reads "Pause" while playing), "Frame >", "Hold >>",
+"Reverse", "Slower", "1x" and "Faster".
 
 - The speeds are 0.25x, 0.5x, 0.75x, 1x and 2x. "Slower" and "Faster" move between
   them and "1x" returns to normal speed.
-- "Reverse" plays backwards at the speed it has.
+- "Reverse" turns the direction around, keeping the speed.
 - "< Frame" and "Frame >" step one frame.
 - "<< Hold" and "Hold >>" scrub while held. A scrub starts at 0.5x, speeds up after a
   quarter of a second and reaches 4x after a second and a half, and stops when
@@ -135,7 +145,8 @@ or "paused", the speed and the position in seconds), and these buttons: "<< Hold
 
 Off air the player shows the selected replay cued on its first shown source, and
 the controls work on it, so you can find the moment before going on air. The replay
-goes on air from where the player stands, at the speed it has.
+goes on air from where the player stands, playing forward at the speed it has, even
+when the player was paused or in reverse.
 
 "Mini player" puts the player "In the dock" or "In its own window" (shown with "Show
 player"). "Player shows" picks "Controls and picture", "Controls only" or "Picture
@@ -155,8 +166,9 @@ follows when a clip plays forward to its end, and after the last the replay goes
 to live. Changing the order or the Shown boxes while a replay plays affects what has
 not played yet.
 
-The order and the Shown boxes are not kept when OBS closes or the scene
-collection changes. They start again from the dock list, with every source shown.
+The order and the Shown boxes are not kept when OBS closes or the scene collection
+changes. They start again from the dock list, in alphabetical order of source name,
+with every source shown.
 
 ## Hotkeys
 
@@ -188,25 +200,32 @@ player buttons work on the replay cued or on air, as the hotkeys do.
 ## Putting a replay on air
 
 Press the hotkey "Tapeloop: Put replay on air". The selected replay goes over the
-program: your scenes are not touched, and the replay covers the whole program,
-because it goes out on output channel 32, above everything else, a Downstream Keyer
-included. What you stream and record shows it. Replays play without audio for now,
-and the program audio goes on as it was.
+program: your scenes are not touched. It goes out on output channel 32, which draws
+above the program and above output channels 1 to 31, where the frontend and the
+Downstream Keyer plugin put their sources. What you stream and record shows it. The
+replay is scaled to the canvas and keeps its shape: a source whose shape is not the
+canvas's, such as a 4:3 webcam on a 16:9 canvas, leaves the program visible at its
+sides or above and below. The same goes for an intro or outro. Replays play without
+audio for now, and the program audio goes on as it was.
 
 Only one replay can be on air at a time. A replay does not go on air if another
 source is already on the channel, if the replay cannot be read or is damaged, or if
-none of its shown sources has anything to play. The dock then says so, for instance
-"Another source is on the replay's channel, so the replay did not go on air."
+none of its shown sources has anything to play. When another source holds the channel,
+or the replay cannot be read or is damaged, the dock says why, for instance "Another
+source is on the replay's channel, so the replay did not go on air." When no shown
+source has anything to play, or a replay is already on air, nothing happens.
 
 The replay goes back to live when its last source ends, or earlier with "Tapeloop:
 Take replay off air", which goes through the outro when there is one. "Tapeloop: Skip
 to next source" ends only the part on air.
 
+When the buffers stop while a replay is on air, it is taken off as with "Tapeloop:
+Take replay off air", through the outro when there is one.
+
 The replay is taken off air at once, without an outro or a way back, in these cases:
 
 - The program goes to black with Fade to Black, so the whole output is black.
 - The scene collection changes. The sequence list is forgotten as well.
-- The buffers stop, which counts as taking it off the usual way.
 - Another source takes channel 32.
 - OBS closes.
 
@@ -226,8 +245,11 @@ default. The transition is "Default fade" or any transition you have in OBS, pic
 by name, with a length of 50 to 20000 ms, 300 by default. Steps in between are cuts.
 A picked transition that is no longer in OBS shows as "(not found)" in the list.
 
-When an intro or outro file is missing or cannot be opened, replays go on air without
-it and the dock says so. These settings are saved with the scene collection.
+When an intro or outro file is missing, replays go on air without it and the dock says
+so. A file that is there but cannot be played is not detected: a video holds the way
+on air for up to 5 seconds, and an image shows nothing for its time. Check a new file
+by putting a replay on air before the match. These settings are saved with the scene
+collection.
 
 ## Export
 
@@ -243,8 +265,9 @@ Both buttons work on the selected replay, once it is saved on disk, and write to
   which plays without its broadcast folder.
 
 There is no import control. A `.tplp` from another computer is listed when you place
-it in a folder inside a Tapeloop folder and then start OBS, or change the recording
-folder.
+it in a folder inside the `Tapeloop` folder of OBS's recording folder, for instance
+`Tapeloop\Imported\`, and then start OBS. After you change the recording folder, its
+replays are listed when the buffers next start.
 
 ## Settings and the RAM budget
 
@@ -252,7 +275,7 @@ folder.
 
 | Setting | What it does |
 |---|---|
-| Replay encoder | "Automatic (recommended)" tries the encoders of the graphics card OBS renders on first, then those of other cards, then x264. Choosing one keeps it even if it is not the fastest path. |
+| Replay encoder | "Automatic (recommended)" tries the encoders of the graphics card OBS renders on first, then those of other cards, then x264. Choosing one uses it even if it is not the fastest path, and falls back to the automatic order if it cannot start. |
 | Allow encoders on another graphics card | On by default. Lets the automatic order use a card other than the one OBS renders on. |
 | Encode replays in H.264 only | By default replays are HEVC where your card can encode it, which takes less memory and disk, and H.264 elsewhere. Ignored while an encoder is chosen. |
 | Memory for buffers | How much memory all buffers may hold together. Automatic is a quarter of the computer's memory. |
