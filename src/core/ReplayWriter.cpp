@@ -457,18 +457,32 @@ std::filesystem::path ReplayWriter::publishManifest(const std::string &stem, std
 		if (std::filesystem::exists(manifest) || std::filesystem::exists(part)) {
 			continue;
 		}
+		// The check misses a link to nothing, and another writer in the folder can take
+		// either name right after it. So both names are taken only if still free, and the
+		// part is deleted only once this call has created it.
+		File file;
 		try {
-			File file(part, File::Mode::CreateNew);
+			file = File(part, File::Mode::CreateNew);
+		} catch (const std::system_error &e) {
+			if (e.code() == std::errc::file_exists) {
+				continue;
+			}
+			throw;
+		}
+		try {
 			file.writeAt(0, bytes);
 			file.flush();
 			file.close();
-			renameFile(part, manifest);
+			if (renameIfFree(part, manifest)) {
+				return manifest;
+			}
 		} catch (...) {
 			std::error_code ignored;
 			std::filesystem::remove(part, ignored);
 			throw;
 		}
-		return manifest;
+		std::error_code ignored;
+		std::filesystem::remove(part, ignored);
 	}
 	throw std::runtime_error("no free name for a replay in " + utf8FromPath(folder_));
 }

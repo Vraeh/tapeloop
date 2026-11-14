@@ -83,7 +83,12 @@ TEST_CASE("a new file is never one that exists")
 		File first(path, File::Mode::CreateNew);
 		first.writeAt(0, pattern(10, 4));
 	}
-	CHECK_THROWS_AS(File(path, File::Mode::CreateNew), std::system_error);
+	try {
+		File(path, File::Mode::CreateNew).close();
+		FAIL("created a file that exists");
+	} catch (const std::system_error &e) {
+		CHECK(e.code() == std::errc::file_exists);
+	}
 	File again(path, File::Mode::ReadOnly);
 	CHECK(readAll(again) == pattern(10, 4));
 }

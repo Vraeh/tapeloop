@@ -23,7 +23,8 @@ std::string utf8FromPath(const std::filesystem::path &path);
 class File {
 public:
 	enum class Mode {
-		// Creates the file for reading and writing; fails when it exists.
+		// Creates the file for reading and writing; fails with std::errc::file_exists
+		// when it exists.
 		CreateNew,
 		ReadWrite,
 		ReadOnly,

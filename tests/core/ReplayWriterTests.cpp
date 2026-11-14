@@ -261,6 +261,41 @@ TEST_CASE("a replay whose name is taken gets a number")
 	      dir.path() / (std::string(116, 's') + " (2).tplp"));
 }
 
+// A check that a name is free does not see a link to nothing, so such a link stands for a
+// file another writer in the folder creates right after the check.
+TEST_CASE("a replay never replaces a file that takes its name while it is written")
+{
+	TempDirectory dir;
+	std::error_code error;
+	fs::create_symlink(dir.path() / "nothing", dir.path() / "same.tplp", error);
+	if (error) {
+		SKIP("links cannot be made here: " << error.message());
+	}
+	const WrittenReplay written = ReplayWriter().write(captureOf(dir.path(), {sourceOf("a", makeGops(2))}, "same"));
+	CHECK(written.manifest == dir.path() / "same (2).tplp");
+	CHECK(fs::is_symlink(dir.path() / "same.tplp"));
+	CHECK_FALSE(fs::exists(dir.path() / "same.tplp.part"));
+	CHECK_FALSE(fs::exists(dir.path() / "nothing"));
+}
+
+#ifndef _WIN32
+// POSIX makes a create that must be exclusive fail on a link, whatever it leads to.
+TEST_CASE("a replay never deletes what has the name of its half-written file")
+{
+	TempDirectory dir;
+	std::error_code error;
+	fs::create_symlink(dir.path() / "nothing", dir.path() / "same.tplp.part", error);
+	if (error) {
+		SKIP("links cannot be made here: " << error.message());
+	}
+	const WrittenReplay written = ReplayWriter().write(captureOf(dir.path(), {sourceOf("a", makeGops(2))}, "same"));
+	CHECK(written.manifest == dir.path() / "same (2).tplp");
+	CHECK(fs::is_symlink(dir.path() / "same.tplp.part"));
+	CHECK_FALSE(fs::exists(dir.path() / "same.tplp"));
+	CHECK_FALSE(fs::exists(dir.path() / "nothing"));
+}
+#endif
+
 TEST_CASE("a writer appends only to segments it created")
 {
 	TempDirectory dir;
