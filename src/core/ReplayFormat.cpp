@@ -210,7 +210,8 @@ std::span<const uint8_t> gopBytes(const Gop &gop)
 // appends a GOP to its source's segments once and an export writes each GOP once, so
 // only a made-up index lists a chunk twice, which an export would copy each time. A
 // segment is known by the name ReplayWriter gives its file, since different keys can
-// make one name.
+// make one name. That keeps the bytes of one named file from being listed twice. It
+// does not tell apart different names that open one file (case folding, links).
 bool gopsApart(const ReplayIndex &index)
 {
 	// Sources whose segments have one name get one number.

@@ -564,6 +564,18 @@ TEST_CASE("a manifest that lists a byte of a segment in two GOPs is refused")
 		gops[0].size = 4097;
 		CHECK_FALSE(decodes(index));
 	}
+	SECTION("a chunk that runs into a later one past a chunk of another segment")
+	{
+		std::vector<StoredGop> &gops = index.sources[0].gops;
+		REQUIRE(gops[1].offset == 8192);
+		REQUIRE(gops[2].offset == 12288);
+		gops[0].size = 8192;
+		gops[1].segment = 1;
+		CHECK(decodes(index));
+		// The chunk of segment 1 lies between them by offset and must not hide the overlap.
+		gops[0].size = 8193;
+		CHECK_FALSE(decodes(index));
+	}
 }
 
 TEST_CASE("a self-contained replay that lists one of its chunks in two GOPs is refused")
