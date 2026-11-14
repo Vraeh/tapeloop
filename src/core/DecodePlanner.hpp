@@ -12,6 +12,7 @@
 #include <cstdint>
 #include <memory>
 #include <optional>
+#include <utility>
 #include <vector>
 
 namespace tapeloop {
@@ -109,6 +110,9 @@ public:
 	size_t keptGopCount() const noexcept { return kept_.size(); }
 	size_t heldFrames() const noexcept;
 	size_t heldBytes() const noexcept { return heldBytes_; }
+	// The memory taken to find the packet of each frame that comes out: as much as the
+	// longest GOP a pass went over since the clip was loaded or the device was lost.
+	size_t indexBytes() const noexcept;
 
 private:
 	struct KeptGop {
@@ -126,6 +130,12 @@ private:
 		// Every frame the decoder gives for this GOP came out: all of them, or what was
 		// left once it was flushed at the end of the GOP.
 		bool complete = false;
+		// Bounds on the frames held, so that making room does not walk again over the
+		// ones it gave back: none is held from `high` on, and none before `low` but maybe
+		// the one at `spared`, a frame asked for that making room went past.
+		size_t low = 0;
+		size_t high = 0;
+		size_t spared = 0;
 	};
 
 	KeptGop &keep(size_t gop);
@@ -139,13 +149,22 @@ private:
 	// asked for.
 	// False when the frame still does not fit.
 	bool makeRoom(KeptGop &kept, size_t bytes, size_t wanted) noexcept;
+	bool fits(size_t bytes) const noexcept;
+	// Gives back the frames from packet `from` up to `to`, earliest first and all but
+	// `wanted`, until a frame of `bytes` fits. Returns the packet it stopped at.
+	size_t dropUp(KeptGop &kept, size_t from, size_t to, size_t bytes, size_t wanted) noexcept;
+	// The same from packet `from` down to `to`, latest first.
+	size_t dropDown(KeptGop &kept, size_t from, size_t to, size_t bytes) noexcept;
+	void dropSpared(KeptGop &kept, size_t bytes, size_t wanted) noexcept;
 	// Decodes GOP gop until the frame of packet `packet` has come out or the pass has gone
 	// past it, or the whole GOP when packet is past its end.
 	DecodeStatus decode(size_t gop, size_t packet);
 	DecodeStatus startAt(size_t gop, std::shared_ptr<const Gop> source);
 	DecodeStatus receiveAll(KeptGop &kept, size_t wanted);
-	// Ends a pass that failed. A lost device also lets go of every kept frame and of
-	// the decoder, which the next pass opens again.
+	// The packet of started_ a frame of that presentation time comes from.
+	std::optional<size_t> packetOf(int64_t pts) const noexcept;
+	// Ends a pass that failed. A lost device also lets go of every kept frame, of the
+	// index and of the decoder, which the next pass opens again.
 	DecodeStatus fail(DecodeStatus status) noexcept;
 
 	FrameDecoder &decoder_;
@@ -165,6 +184,12 @@ private:
 	size_t nextPacket_ = 0;
 	// The packet after the last one whose frame came out in this pass over the GOP.
 	size_t passNext_ = 0;
+	// No frame is held from passNext_ up to this packet: making room went over them in
+	// this pass, which holds nothing it has not come to.
+	size_t aheadFrom_ = 0;
+	// The packets of started_ by presentation time, then by index, to find the packet of
+	// each frame that comes out.
+	std::vector<std::pair<int64_t, size_t>> packetsByPts_;
 	bool flushed_ = false;
 	bool fresh_ = true;
 	std::optional<size_t> lastGop_;
