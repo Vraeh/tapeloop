@@ -279,6 +279,75 @@ TEST_CASE("a writer appends only to segments it created")
 	requireReadsBack(after.manifest, second->sources[0], gops);
 }
 
+TEST_CASE("segment names planted at the top of the numbers leave the numbering as it was")
+{
+	TempDirectory dir;
+	const Gops a = makeGops(2);
+	const Gops b = makeGops(2, 40);
+	ReplayWriter().write(captureOf(dir.path(), {sourceOf("a", a)}, "before"));
+	// Anyone who can write to the folder can add these, with keys read from the names of
+	// other segments: kOwnFile - 1 and kOwnFile itself, and a run of numbers up to it.
+	for (const char *name : {"a-4294967294.tpls", "a-4294967295.tpls", "b-4294967293.tpls", "b-4294967294.tpls"}) {
+		File(dir.path() / "data" / name, File::Mode::CreateNew).close();
+	}
+	const WrittenReplay after =
+		ReplayWriter().write(captureOf(dir.path(), {sourceOf("a", a), sourceOf("b", b)}, "after"));
+	CHECK(segmentsOf(dir.path()) == std::vector<std::string>{"a-000001.tpls", "a-000002.tpls", "a-4294967294.tpls",
+								 "a-4294967295.tpls", "b-000001.tpls",
+								 "b-4294967293.tpls", "b-4294967294.tpls"});
+	const std::optional<ReplayIndex> index = tapeloop::readReplayIndex(after.manifest);
+	REQUIRE(index);
+	REQUIRE(index->sources.size() == 2);
+	CHECK(index->sources[0].gops.front().segment == 2);
+	CHECK(index->sources[1].gops.front().segment == 1);
+	requireReadsBack(after.manifest, index->sources[0], a);
+	requireReadsBack(after.manifest, index->sources[1], b);
+}
+
+TEST_CASE("a segment name taken since the writer listed the folder is passed over")
+{
+	TempDirectory dir;
+	const Gops gops = makeGops(2);
+	ReplayWriterConfig config;
+	// One GOP per segment.
+	config.segmentBytes = tapeloop::kReplayAlignment;
+	ReplayWriter writer(config);
+	writer.write(captureOf(dir.path(), {sourceOf("a", slice(gops, 0, 1))}, "one"));
+	File(dir.path() / "data" / "a-000002.tpls", File::Mode::CreateNew).close();
+	const WrittenReplay two = writer.write(captureOf(dir.path(), {sourceOf("a", gops)}, "two"));
+	CHECK(segmentsOf(dir.path()) == std::vector<std::string>{"a-000001.tpls", "a-000002.tpls", "a-000003.tpls"});
+	CHECK(fs::file_size(dir.path() / "data" / "a-000002.tpls") == 0);
+	const std::optional<ReplayIndex> index = readManifest(two.manifest);
+	REQUIRE(index);
+	CHECK(index->sources[0].gops[0].segment == 1);
+	CHECK(index->sources[0].gops[1].segment == 3);
+	requireReadsBack(two.manifest, index->sources[0], gops);
+}
+
+TEST_CASE("a writer never numbers a segment kOwnFile, and the next capture writes again")
+{
+	TempDirectory dir;
+	const Gops gops = makeGops(2);
+	ReplayWriterConfig config;
+	config.segmentBytes = tapeloop::kReplayAlignment;
+	ReplayWriter writer(config);
+	fs::create_directories(dir.path() / "data");
+	// 4294967293 is free; past it are a taken number and kOwnFile.
+	File(dir.path() / "data" / "a-4294967292.tpls", File::Mode::CreateNew).close();
+	File(dir.path() / "data" / "a-4294967294.tpls", File::Mode::CreateNew).close();
+	CHECK_THROWS_AS(writer.write(captureOf(dir.path(), {sourceOf("a", gops)}, "one")), std::runtime_error);
+	CHECK(segmentsOf(dir.path()) ==
+	      std::vector<std::string>{"a-4294967292.tpls", "a-4294967293.tpls", "a-4294967294.tpls"});
+
+	// The numbers taken now run up to kOwnFile, so the writer starts below them.
+	const WrittenReplay two = writer.write(captureOf(dir.path(), {sourceOf("a", gops)}, "two"));
+	CHECK(segmentsOf(dir.path()) == std::vector<std::string>{"a-000001.tpls", "a-000002.tpls", "a-4294967292.tpls",
+								 "a-4294967293.tpls", "a-4294967294.tpls"});
+	const std::optional<ReplayIndex> index = readManifest(two.manifest);
+	REQUIRE(index);
+	requireReadsBack(two.manifest, index->sources[0], gops);
+}
+
 TEST_CASE("a writer starts over in another broadcast folder")
 {
 	TempDirectory dir;

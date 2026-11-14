@@ -188,6 +188,26 @@ bool hasRun(const std::vector<std::pair<uint32_t, Nanoseconds>> &runs, const std
 	return std::find(runs.begin(), runs.end(), run) != runs.end();
 }
 
+// The number of a source's next segment: one past the highest number its segments in the
+// folder have. kOwnFile is not a segment number. No writer comes near it, as that takes
+// billions of segments, so a run of taken numbers that reaches it was planted; it leaves
+// nothing free above it, and the numbers below it count instead.
+uint32_t nextSequenceAfter(std::vector<uint32_t> taken)
+{
+	std::sort(taken.begin(), taken.end(), std::greater<>());
+	uint32_t runStart = kOwnFile;
+	for (const uint32_t sequence : taken) {
+		if (sequence >= runStart) {
+			continue;
+		}
+		if (sequence + 1 < runStart) {
+			return sequence + 1;
+		}
+		runStart = sequence;
+	}
+	return 1;
+}
+
 } // namespace
 
 ReplayId newReplayId()
@@ -319,16 +339,18 @@ ReplayWriter::SourceState &ReplayWriter::stateOf(const std::string &key)
 		return found->second;
 	}
 	// Segments of this source already in the folder are left as they are.
-	SourceState state;
+	std::vector<uint32_t> taken;
 	std::vector<std::string> errors;
 	for (const std::filesystem::path &path : listDirectory(folder_ / pathFromUtf8(kDataFolder), errors)) {
 		if (const std::optional<uint32_t> sequence = segmentSequenceOf(utf8FromPath(path.filename()), key)) {
-			state.nextSequence = std::max(state.nextSequence, *sequence + 1);
+			taken.push_back(*sequence);
 		}
 	}
 	if (!errors.empty()) {
 		throw std::runtime_error(errors.front());
 	}
+	SourceState state;
+	state.nextSequence = nextSequenceAfter(std::move(taken));
 	return sources_.emplace(key, std::move(state)).first->second;
 }
 
@@ -404,10 +426,24 @@ void ReplayWriter::writeBatch(SourceState &state)
 ReplayWriter::Segment &ReplayWriter::openSegment(SourceState &state, const CaptureSource &source)
 {
 	Segment segment;
-	segment.sequence = state.nextSequence++;
-	const std::filesystem::path path =
-		folder_ / pathFromUtf8(kDataFolder) / pathFromUtf8(segmentFileName(source.key, segment.sequence));
-	segment.file = File(path, File::Mode::CreateNew);
+	// A name taken since the folder was listed is passed over. Numbers never go back down to a
+	// free one: it can be the name of a segment of this writer, deleted since, that the places
+	// of the GOPs it wrote still refer to.
+	while (!segment.file.isOpen()) {
+		if (state.nextSequence == kOwnFile) {
+			throw std::runtime_error("no free segment number for a source in " + utf8FromPath(folder_));
+		}
+		segment.sequence = state.nextSequence++;
+		const std::filesystem::path path = folder_ / pathFromUtf8(kDataFolder) /
+						   pathFromUtf8(segmentFileName(source.key, segment.sequence));
+		try {
+			segment.file = File(path, File::Mode::CreateNew);
+		} catch (const std::system_error &error) {
+			if (error.code() != std::errc::file_exists) {
+				throw;
+			}
+		}
+	}
 	newSegments_ = true;
 	const std::vector<uint8_t> header = encodeSegmentHeader(
 		{broadcast_, segment.sequence, source.key, shortened(source.name, kMaxSourceNameBytes)});
