@@ -3,20 +3,24 @@
 
 #include "core/FileIo.hpp"
 
+#include "FileHookScope.hpp"
 #include "TempDirectory.hpp"
 
 #include <catch2/catch_test_macros.hpp>
 
 #include <algorithm>
+#include <cerrno>
 #include <cstdint>
 #include <filesystem>
 #include <string>
+#include <string_view>
 #include <system_error>
 #include <thread>
 #include <utility>
 #include <vector>
 
 using tapeloop::File;
+using tapeloop::test::FileHookScope;
 using tapeloop::test::TempDirectory;
 
 namespace {
@@ -36,6 +40,22 @@ std::vector<uint8_t> readAll(File &file)
 	REQUIRE(file.readAt(0, bytes) == bytes.size());
 	return bytes;
 }
+
+#ifndef _WIN32
+
+// The errors the file hook gives exclusive renames and links, 0 to let them run.
+int renameError = 0;
+int linkError = 0;
+
+int refusingHook(std::string_view call, const std::filesystem::path &) noexcept
+{
+	if (call == "exclusive rename") {
+		return renameError;
+	}
+	return call == "link" ? linkError : 0;
+}
+
+#endif
 
 } // namespace
 
@@ -91,6 +111,46 @@ TEST_CASE("a new file is never one that exists")
 	}
 	File again(path, File::Mode::ReadOnly);
 	CHECK(readAll(again) == pattern(10, 4));
+}
+
+TEST_CASE("a new file is never made through a link at its name")
+{
+	TempDirectory dir;
+	const auto path = dir.path() / "taken";
+	std::error_code error;
+	std::filesystem::create_symlink(dir.path() / "nothing", path, error);
+	if (error) {
+		SKIP("links cannot be made here: " << error.message());
+	}
+	try {
+		File(path, File::Mode::CreateNew).close();
+		FAIL("created a file through a link");
+	} catch (const std::system_error &e) {
+		CHECK(e.code() == std::errc::file_exists);
+	}
+	CHECK(std::filesystem::is_symlink(path));
+	CHECK_FALSE(std::filesystem::exists(dir.path() / "nothing"));
+}
+
+TEST_CASE("a name is taken by anything that has it, without following links")
+{
+	TempDirectory dir;
+	CHECK_FALSE(tapeloop::nameTaken(dir.path() / "free"));
+	File(dir.path() / "file", File::Mode::CreateNew).close();
+	CHECK(tapeloop::nameTaken(dir.path() / "file"));
+	CHECK(tapeloop::nameTaken(dir.path()));
+	std::error_code error;
+	std::filesystem::create_symlink(dir.path() / "nothing", dir.path() / "dangling", error);
+	if (error) {
+		SKIP("links cannot be made here: " << error.message());
+	}
+	CHECK(tapeloop::nameTaken(dir.path() / "dangling"));
+	std::filesystem::create_symlink("loop", dir.path() / "loop");
+	CHECK(tapeloop::nameTaken(dir.path() / "loop"));
+#ifndef _WIN32
+	// A name the file system refuses cannot be checked.
+	CHECK(tapeloop::nameTaken(dir.path() / std::string(300, 'n')));
+#endif
 }
 
 TEST_CASE("opening a file that does not exist fails")
@@ -225,6 +285,58 @@ TEST_CASE("an exclusive rename leaves a file that has the name alone")
 	}
 	CHECK_THROWS_AS(tapeloop::renameIfFree(part, dir.path() / "other.tplp"), std::system_error);
 }
+
+#ifndef _WIN32
+
+TEST_CASE("an exclusive rename claims the name with a link where it cannot rename so")
+{
+	TempDirectory dir;
+	const auto part = dir.path() / "replay.tplp.part";
+	const auto published = dir.path() / "replay.tplp";
+	File(part, File::Mode::CreateNew).writeAt(0, pattern(30, 12));
+	File(published, File::Mode::CreateNew).writeAt(0, pattern(60, 13));
+	renameError = EINVAL;
+	linkError = 0;
+	const FileHookScope hook(refusingHook);
+	CHECK_FALSE(tapeloop::renameIfFree(part, published));
+	{
+		File kept(published, File::Mode::ReadOnly);
+		CHECK(readAll(kept) == pattern(60, 13));
+	}
+	std::filesystem::remove(published);
+	CHECK(tapeloop::renameIfFree(part, published));
+	CHECK_FALSE(std::filesystem::exists(part));
+	File file(published, File::Mode::ReadOnly);
+	CHECK(readAll(file) == pattern(30, 12));
+}
+
+// File systems refuse what they lack with different errors, and none of them may fail the
+// rename.
+TEST_CASE("an exclusive rename looks at the name where it can neither rename so nor link")
+{
+	for (const int refused : {ENOSYS, EPERM, EOPNOTSUPP, EXDEV}) {
+		CAPTURE(refused);
+		TempDirectory dir;
+		const auto part = dir.path() / "replay.tplp.part";
+		const auto published = dir.path() / "replay.tplp";
+		File(part, File::Mode::CreateNew).writeAt(0, pattern(30, 12));
+		renameError = EINVAL;
+		linkError = refused;
+		const FileHookScope hook(refusingHook);
+		std::filesystem::create_symlink(dir.path() / "nothing", published);
+		CHECK_FALSE(tapeloop::renameIfFree(part, published));
+		CHECK(std::filesystem::is_symlink(published));
+		CHECK_FALSE(std::filesystem::exists(dir.path() / "nothing"));
+		std::filesystem::remove(published);
+		CHECK(tapeloop::renameIfFree(part, published));
+		CHECK_FALSE(std::filesystem::exists(part));
+		File file(published, File::Mode::ReadOnly);
+		CHECK(readAll(file) == pattern(30, 12));
+		CHECK_THROWS_AS(tapeloop::renameIfFree(part, dir.path() / "other.tplp"), std::system_error);
+	}
+}
+
+#endif
 
 TEST_CASE("a directory can be made durable")
 {

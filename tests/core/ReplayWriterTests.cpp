@@ -5,6 +5,7 @@
 
 #include "core/FileIo.hpp"
 
+#include "FileHookScope.hpp"
 #include "StoredReplays.hpp"
 #include "SyntheticEncoder.hpp"
 #include "TempDirectory.hpp"
@@ -12,6 +13,7 @@
 #include <catch2/catch_test_macros.hpp>
 
 #include <algorithm>
+#include <cerrno>
 #include <cstdint>
 #include <filesystem>
 #include <memory>
@@ -19,6 +21,7 @@
 #include <set>
 #include <stdexcept>
 #include <string>
+#include <string_view>
 #include <system_error>
 #include <vector>
 
@@ -35,6 +38,7 @@ using tapeloop::VideoCodec;
 using tapeloop::WrittenReplay;
 using tapeloop::test::captureOf;
 using tapeloop::test::fileBytes;
+using tapeloop::test::FileHookScope;
 using tapeloop::test::Gops;
 using tapeloop::test::h264Config;
 using tapeloop::test::kGopLength;
@@ -48,6 +52,46 @@ using tapeloop::test::SyntheticEncoder;
 using tapeloop::test::TempDirectory;
 
 namespace fs = std::filesystem;
+
+namespace {
+
+// What the file hook does. It stands for another writer in the folder, which links the
+// name raced to nothing right before this writer creates it (atCreate) or publishes to it,
+// once. Exclusive renames and links fail with the errors set, 0 letting them run.
+struct HookPlan {
+	fs::path raced{};
+	bool atCreate = false;
+	int renameError = 0;
+	int linkError = 0;
+};
+
+HookPlan plan;
+
+int planHook(std::string_view call, const fs::path &path) noexcept
+{
+	if (!plan.raced.empty() && path == plan.raced && (call == "create") == plan.atCreate) {
+		std::error_code error;
+		fs::create_symlink(path.parent_path() / "nothing", path, error);
+		plan.raced.clear();
+	}
+	if (call == "exclusive rename") {
+		return plan.renameError;
+	}
+	return call == "link" ? plan.linkError : 0;
+}
+
+// Skips the test where links cannot be made, as on Windows without the privilege.
+void requireLinks(const fs::path &dir)
+{
+	std::error_code error;
+	fs::create_symlink(dir / "nothing", dir / "probe", error);
+	if (error) {
+		SKIP("links cannot be made here: " << error.message());
+	}
+	fs::remove(dir / "probe");
+}
+
+} // namespace
 
 TEST_CASE("a capture is written as segments and a manifest")
 {
@@ -261,38 +305,76 @@ TEST_CASE("a replay whose name is taken gets a number")
 	      dir.path() / (std::string(116, 's') + " (2).tplp"));
 }
 
-// A check that a name is free does not see a link to nothing, so such a link stands for a
-// file another writer in the folder creates right after the check.
 TEST_CASE("a replay never replaces a file that takes its name while it is written")
 {
 	TempDirectory dir;
-	std::error_code error;
-	fs::create_symlink(dir.path() / "nothing", dir.path() / "same.tplp", error);
-	if (error) {
-		SKIP("links cannot be made here: " << error.message());
-	}
+	requireLinks(dir.path());
+	plan = HookPlan{.raced = dir.path() / "same.tplp"};
+	const FileHookScope hook(planHook);
 	const WrittenReplay written = ReplayWriter().write(captureOf(dir.path(), {sourceOf("a", makeGops(2))}, "same"));
+	CHECK(plan.raced.empty());
 	CHECK(written.manifest == dir.path() / "same (2).tplp");
 	CHECK(fs::is_symlink(dir.path() / "same.tplp"));
 	CHECK_FALSE(fs::exists(dir.path() / "same.tplp.part"));
 	CHECK_FALSE(fs::exists(dir.path() / "nothing"));
 }
 
-#ifndef _WIN32
-// POSIX makes a create that must be exclusive fail on a link, whatever it leads to.
 TEST_CASE("a replay never deletes what has the name of its half-written file")
 {
 	TempDirectory dir;
-	std::error_code error;
-	fs::create_symlink(dir.path() / "nothing", dir.path() / "same.tplp.part", error);
-	if (error) {
-		SKIP("links cannot be made here: " << error.message());
-	}
+	requireLinks(dir.path());
+	plan = HookPlan{.raced = dir.path() / "same.tplp.part", .atCreate = true};
+	const FileHookScope hook(planHook);
 	const WrittenReplay written = ReplayWriter().write(captureOf(dir.path(), {sourceOf("a", makeGops(2))}, "same"));
+	CHECK(plan.raced.empty());
 	CHECK(written.manifest == dir.path() / "same (2).tplp");
 	CHECK(fs::is_symlink(dir.path() / "same.tplp.part"));
 	CHECK_FALSE(fs::exists(dir.path() / "same.tplp"));
 	CHECK_FALSE(fs::exists(dir.path() / "nothing"));
+}
+
+TEST_CASE("a replay takes the next number past a link at either of its names")
+{
+	for (const std::string name : {"same.tplp", "same.tplp.part"}) {
+		// A link to itself is a loop, which cannot be followed at all.
+		for (const bool loop : {false, true}) {
+			CAPTURE(name, loop);
+			TempDirectory dir;
+			std::error_code error;
+			fs::create_symlink(loop ? fs::path(name) : dir.path() / "nothing", dir.path() / name, error);
+			if (error) {
+				SKIP("links cannot be made here: " << error.message());
+			}
+			const WrittenReplay written =
+				ReplayWriter().write(captureOf(dir.path(), {sourceOf("a", makeGops(2))}, "same"));
+			CHECK(written.manifest == dir.path() / "same (2).tplp");
+			CHECK(fs::is_symlink(dir.path() / name));
+			CHECK_FALSE(fs::exists(dir.path() / "nothing"));
+		}
+	}
+}
+
+#ifndef _WIN32
+TEST_CASE("a replay is published where the file system can neither rename exclusively nor link")
+{
+	TempDirectory dir;
+	const Gops gops = makeGops(2);
+	plan = HookPlan{.renameError = EINVAL, .linkError = ENOSYS};
+	const FileHookScope hook(planHook);
+	ReplayWriter writer;
+	const WrittenReplay first = writer.write(captureOf(dir.path(), {sourceOf("a", gops)}, "same"));
+	CHECK(first.manifest == dir.path() / "same.tplp");
+	const std::optional<ReplayIndex> index = readManifest(first.manifest);
+	REQUIRE(index);
+	requireReadsBack(first.manifest, index->sources[0], gops);
+
+	// What another writer puts at the name before the look keeps it, a link to nothing too.
+	plan.raced = dir.path() / "same (2).tplp";
+	const WrittenReplay second = writer.write(captureOf(dir.path(), {sourceOf("a", gops)}, "same"));
+	CHECK(plan.raced.empty());
+	CHECK(second.manifest == dir.path() / "same (3).tplp");
+	CHECK(fs::is_symlink(dir.path() / "same (2).tplp"));
+	CHECK_FALSE(fs::exists(dir.path() / "same (2).tplp.part"));
 }
 #endif
 

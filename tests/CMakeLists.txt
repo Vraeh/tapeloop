@@ -36,6 +36,9 @@ FetchContent_MakeAvailable(Catch2)
 set_target_properties(Catch2 Catch2WithMain PROPERTIES COMPILE_WARNING_AS_ERROR OFF)
 
 add_subdirectory(../src/core core)
+# Lets the tests make a file system call fail, or race it, as file systems and other
+# writers can. The plugin's own build has no such hook.
+target_compile_definitions(tapeloop-core PUBLIC TAPELOOP_FILE_HOOK)
 
 add_executable(tapeloop-core-tests)
 target_sources(
@@ -54,6 +57,7 @@ target_sources(
     core/EncoderPolicyTests.cpp
     core/FailurePacerTests.cpp
     core/FakeDecoder.hpp
+    core/FileHookScope.hpp
     core/FileIoTests.cpp
     core/GopReaderTests.cpp
     core/GopTests.cpp
