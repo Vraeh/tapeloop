@@ -15,6 +15,7 @@ struct SurfaceLog {
 	// Makes attach() refuse.
 	bool refuse = false;
 	int attaches = 0;
+	int resizes = 0;
 	int detaches = 0;
 	// Calls out of order: resizing or enabling with no window, attaching with one.
 	int misuses = 0;
@@ -59,6 +60,7 @@ public:
 
 	void resize(uint32_t width, uint32_t height) override
 	{
+		++log_.resizes;
 		if (!log_.attached) {
 			++log_.misuses;
 		}

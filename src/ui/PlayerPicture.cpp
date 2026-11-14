@@ -5,6 +5,7 @@
 
 #include <QEvent>
 #include <QPlatformSurfaceEvent>
+#include <QScreen>
 
 #include <cmath>
 #include <utility>
@@ -36,9 +37,6 @@ bool PlayerPicture::event(QEvent *event)
 	case QEvent::WinIdChange:
 		// The surface draws into the window it was given, which may be gone.
 		detach();
-		sync();
-		break;
-	case QEvent::DevicePixelRatioChange:
 		sync();
 		break;
 	default:
@@ -121,10 +119,32 @@ void PlayerPicture::watchWindow()
 	}
 	if (window_) {
 		window_->removeEventFilter(this);
+		disconnect(window_, nullptr, this, nullptr);
 	}
 	window_ = window;
 	if (window_) {
 		window_->installEventFilter(this);
+		connect(window_, &QWindow::screenChanged, this, [this] {
+			watchScreen();
+			sync();
+		});
+	}
+	watchScreen();
+}
+
+void PlayerPicture::watchScreen()
+{
+	QScreen *screen = window_ ? window_->screen() : nullptr;
+	if (screen == screen_) {
+		return;
+	}
+	if (screen_) {
+		disconnect(screen_, nullptr, this, nullptr);
+	}
+	screen_ = screen;
+	if (screen_) {
+		// Queued, so that the windows on the screen have taken its new pixel ratio first.
+		connect(screen_, &QScreen::logicalDotsPerInchChanged, this, [this] { sync(); }, Qt::QueuedConnection);
 	}
 }
 

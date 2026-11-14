@@ -6,6 +6,7 @@
 #include "ui/PictureSurface.hpp"
 
 #include <QPointer>
+#include <QScreen>
 #include <QWidget>
 #include <QWindow>
 
@@ -14,9 +15,10 @@
 namespace tapeloop::ui {
 
 // The replay player's picture: a native window the surface draws into while the widget
-// is shown and has a size. Hidden, minimized or empty, the surface is disabled, so the
-// picture costs nothing; it is attached again when the native window is replaced, and
-// detached before the window goes. Without a surface it stays blank.
+// is shown and has a size, in device pixels, which change with the widget's size, its
+// window's screen and that screen's resolution. Hidden, minimized or empty, the surface
+// is disabled, so the picture costs nothing; it is attached again when the native window
+// is replaced, and detached before the window goes. Without a surface it stays blank.
 class PlayerPicture : public QWidget {
 public:
 	explicit PlayerPicture(std::unique_ptr<PictureSurface> surface, QWidget *parent = nullptr);
@@ -44,9 +46,11 @@ private:
 	void sync();
 	void detach() noexcept;
 	void watchWindow();
+	void watchScreen();
 
 	std::unique_ptr<PictureSurface> surface_;
 	QPointer<QWindow> window_;
+	QPointer<QScreen> screen_;
 	// Qt keeps a minimized widget visible, so what was last shown or hidden is kept here.
 	bool shown_ = false;
 	bool attached_ = false;

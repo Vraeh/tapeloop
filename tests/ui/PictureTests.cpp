@@ -8,6 +8,7 @@
 #include <catch2/catch_test_macros.hpp>
 
 #include <QApplication>
+#include <QScreen>
 #include <QWidget>
 #include <QWindow>
 
@@ -80,6 +81,36 @@ TEST_CASE("the picture draws while shown with a size and follows the widget", "[
 	delete picture;
 	CHECK(log.detaches == 1);
 	CHECK(log.destroyed);
+	CHECK(log.misuses == 0);
+}
+
+TEST_CASE("the picture follows its window to another screen and a new resolution", "[ui][picture]")
+{
+	SurfaceLog log;
+	QWidget window;
+	window.resize(400, 300);
+	auto *picture = new PlayerPicture(std::make_unique<FakeSurface>(log), &window);
+	picture->setGeometry(0, 0, 320, 180);
+	window.show();
+	REQUIRE(log.attached);
+	QWindow *native = picture->windowHandle();
+	REQUIRE(native);
+	QScreen *screen = native->screen();
+	REQUIRE(screen);
+
+	// Either changes the pixel ratio, and so the size in device pixels, with no resize of
+	// the widget. The offscreen platform has one screen of one ratio, so only the size the
+	// surface is given again can be checked.
+	int resizes = log.resizes;
+	Q_EMIT native->screenChanged(screen);
+	CHECK(log.resizes == resizes + 1);
+	resizes = log.resizes;
+	Q_EMIT screen->logicalDotsPerInchChanged(screen->logicalDotsPerInch());
+	QApplication::processEvents();
+	CHECK(log.resizes == resizes + 1);
+	CHECK(log.width == pixels(*picture, 320));
+	CHECK(log.height == pixels(*picture, 180));
+	CHECK(log.attaches == 1);
 	CHECK(log.misuses == 0);
 }
 
