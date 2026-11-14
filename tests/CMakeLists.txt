@@ -80,6 +80,7 @@ target_sources(
     core/StoredReplays.hpp
     core/SyntheticEncoder.hpp
     core/TempDirectory.hpp
+    core/TextTests.cpp
 )
 # Every core object goes into the test binary, tested or not, so that coverage also
 # reports a core file nothing calls yet.

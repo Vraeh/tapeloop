@@ -630,14 +630,22 @@ void CaptureManager::takeStoreResults()
 			for (const std::string &error : result.scan->errors) {
 				blog(LOG_WARNING, "[tapeloop] Reading the replays on disk: %s", error.c_str());
 			}
+			LeftOutTags leftOut;
 			for (const FoundReplay &found : result.scan->replays) {
 				if (!found.intact) {
 					blog(LOG_WARNING, "[tapeloop] The replay '%s' is damaged",
 					     utf8FromPath(found.manifest).c_str());
 				}
-				library_.addFound(found);
+				library_.addFound(found, leftOut);
 			}
 			blog(LOG_INFO, "[tapeloop] Found %zu replays on disk", result.scan->replays.size());
+			if (const size_t left = leftOut.pastReplayLimit + leftOut.pastLibraryLimit; left != 0) {
+				blog(LOG_WARNING,
+				     "[tapeloop] Left %zu tags of replays on disk out of the tag list, %zu for being "
+				     "past %zu on one replay and %zu for being past %zu in all; their files keep them",
+				     left, leftOut.pastReplayLimit, kMaxTagsPerReplay, leftOut.pastLibraryLimit,
+				     kMaxTags);
+			}
 			break;
 		}
 	}
@@ -657,7 +665,7 @@ void CaptureManager::saveTags(uint64_t id)
 {
 	const Replay *replay = library_.find(id);
 	if (replay && replay->state == ReplayState::Stored && !replay->manifest.empty()) {
-		store_.writeTags(replay->manifest, replay->tags);
+		store_.writeTags(replay->manifest, tagsToWrite(*replay));
 	}
 }
 

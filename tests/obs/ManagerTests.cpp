@@ -1939,6 +1939,51 @@ TEST_CASE_METHOD(ObsFixture, "replays and their tags are read back after OBS sta
 	CHECK(again.library().list("Foul").size() == 1);
 }
 
+TEST_CASE_METHOD(ObsFixture, "tags a replay on disk has past the limit stay in its file", "[obs][manager][replay]")
+{
+	OBSSourceAutoRelease pattern = createTestPattern(320, 180, "Pattern");
+	const std::string uuid = uuidOf(pattern);
+	FakeHost host;
+	std::filesystem::path manifest;
+	{
+		CaptureManager manager(host);
+		BufferSettings settings = selecting(uuid);
+		settings.startWithOutputs = false;
+		manager.setSettings(settings);
+		REQUIRE(manager.manualStart());
+		REQUIRE(waitFor([&] { return hasGops(manager, uuid, 2); }, 60s));
+		const uint64_t id = manager.captureReplay();
+		manager.finishWrites();
+		manifest = manager.library().find(id)->manifest;
+		manager.onExit();
+	}
+	// More tags than a replay lists, as a file from elsewhere can have.
+	std::vector<std::string> tags;
+	for (int i = 0; i < 34; ++i) {
+		tags.push_back((i < 10 ? "t0" : "t") + std::to_string(i));
+	}
+	tapeloop::ReplayWriter().writeTags(manifest, tags);
+
+	LogCounter leftOut("out of the tag list");
+	CaptureManager manager(host);
+	manager.loadLibrary();
+	manager.finishWrites();
+	REQUIRE(manager.library().size() == 1);
+	CHECK(leftOut.lines == 1);
+	CHECK(leftOut.lastLine() ==
+	      "[tapeloop] Left 2 tags of replays on disk out of the tag list, 2 for being past 32 "
+	      "on one replay and 0 for being past 2000 in all; their files keep them");
+	const uint64_t id = manager.library().list().front();
+	CHECK(manager.library().tagsOf(id).size() == 32);
+
+	// Editing its tags writes its file again, with those left out.
+	CHECK(tapeloop::obs::ManagerDockBackend(manager).untagReplay(id, "t00"));
+	manager.finishWrites();
+	const tapeloop::ReplayScan scan = tapeloop::scanReplays(host.dir.path() / "Tapeloop");
+	REQUIRE(scan.replays.size() == 1);
+	CHECK(scan.replays[0].tags == std::vector<std::string>(tags.begin() + 1, tags.end()));
+}
+
 TEST_CASE_METHOD(ObsFixture, "a replay that cannot be saved still plays from the buffers", "[obs][manager][replay]")
 {
 	OBSSourceAutoRelease pattern = createTestPattern(320, 180, "Pattern");

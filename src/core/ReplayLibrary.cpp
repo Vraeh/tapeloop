@@ -3,6 +3,8 @@
 
 #include "core/ReplayLibrary.hpp"
 
+#include "core/Text.hpp"
+
 #include <algorithm>
 #include <memory>
 #include <ranges>
@@ -47,15 +49,31 @@ bool sameIgnoringCase(std::string_view a, std::string_view b) noexcept
 	return std::ranges::equal(a, b, [](char x, char y) { return lower(x) == lower(y); });
 }
 
+bool lessIgnoringCase(std::string_view a, std::string_view b) noexcept
+{
+	return std::ranges::lexicographical_compare(a, b, [](char x, char y) {
+		return static_cast<unsigned char>(lower(x)) < static_cast<unsigned char>(lower(y));
+	});
+}
+
+// Room for extra more names, growing as push_back would, so that inserting them throws
+// nothing.
+void makeRoom(std::vector<std::string> &names, size_t extra)
+{
+	const size_t needed = names.size() + extra;
+	if (names.capacity() < needed) {
+		names.reserve(std::max(needed, names.capacity() * 2));
+	}
+}
+
 std::chrono::system_clock::time_point fromUnixNanoseconds(int64_t nanoseconds)
 {
 	return std::chrono::system_clock::time_point(
 		std::chrono::duration_cast<std::chrono::system_clock::duration>(std::chrono::nanoseconds(nanoseconds)));
 }
 
-// The spelling a name has in known when it matches one ignoring ASCII case, else the
-// name trimmed; empty for a name that is not valid.
-std::string canonicalIn(const std::vector<std::string> &known, std::string_view tag)
+// The tag trimmed, or empty when it is not valid.
+std::string_view validTag(std::string_view tag) noexcept
 {
 	const auto blank = [](char c) {
 		return c == ' ' || c == '\t';
@@ -66,16 +84,19 @@ std::string canonicalIn(const std::vector<std::string> &known, std::string_view 
 	while (!tag.empty() && blank(tag.back())) {
 		tag.remove_suffix(1);
 	}
-	const bool control = std::ranges::any_of(tag, [](char c) {
-		const auto code = static_cast<unsigned char>(c);
-		return code < 0x20 || code == 0x7f;
-	});
-	if (tag.empty() || control) {
-		return {};
+	size_t length = 0;
+	for (size_t at = 0; at < tag.size();) {
+		const size_t bytes = utf8SequenceLength(tag, at);
+		if (bytes == 0) {
+			return {};
+		}
+		const char32_t code = utf8CodePoint(tag.substr(at, bytes));
+		if (code < 0x20 || code == 0x7F || isLayoutControl(code) || ++length > kMaxTagLength) {
+			return {};
+		}
+		at += bytes;
 	}
-	const auto found =
-		std::ranges::find_if(known, [tag](const std::string &name) { return sameIgnoringCase(name, tag); });
-	return found != known.end() ? *found : std::string(tag);
+	return tag;
 }
 
 // Newer first: by capture time, then by id, which follows the order replays came in.
@@ -85,6 +106,15 @@ bool newer(const Replay &a, const Replay &b) noexcept
 }
 
 } // namespace
+
+std::vector<std::string> tagsToWrite(const Replay &replay)
+{
+	std::vector<std::string> tags;
+	tags.reserve(replay.tags.size() + replay.fileOnlyTags.size());
+	tags.insert(tags.end(), replay.tags.begin(), replay.tags.end());
+	tags.insert(tags.end(), replay.fileOnlyTags.begin(), replay.fileOnlyTags.end());
+	return tags;
+}
 
 uint64_t ReplayLibrary::addCaptured(const ReplayCapture &capture, std::string broadcast)
 {
@@ -117,6 +147,12 @@ uint64_t ReplayLibrary::addCaptured(const ReplayCapture &capture, std::string br
 
 uint64_t ReplayLibrary::addFound(const FoundReplay &found)
 {
+	LeftOutTags leftOut;
+	return addFound(found, leftOut);
+}
+
+uint64_t ReplayLibrary::addFound(const FoundReplay &found, LeftOutTags &leftOut)
+{
 	const bool known = std::ranges::any_of(replays_, [&](const auto &entry) {
 		const Replay &replay = entry.second;
 		return found.intact ? replay.uuid == found.id && replay.state != ReplayState::Damaged
@@ -132,16 +168,56 @@ uint64_t ReplayLibrary::addFound(const FoundReplay &found)
 	replay.broadcast = found.broadcast;
 	replay.manifest = found.manifest;
 	replay.sources = found.sources;
-	std::vector<std::string> tags = tags_;
+	// The names new to the library, ordered as tagIndex_.
+	std::vector<std::string> added;
+	LeftOutTags past;
 	for (const std::string &tag : found.tags) {
-		const std::string name = canonicalIn(tags, tag);
-		if (!name.empty()) {
-			insertSorted(replay.tags, name);
-			insertSorted(tags, name);
+		const std::string_view name = validTag(tag);
+		if (name.empty()) {
+			replay.fileOnlyTags.push_back(tag);
+			continue;
+		}
+		const std::string *spelling = spellingOf(name);
+		size_t newAt = 0;
+		if (!spelling) {
+			newAt = indexIgnoringCase(added, name);
+			if (newAt < added.size() && sameIgnoringCase(added[newAt], name)) {
+				spelling = &added[newAt];
+			}
+		}
+		const std::string_view kept = spelling ? std::string_view(*spelling) : name;
+		if (containsSorted(replay.tags, kept)) {
+			continue;
+		}
+		if (replay.tags.size() >= kMaxTagsPerReplay) {
+			++past.pastReplayLimit;
+			replay.fileOnlyTags.push_back(tag);
+			continue;
+		}
+		if (!spelling && tags_.size() + added.size() >= kMaxTags) {
+			++past.pastLibraryLimit;
+			replay.fileOnlyTags.push_back(tag);
+			continue;
+		}
+		insertSorted(replay.tags, kept);
+		if (!spelling) {
+			added.insert(added.begin() + static_cast<std::ptrdiff_t>(newAt), std::string(name));
 		}
 	}
+	// Whatever can throw comes before the replay goes in.
+	std::vector<std::string> sorted = added;
+	makeRoom(tags_, added.size());
+	makeRoom(tagIndex_, added.size());
 	const uint64_t id = add(std::move(replay));
-	tags_.swap(tags);
+	for (std::string &name : sorted) {
+		tags_.insert(std::lower_bound(tags_.begin(), tags_.end(), name), std::move(name));
+	}
+	for (std::string &name : added) {
+		const size_t at = indexIgnoringCase(tagIndex_, name);
+		tagIndex_.insert(tagIndex_.begin() + static_cast<std::ptrdiff_t>(at), std::move(name));
+	}
+	leftOut.pastReplayLimit += past.pastReplayLimit;
+	leftOut.pastLibraryLimit += past.pastLibraryLimit;
 	return id;
 }
 
@@ -247,8 +323,12 @@ const Replay *ReplayLibrary::find(uint64_t id) const
 
 bool ReplayLibrary::createTag(std::string_view tag)
 {
-	const std::string name = canonical(tag);
-	return !name.empty() && insertSorted(tags_, name);
+	const std::string_view name = validTag(tag);
+	if (name.empty() || spellingOf(name) || tags_.size() >= kMaxTags) {
+		return false;
+	}
+	insertTag(std::string(name));
+	return true;
 }
 
 bool ReplayLibrary::deleteTag(std::string_view tag)
@@ -257,6 +337,7 @@ bool ReplayLibrary::deleteTag(std::string_view tag)
 	if (!eraseSorted(tags_, name)) {
 		return false;
 	}
+	tagIndex_.erase(tagIndex_.begin() + static_cast<std::ptrdiff_t>(indexIgnoringCase(tagIndex_, name)));
 	for (auto &[id, replay] : replays_) {
 		eraseSorted(replay.tags, name);
 	}
@@ -265,19 +346,31 @@ bool ReplayLibrary::deleteTag(std::string_view tag)
 
 bool ReplayLibrary::addTag(uint64_t id, std::string_view tag)
 {
-	const std::string name = canonical(tag);
+	const std::string_view name = validTag(tag);
 	const auto found = replays_.find(id);
 	if (name.empty() || found == replays_.end() || found->second.state == ReplayState::Damaged) {
 		return false;
 	}
-	std::vector<std::string> tags = found->second.tags;
-	if (!insertSorted(tags, name) || !tagsFit(tags)) {
+	Replay &replay = found->second;
+	const std::string *spelling = spellingOf(name);
+	if (replay.tags.size() >= kMaxTagsPerReplay || (!spelling && tags_.size() >= kMaxTags)) {
 		return false;
 	}
-	// The tag list first: should the replay's own list then fail to grow, the tag is at
-	// least known.
-	insertSorted(tags_, name);
-	return insertSorted(found->second.tags, name);
+	const std::string kept(spelling ? std::string_view(*spelling) : name);
+	std::vector<std::string> tags = replay.tags;
+	if (!insertSorted(tags, kept)) {
+		return false;
+	}
+	std::vector<std::string> written = tagsToWrite(replay);
+	written.push_back(kept);
+	if (!tagsFit(written)) {
+		return false;
+	}
+	if (!spelling) {
+		insertTag(kept);
+	}
+	replay.tags.swap(tags);
+	return true;
 }
 
 bool ReplayLibrary::removeTag(uint64_t id, std::string_view tag)
@@ -333,9 +426,41 @@ uint64_t ReplayLibrary::add(Replay replay)
 	return id;
 }
 
+size_t ReplayLibrary::indexIgnoringCase(const std::vector<std::string> &names, std::string_view name) const noexcept
+{
+	const auto at = std::lower_bound(names.begin(), names.end(), name,
+					 [this](const std::string &known, std::string_view sought) {
+						 countComparison();
+						 return lessIgnoringCase(known, sought);
+					 });
+	return static_cast<size_t>(at - names.begin());
+}
+
+const std::string *ReplayLibrary::spellingOf(std::string_view name) const noexcept
+{
+	const size_t at = indexIgnoringCase(tagIndex_, name);
+	return at < tagIndex_.size() && sameIgnoringCase(tagIndex_[at], name) ? &tagIndex_[at] : nullptr;
+}
+
 std::string ReplayLibrary::canonical(std::string_view tag) const
 {
-	return canonicalIn(tags_, tag);
+	const std::string_view name = validTag(tag);
+	if (name.empty()) {
+		return {};
+	}
+	const std::string *spelling = spellingOf(name);
+	return std::string(spelling ? std::string_view(*spelling) : name);
+}
+
+void ReplayLibrary::insertTag(std::string name)
+{
+	// Whatever can throw comes before either list changes, so they never disagree.
+	std::string copy = name;
+	makeRoom(tags_, 1);
+	makeRoom(tagIndex_, 1);
+	tags_.insert(std::lower_bound(tags_.begin(), tags_.end(), copy), std::move(copy));
+	const size_t at = indexIgnoringCase(tagIndex_, name);
+	tagIndex_.insert(tagIndex_.begin() + static_cast<std::ptrdiff_t>(at), std::move(name));
 }
 
 } // namespace tapeloop

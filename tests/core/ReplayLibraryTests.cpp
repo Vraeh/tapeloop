@@ -15,6 +15,7 @@
 #include <memory>
 #include <new>
 #include <string>
+#include <string_view>
 #include <vector>
 
 using tapeloop::Clip;
@@ -69,6 +70,40 @@ FoundReplay damaged(const std::string &name)
 	found.manifest = fs::path("Copa") / name;
 	found.broadcast = "Copa";
 	return found;
+}
+
+std::string repeated(std::string_view text, size_t times)
+{
+	std::string out;
+	for (size_t i = 0; i < times; ++i) {
+		out += text;
+	}
+	return out;
+}
+
+std::string utf8(char32_t code)
+{
+	if (code < 0x80) {
+		return std::string(1, static_cast<char>(code));
+	}
+	if (code < 0x800) {
+		return {static_cast<char>(0xC0 | (code >> 6)), static_cast<char>(0x80 | (code & 0x3F))};
+	}
+	if (code < 0x10000) {
+		return {static_cast<char>(0xE0 | (code >> 12)), static_cast<char>(0x80 | ((code >> 6) & 0x3F)),
+			static_cast<char>(0x80 | (code & 0x3F))};
+	}
+	return {static_cast<char>(0xF0 | (code >> 18)), static_cast<char>(0x80 | ((code >> 12) & 0x3F)),
+		static_cast<char>(0x80 | ((code >> 6) & 0x3F)), static_cast<char>(0x80 | (code & 0x3F))};
+}
+
+std::vector<std::string> numbered(std::string_view prefix, size_t count)
+{
+	std::vector<std::string> names;
+	for (size_t i = 0; i < count; ++i) {
+		names.push_back(std::string(prefix) + (i < 10 ? "0" : "") + std::to_string(i));
+	}
+	return names;
 }
 
 } // namespace
@@ -134,12 +169,49 @@ TEST_CASE("ReplayLibrary is unchanged when adding fails")
 		} else if (failed) {
 			CHECK(library.list() == std::vector<uint64_t>{captured, kept});
 			CHECK(library.tags().size() == 1);
+			// The tag list and its index agree.
+			CHECK(library.createTag("GOALS"));
 		} else {
 			REQUIRE(added != 0);
 			CHECK(library.find(added)->capturedAt == wallClock(30));
 			CHECK(library.tags().size() == 3);
+			CHECK_FALSE(library.createTag("GOALS"));
 		}
 		CHECK(library.find(kept)->capturedAt == wallClock(10));
+	}
+}
+
+TEST_CASE("ReplayLibrary is unchanged when tagging fails")
+{
+	if (!tapeloop::test::kAllocationFailures) {
+		SKIP("allocation failures cannot be injected in this configuration");
+	}
+	for (size_t skip = 0;; ++skip) {
+		CAPTURE(skip);
+		ReplayLibrary library;
+		const uint64_t replay = library.addCaptured(captureAt(10), "Liga");
+		REQUIRE(library.createTag("goals"));
+		bool failed = false;
+		bool triggered = false;
+		{
+			tapeloop::test::AllocationFailure failure(skip);
+			try {
+				library.addTag(replay, "Saves from the line");
+			} catch (const std::bad_alloc &) {
+				failed = true;
+			}
+			triggered = failure.triggered();
+		}
+		CHECK(failed == triggered);
+		if (!failed) {
+			CHECK(library.tagsOf(replay).size() == 1);
+			CHECK_FALSE(library.createTag("SAVES FROM THE LINE"));
+			break;
+		}
+		CHECK(library.tags().size() == 1);
+		CHECK(library.tagsOf(replay).empty());
+		// The tag list and its index agree.
+		CHECK(library.createTag("SAVES FROM THE LINE"));
 	}
 }
 
@@ -214,16 +286,18 @@ TEST_CASE("ReplayLibrary puts on a replay only the tags its file has room for")
 {
 	ReplayLibrary library;
 	const uint64_t replay = library.addCaptured(captureAt(10), "Liga");
-	for (char name = 'a'; name < 'e'; ++name) {
-		CHECK(library.addTag(replay, std::string(992, name)));
+	// Tags of 64 characters of four bytes each, 264 bytes with their record's head: a
+	// slot has room for 15.
+	for (char32_t code = 0x1F600; code < 0x1F60F; ++code) {
+		CHECK(library.addTag(replay, repeated(utf8(code), 64)));
 	}
-	CHECK_FALSE(library.addTag(replay, std::string(992, 'e')));
-	CHECK(library.tagsOf(replay).size() == 4);
-	CHECK(library.tags().size() == 4);
+	CHECK_FALSE(library.addTag(replay, repeated(utf8(0x1F60F), 64)));
+	CHECK(library.tagsOf(replay).size() == 15);
+	CHECK(library.tags().size() == 15);
 	CHECK(library.addTag(replay, "short"));
 	// Another replay has room of its own.
 	const uint64_t other = library.addCaptured(captureAt(20), "Liga");
-	CHECK(library.addTag(other, std::string(992, 'e')));
+	CHECK(library.addTag(other, repeated(utf8(0x1F60F), 64)));
 }
 
 TEST_CASE("ReplayLibrary keeps tag names tidy and tells them apart regardless of case")
@@ -247,6 +321,215 @@ TEST_CASE("ReplayLibrary keeps tag names tidy and tells them apart regardless of
 	CHECK(library.removeTag(replay, " goals"));
 	CHECK(library.deleteTag("gOaLs"));
 	CHECK(library.tags().empty());
+	CHECK(library.createTag("GOALS"));
+	CHECK(library.addTag(replay, "goals"));
+	CHECK(library.tagsOf(replay)[0] == "GOALS");
+}
+
+TEST_CASE("ReplayLibrary refuses tag names that are not UTF-8")
+{
+	ReplayLibrary library;
+	const uint64_t replay = library.addCaptured(captureAt(10), "Liga");
+	// A lone continuation byte, a lead byte without its continuation, an overlong slash,
+	// a surrogate, and a code point past U+10FFFF.
+	for (const std::string_view name :
+	     {"a\x80z", "goal\xC3", "a\xC0\xAFz", "a\xED\xA0\x80z", "a\xF4\x90\x80\x80z"}) {
+		CAPTURE(name);
+		CHECK_FALSE(library.createTag(name));
+		CHECK_FALSE(library.addTag(replay, name));
+	}
+	CHECK(library.tags().empty());
+	CHECK(library.createTag("F\xC3\xBAtbol \xE2\x9A\xBD"));
+	CHECK(library.addTag(replay, "\xF0\x9F\x8E\xA5"));
+	CHECK(library.tags().size() == 2);
+}
+
+TEST_CASE("ReplayLibrary refuses tag names with characters that change how text is laid out")
+{
+	ReplayLibrary library;
+	const uint64_t replay = library.addCaptured(captureAt(10), "Liga");
+	const char32_t layout[] = {0x200E, 0x200F, 0x2028, 0x2029, 0x202A, 0x202B, 0x202C,
+				   0x202D, 0x202E, 0x2066, 0x2067, 0x2068, 0x2069};
+	for (const char32_t code : layout) {
+		CAPTURE(static_cast<unsigned>(code));
+		CHECK_FALSE(library.createTag("goal" + utf8(code) + "s"));
+		CHECK_FALSE(library.addTag(replay, utf8(code) + "goals"));
+	}
+	// So does any control character.
+	for (const std::string_view name : {"line\nbreak", "bell\x07", "\x1F", "del\x7F"}) {
+		CAPTURE(name);
+		CHECK_FALSE(library.createTag(name));
+	}
+	CHECK(library.tags().empty());
+	const char32_t neighbors[] = {0x200D, 0x2010, 0x2027, 0x202F, 0x2065, 0x206A};
+	for (const char32_t code : neighbors) {
+		CHECK(library.createTag("goal" + utf8(code)));
+	}
+	CHECK(library.tags().size() == 6);
+}
+
+TEST_CASE("ReplayLibrary takes tag names of up to 64 characters in any script")
+{
+	ReplayLibrary library;
+	CHECK(library.createTag(repeated("a", 64)));
+	CHECK_FALSE(library.createTag(repeated("b", 65)));
+	// Characters, not bytes: two bytes each in Spanish, four in emoji.
+	CHECK(library.createTag(repeated("\xC3\xB1", 64)));
+	CHECK_FALSE(library.createTag(repeated("\xC3\x91", 65)));
+	CHECK(library.createTag(repeated("\xF0\x9F\x8E\xA5", 64)));
+	CHECK_FALSE(library.createTag(repeated("\xF0\x9F\x8E\xA4", 65)));
+	// The spaces trimmed around a name do not count.
+	CHECK(library.createTag("  " + repeated("c", 64) + "\t"));
+	CHECK(library.tags().size() == 4);
+	const uint64_t replay = library.addCaptured(captureAt(10), "Liga");
+	CHECK_FALSE(library.addTag(replay, repeated("d", 65)));
+	CHECK(library.addTag(replay, repeated("d", 64)));
+}
+
+TEST_CASE("ReplayLibrary puts at most 32 tags on a replay")
+{
+	ReplayLibrary library;
+	const uint64_t replay = library.addCaptured(captureAt(10), "Liga");
+	for (const std::string &name : numbered("t", 32)) {
+		REQUIRE(library.addTag(replay, name));
+	}
+	CHECK_FALSE(library.addTag(replay, "t32"));
+	CHECK(library.tags().size() == 32);
+	REQUIRE(library.createTag("t32"));
+	CHECK_FALSE(library.addTag(replay, "t32"));
+	REQUIRE(library.removeTag(replay, "t00"));
+	CHECK(library.addTag(replay, "t32"));
+	CHECK(library.tagsOf(replay).size() == 32);
+}
+
+TEST_CASE("ReplayLibrary keeps at most 2000 tags")
+{
+	ReplayLibrary library;
+	for (const std::string &name : numbered("t", 2000)) {
+		REQUIRE(library.createTag(name));
+	}
+	CHECK_FALSE(library.createTag("new"));
+	const uint64_t replay = library.addCaptured(captureAt(10), "Liga");
+	CHECK_FALSE(library.addTag(replay, "new"));
+	CHECK(library.tags().size() == 2000);
+	// The tags it has still go on replays.
+	CHECK(library.addTag(replay, "T05"));
+	CHECK(library.tagsOf(replay)[0] == "t05");
+	REQUIRE(library.deleteTag("t00"));
+	CHECK(library.addTag(replay, "new"));
+	CHECK(library.tags().size() == 2000);
+}
+
+TEST_CASE("ReplayLibrary leaves out the tags of a replay found on disk past 32")
+{
+	ReplayLibrary library;
+	std::vector<std::string> tags = numbered("t", 40);
+	// Another spelling of a tag it has is no tag of its own.
+	tags.insert(tags.begin() + 32, "T05");
+	tapeloop::LeftOutTags leftOut;
+	const uint64_t id = library.addFound(foundAt(10, tags), leftOut);
+	CHECK(leftOut.pastReplayLimit == 8);
+	CHECK(leftOut.pastLibraryLimit == 0);
+	// The first in the file's order.
+	CHECK(library.find(id)->tags == numbered("t", 32));
+	CHECK(library.tags().size() == 32);
+	CHECK(library.list("t32").empty());
+	CHECK(library.find(id)->fileOnlyTags == std::vector<std::string>(tags.begin() + 33, tags.end()));
+
+	// The counts add up over the replays of a scan.
+	library.addFound(foundAt(20, tags), leftOut);
+	CHECK(leftOut.pastReplayLimit == 16);
+	CHECK(library.addFound(foundAt(30, tags)) != 0);
+	CHECK(leftOut.pastReplayLimit == 16);
+}
+
+TEST_CASE("ReplayLibrary leaves out the tags of a replay found on disk past 2000 in all")
+{
+	ReplayLibrary library;
+	for (const std::string &name : numbered("k", 1990)) {
+		REQUIRE(library.createTag(name));
+	}
+	std::vector<std::string> tags = numbered("n", 20);
+	// Those it has go on the replay whatever the limit.
+	tags.emplace_back("K03");
+	tapeloop::LeftOutTags leftOut;
+	const uint64_t id = library.addFound(foundAt(10, tags), leftOut);
+	CHECK(leftOut.pastReplayLimit == 0);
+	CHECK(leftOut.pastLibraryLimit == 10);
+	CHECK(library.tags().size() == 2000);
+	CHECK(library.tagsOf(id).size() == 11);
+	CHECK(library.list("k03") == std::vector<uint64_t>{id});
+	CHECK(library.list("n09") == std::vector<uint64_t>{id});
+	CHECK(library.list("n10").empty());
+	CHECK(library.find(id)->fileOnlyTags == std::vector<std::string>(tags.begin() + 10, tags.end() - 1));
+
+	const uint64_t next = library.addFound(foundAt(20, {"n10", "N00", "new"}), leftOut);
+	CHECK(leftOut.pastLibraryLimit == 12);
+	CHECK(library.find(next)->tags == std::vector<std::string>{"n00"});
+}
+
+TEST_CASE("ReplayLibrary keeps in a replay's file the tags it leaves out")
+{
+	ReplayLibrary library;
+	const std::string notUtf8 = "goal\xC3";
+	const std::string twoLines = "line\xE2\x80\xA8"
+				     "break";
+	std::vector<std::string> tags = numbered("t", 33);
+	tags.insert(tags.begin(), {"Goals", notUtf8, "goals", twoLines, " ", std::string("a\0b", 3)});
+	const uint64_t id = library.addFound(foundAt(10, tags));
+	const Replay *replay = library.find(id);
+	REQUIRE(replay);
+	CHECK(replay->tags.size() == 32);
+	CHECK(replay->tags.front() == "Goals");
+	CHECK(replay->tags.back() == "t30");
+	const std::vector<std::string> leftOut = {notUtf8, twoLines, " ", std::string("a\0b", 3), "t31", "t32"};
+	CHECK(replay->fileOnlyTags == leftOut);
+
+	// What the file is to hold: the replay's tags, then those left out as the file has them.
+	std::vector<std::string> written = replay->tags;
+	written.insert(written.end(), leftOut.begin(), leftOut.end());
+	CHECK(tapeloop::tagsToWrite(*replay) == written);
+	REQUIRE(library.removeTag(id, "goals"));
+	written.erase(written.begin());
+	CHECK(tapeloop::tagsToWrite(*library.find(id)) == written);
+	// Deleting a tag takes it off the list, not out of the files that keep it.
+	REQUIRE(library.createTag("t31"));
+	REQUIRE(library.deleteTag("t31"));
+	CHECK(tapeloop::tagsToWrite(*library.find(id)) == written);
+}
+
+TEST_CASE("ReplayLibrary counts the tags a file keeps in the room it has")
+{
+	ReplayLibrary library;
+	// A tag left out, of 4000 bytes, leaves room for one of 48.
+	const uint64_t id = library.addFound(foundAt(10, {std::string(4000, '\x01')}));
+	CHECK(library.tagsOf(id).empty());
+	CHECK_FALSE(library.addTag(id, repeated("a", 49)));
+	CHECK(library.addTag(id, repeated("a", 48)));
+	CHECK(library.tags().size() == 1);
+}
+
+TEST_CASE("ReplayLibrary looks a scan's tags up without going through the tag list")
+{
+	// Every tag of every replay new to the library, so that the list grows to its limit
+	// and each tag past it is looked up against all of it.
+	constexpr size_t kReplays = 200;
+	constexpr size_t kTagsEach = 100;
+	ReplayLibrary library;
+	tapeloop::LeftOutTags leftOut;
+	for (size_t r = 0; r < kReplays; ++r) {
+		REQUIRE(library.addFound(foundAt(static_cast<int64_t>(r), numbered(std::to_string(r) + "-", kTagsEach)),
+					 leftOut) != 0);
+	}
+	// 62 replays with 32 tags each, one with the last 16 the list has room for.
+	CHECK(library.tags().size() == 2000);
+	CHECK(leftOut.pastReplayLimit == 62 * 68);
+	CHECK(leftOut.pastLibraryLimit == 84 + 137 * 100);
+	// Two binary searches of 2000 names take 22 comparisons at most, where going through
+	// the list would take up to 2000.
+	constexpr size_t kTags = kReplays * kTagsEach;
+	CHECK(library.tagComparisons() >= kTags);
+	CHECK(library.tagComparisons() <= kTags * 24);
 }
 
 TEST_CASE("ReplayLibrary forgets the pick and the tags of what it lets go of")

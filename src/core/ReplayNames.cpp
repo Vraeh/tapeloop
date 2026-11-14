@@ -3,6 +3,8 @@
 
 #include "core/ReplayNames.hpp"
 
+#include "core/Text.hpp"
+
 #include <algorithm>
 #include <array>
 #include <ctime>
@@ -23,40 +25,6 @@ constexpr std::array<std::string_view, 2> kNumberedDeviceNames = {"COM", "LPT"};
 bool isContinuation(unsigned char byte)
 {
 	return (byte & 0xC0) == 0x80;
-}
-
-// The length of the valid UTF-8 sequence that starts at text[at], or zero.
-size_t sequenceLength(std::string_view text, size_t at)
-{
-	const auto lead = static_cast<unsigned char>(text[at]);
-	size_t length = 0;
-	if (lead < 0x80) {
-		return 1;
-	}
-	if (lead >= 0xC2 && lead <= 0xDF) {
-		length = 2;
-	} else if (lead >= 0xE0 && lead <= 0xEF) {
-		length = 3;
-	} else if (lead >= 0xF0 && lead <= 0xF4) {
-		length = 4;
-	} else {
-		return 0;
-	}
-	if (text.size() - at < length) {
-		return 0;
-	}
-	for (size_t i = 1; i < length; ++i) {
-		if (!isContinuation(static_cast<unsigned char>(text[at + i]))) {
-			return 0;
-		}
-	}
-	const auto second = static_cast<unsigned char>(text[at + 1]);
-	// Overlong forms, UTF-16 surrogates, and code points past U+10FFFF.
-	if ((lead == 0xE0 && second < 0xA0) || (lead == 0xED && second > 0x9F) || (lead == 0xF0 && second < 0x90) ||
-	    (lead == 0xF4 && second > 0x8F)) {
-		return 0;
-	}
-	return length;
 }
 
 // Windows drops spaces and dots at the end of a name.
@@ -151,7 +119,7 @@ std::string safeFileName(std::string_view name, size_t maxBytes)
 	safe.reserve(std::min(name.size(), maxBytes));
 	size_t at = 0;
 	while (at < name.size()) {
-		const size_t length = sequenceLength(name, at);
+		const size_t length = utf8SequenceLength(name, at);
 		const char c = name[at];
 		const bool refused = length == 0 ||
 				     (length == 1 && (static_cast<unsigned char>(c) < 0x20 || c == 0x7F ||

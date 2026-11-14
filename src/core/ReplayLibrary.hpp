@@ -21,6 +21,13 @@
 
 namespace tapeloop {
 
+// Tags come from files anyone can hand over as well as from the dock, so they have
+// limits. A tag's length counts Unicode code points, which mean the same in every script
+// where bytes do not: a Latin letter takes one byte, a Chinese character three.
+inline constexpr size_t kMaxTagsPerReplay = 32;
+inline constexpr size_t kMaxTags = 2000;
+inline constexpr size_t kMaxTagLength = 64;
+
 // A replay as the library keeps it: what a list of replays shows, and, for one captured
 // since OBS started, where each of its frames is and the buffers' own GOPs for as long as
 // the buffers hold them.
@@ -47,16 +54,31 @@ struct Replay {
 	std::shared_ptr<ReplayFiles> files;
 	// Sorted.
 	std::vector<std::string> tags;
+	// The tags its file had that the library left out, past a limit or not valid, as the
+	// file spells them and in its order, for its file to keep them. Other spellings of
+	// its tags are not kept.
+	std::vector<std::string> fileOnlyTags;
 	// Why it was not saved.
 	std::string error;
+};
+
+// The tags a replay's file is to hold: the library's, then those it left out.
+std::vector<std::string> tagsToWrite(const Replay &replay);
+
+// How many tags of replays found on disk the library left out for being past one of its
+// limits.
+struct LeftOutTags {
+	size_t pastReplayLimit = 0;
+	size_t pastLibraryLimit = 0;
 };
 
 // The replays of every broadcast, as an index: their pictures live in the buffers while
 // the buffers hold them and on disk, never in the library. It adds tags, which exist on
 // their own so that one can be made before any replay carries it, and the replay that
-// goes on air next. Tag names are trimmed, never empty nor with control characters, and
-// told apart regardless of ASCII case: the first spelling stays. Not thread-safe: the
-// caller owns the synchronization.
+// goes on air next. Tag names are trimmed of spaces and tabs and told apart regardless of
+// ASCII case: the first spelling stays. A name is not valid when it is empty, not UTF-8,
+// longer than kMaxTagLength, or has a control character or one isLayoutControl names. Not
+// thread-safe: the caller owns the synchronization.
 class ReplayLibrary {
 public:
 	// A replay just captured, which the store is now writing. It becomes the current
@@ -65,8 +87,12 @@ public:
 	uint64_t addCaptured(const ReplayCapture &capture, std::string broadcast);
 	// A replay a scan found, stored or damaged as the scan says, with its tags joining the
 	// tag list. Zero when the library has it already, as when a scan comes upon a replay
-	// captured since OBS started. Nothing changes when it throws.
+	// captured since OBS started. Nothing changes when it throws. Its tags that are not
+	// valid go to fileOnlyTags, as do, in the file's order, those past kMaxTagsPerReplay
+	// on it or kMaxTags in the library; the second form adds how many were past a limit
+	// to leftOut.
 	uint64_t addFound(const FoundReplay &found);
+	uint64_t addFound(const FoundReplay &found, LeftOutTags &leftOut);
 	// What became of a replay being written. False for one that is not being written.
 	// Its files take the manifest and index unless the store has set them already.
 	bool stored(uint64_t id, std::filesystem::path manifest, ReplayIndex index);
@@ -86,12 +112,13 @@ public:
 
 	// Every tag, sorted.
 	std::span<const std::string> tags() const noexcept { return tags_; }
-	// False for a name that is not valid or exists already.
+	// False for a name that is not valid or exists already, or with kMaxTags already.
 	bool createTag(std::string_view tag);
 	// Also takes it off every replay.
 	bool deleteTag(std::string_view tag);
 	// Creates the tag if it is new. False when there is no such replay or it is damaged,
-	// or the tag is not valid, already on it, or more than its file has room for.
+	// or the tag is not valid, already on it, or more than its file has room for, or past
+	// a limit.
 	bool addTag(uint64_t id, std::string_view tag);
 	bool removeTag(uint64_t id, std::string_view tag);
 	// Sorted; empty for an unknown replay.
@@ -108,16 +135,39 @@ public:
 	void unpick() noexcept { picked_ = 0; }
 	bool picked() const noexcept { return picked_ != 0; }
 
+#ifdef TAPELOOP_COUNT_COMPARISONS
+	// The names compared while looking tags up, so that a test can bound what a lookup
+	// costs without timing it. Only the test project builds it.
+	size_t tagComparisons() const noexcept { return tagComparisons_; }
+#endif
+
 private:
 	uint64_t add(Replay replay);
-	// The tag's spelling in tags_, see canonicalIn.
+	// Where name is, or would go, in names ordered ignoring ASCII case.
+	size_t indexIgnoringCase(const std::vector<std::string> &names, std::string_view name) const noexcept;
+	// The library's spelling of a valid name, or null when it has no such tag.
+	const std::string *spellingOf(std::string_view name) const noexcept;
+	// The library's spelling of the tag, or else the tag trimmed; empty when it is not
+	// valid.
 	std::string canonical(std::string_view tag) const;
+	// A valid name new to the library.
+	void insertTag(std::string name);
+#ifdef TAPELOOP_COUNT_COMPARISONS
+	void countComparison() const noexcept { ++tagComparisons_; }
+#else
+	void countComparison() const noexcept {}
+#endif
 
 	std::map<uint64_t, Replay> replays_;
 	std::vector<std::string> tags_;
+	// The names of tags_ ordered ignoring ASCII case, to find a name's spelling.
+	std::vector<std::string> tagIndex_;
 	uint64_t nextId_ = 1;
 	uint64_t picked_ = 0;
 	uint64_t lastCaptured_ = 0;
+#ifdef TAPELOOP_COUNT_COMPARISONS
+	mutable size_t tagComparisons_ = 0;
+#endif
 };
 
 } // namespace tapeloop

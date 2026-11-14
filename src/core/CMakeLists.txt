@@ -67,6 +67,8 @@ target_sources(
     ReplayWriter.hpp
     SourceBuffer.cpp
     SourceBuffer.hpp
+    Text.cpp
+    Text.hpp
 )
 
 target_include_directories(tapeloop-core PUBLIC "${CMAKE_CURRENT_SOURCE_DIR}/..")
