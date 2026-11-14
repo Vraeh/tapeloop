@@ -139,6 +139,17 @@ void readFlag(obs_data_t *data, const char *key, bool &value)
 	}
 }
 
+// A whole number. A fraction, like a value of another type, keeps the default.
+void readWhole(obs_data_t *data, const char *key, int64_t &value)
+{
+	obs_data_item_t *item = obs_data_item_byname(data, key);
+	if (item && obs_data_item_has_user_value(item) && obs_data_item_gettype(item) == OBS_DATA_NUMBER &&
+	    obs_data_item_numtype(item) == OBS_DATA_NUM_INT) {
+		value = obs_data_item_get_int(item);
+	}
+	obs_data_item_release(&item);
+}
+
 obs_data_t *readObject(obs_data_t *data, const char *key)
 {
 	return typeOf(data, key) == OBS_DATA_OBJECT ? obs_data_get_obj(data, key) : nullptr;
@@ -233,6 +244,7 @@ obs_data_t *createSettingsData(const SavedSettings &saved)
 	setTransition(data, "intro_transition", saved.into);
 	setMedia(data, "outro", saved.outro);
 	setTransition(data, "back_transition", saved.back);
+	obs_data_set_int(data, "air_channel", saved.airChannel);
 	setOverlays(data, saved.overlays);
 	obs_data_addref(data);
 	return data;
@@ -281,6 +293,7 @@ SavedSettings readSettingsData(obs_data_t *data)
 	readTransition(data, "intro_transition", saved.into);
 	readMedia(data, "outro", saved.outro);
 	readTransition(data, "back_transition", saved.back);
+	readWhole(data, "air_channel", saved.airChannel);
 	if (OBSDataAutoRelease overlays = readObject(data, "overlays")) {
 		saved.overlays = readOverlays(overlays);
 	}

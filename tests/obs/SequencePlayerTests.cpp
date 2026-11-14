@@ -69,7 +69,6 @@ using tapeloop::obs::CaptureHost;
 using tapeloop::obs::CaptureManager;
 using tapeloop::obs::exitInOrder;
 using tapeloop::obs::handleAirEvent;
-using tapeloop::obs::kAirChannel;
 using tapeloop::obs::PlayerState;
 using tapeloop::obs::kReplayViewId;
 using tapeloop::obs::registerReplaySource;
@@ -90,6 +89,9 @@ using tapeloop::test::UiTasks;
 using tapeloop::test::waitFor;
 
 namespace {
+
+// The channel a replay goes on air through unless a test chooses another.
+constexpr uint32_t kAirChannel = tapeloop::kDefaultAirChannel;
 
 // A replay just captured, with a clip of every source the GOPs given: the buffer's GOPs,
 // which the test holds, so nothing is read from disk.
@@ -2338,6 +2340,55 @@ TEST_CASE_METHOD(ObsFixture, "without OBS's fade, a replay cuts on air and off",
 
 	sequence.reset();
 	obs_wait_for_destroy_queue();
+}
+
+TEST_CASE_METHOD(ObsFixture, "a replay goes on air on the channel the settings choose", "[obs][sequence][air]")
+{
+	AirSetup setup;
+	const auto holds = [](uint32_t channel, obs_source_t *source) {
+		const OBSSourceAutoRelease held = obs_get_output_source(channel);
+		return held.Get() == source;
+	};
+	const auto replay = [&] {
+		return setup.sequence->air().partSource(AirPhase::Source);
+	};
+	const OBSSourceAutoRelease other =
+		obs_source_create_private(tapeloop::test::kTestPatternId, "Another plugin", nullptr);
+	REQUIRE(other);
+	obs_set_output_source(kAirChannel, other);
+
+	AirSettings air;
+	air.channel = 40;
+	setup.sequence->setAir(air);
+	setup.putOnAir();
+	CHECK(holds(40, replay()));
+	CHECK(holds(kAirChannel, other));
+
+	// A change while on air waits for the next time, and the channel taken is the one watched.
+	air.channel = 50;
+	setup.sequence->setAir(air);
+	CHECK(holds(40, replay()));
+	CHECK(holds(50, nullptr));
+	obs_set_output_source(40, other);
+	REQUIRE(runUntil([&] { return setup.phase() == AirPhase::Live; }));
+	CHECK(holds(40, other));
+	REQUIRE(playerUntil(*setup.sequence, [](const PlayerState &state) { return !state.loaded; }));
+
+	setup.putOnAir();
+	CHECK(holds(50, replay()));
+	setup.sequence->takeOffAir();
+	CHECK(setup.phase() == AirPhase::Live);
+	CHECK(holds(50, nullptr));
+	REQUIRE(playerUntil(*setup.sequence, [](const PlayerState &state) { return !state.loaded; }));
+
+	obs_set_output_source(50, other);
+	CHECK_FALSE(setup.sequence->putOnAir(setup.captured.id()));
+	CHECK(setup.sequence->airRefusal() == AirRefusal::ChannelBusy);
+	CHECK(holds(50, other));
+
+	for (const uint32_t channel : {kAirChannel, 40u, 50u}) {
+		obs_set_output_source(channel, nullptr);
+	}
 }
 
 TEST_CASE_METHOD(ObsFixture, "overlays set while a replay is on air show from the next one", "[obs][sequence][air]")

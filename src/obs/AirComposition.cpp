@@ -31,6 +31,8 @@ constexpr uint64_t kProbeEvery = 250'000'000;
 // a video of its own to open.
 constexpr uint64_t kSettleWait = 300'000'000;
 
+static_assert(kMaxAirChannel < MAX_CHANNELS);
+
 uint32_t durationOf(const AirTransition &transition)
 {
 	return static_cast<uint32_t>(std::clamp(transition.duration, kMinAirTransition, kMaxAirTransition).count());
@@ -117,7 +119,7 @@ void AirComposition::prepare()
 
 bool AirComposition::channelFree() const
 {
-	obs_source_t *current = obs_get_output_source(kAirChannel);
+	obs_source_t *current = obs_get_output_source(channel());
 	const bool free = !current || current == onChannel_;
 	obs_source_release(current);
 	return free;
@@ -492,9 +494,17 @@ void AirComposition::dropRemovedScene()
 	}
 }
 
+uint32_t AirComposition::channel() const noexcept
+{
+	if (onChannel_) {
+		return channel_;
+	}
+	return isAirChannel(settings_.channel) ? settings_.channel : kDefaultAirChannel;
+}
+
 bool AirComposition::holdsChannel() const
 {
-	obs_source_t *current = obs_get_output_source(kAirChannel);
+	obs_source_t *current = obs_get_output_source(channel());
 	const bool held = current && current == onChannel_;
 	obs_source_release(current);
 	return held;
@@ -502,7 +512,7 @@ bool AirComposition::holdsChannel() const
 
 bool AirComposition::channelLost()
 {
-	obs_source_t *current = obs_get_output_source(kAirChannel);
+	obs_source_t *current = obs_get_output_source(channel());
 	const bool lost = current != onChannel_;
 	obs_source_release(current);
 	if (lost) {
@@ -514,14 +524,16 @@ bool AirComposition::channelLost()
 
 void AirComposition::takeChannel(obs_source_t *source)
 {
+	const uint32_t channel = this->channel();
 	{
 		const std::lock_guard lock(mutex_);
 		expected_ = source;
+		channel_ = channel;
 		onAir_ = true;
 	}
 	armed_.store(true, std::memory_order_relaxed);
 	onChannel_ = source;
-	obs_set_output_source(kAirChannel, source);
+	obs_set_output_source(channel, source);
 }
 
 void AirComposition::endTransition(obs_source_t *transition, obs_source_t *showing)
@@ -567,7 +579,7 @@ void AirComposition::offAir(bool emptyChannel)
 	}
 	armed_.store(false, std::memory_order_relaxed);
 	if (onChannel_ && emptyChannel && holdsChannel()) {
-		obs_set_output_source(kAirChannel, nullptr);
+		obs_set_output_source(channel_, nullptr);
 	}
 	onChannel_ = nullptr;
 	if (in_) {
@@ -702,13 +714,11 @@ void AirComposition::runTask(void *param) noexcept
 
 void AirComposition::handleChannelChange(void *data, calldata_t *call) noexcept
 {
-	if (calldata_int(call, "channel") != kAirChannel) {
-		return;
-	}
+	const long long channel = calldata_int(call, "channel");
 	auto &self = *static_cast<AirComposition *>(data);
 	obs_source_t *source = sourceOf(call);
 	const std::lock_guard lock(self.mutex_);
-	if (self.onAir_ && source != self.expected_) {
+	if (self.onAir_ && channel == self.channel_ && source != self.expected_) {
 		self.lost_ = true;
 	}
 }

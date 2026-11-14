@@ -20,11 +20,6 @@
 
 namespace tapeloop::obs {
 
-// The output channel a replay goes on air through. Channels draw in order over the
-// program on channel 0. The frontend keeps 1 to 6 for its audio devices, and the
-// downstream keyer plugin starts at 7.
-inline constexpr uint32_t kAirChannel = 32;
-
 // What one of the user's transitions is made of, so that a copy of it can be made.
 struct TransitionTemplate {
 	std::string id;
@@ -92,7 +87,8 @@ public:
 	// The names of the transitions that can be picked.
 	std::vector<std::string> transitionNames() const;
 	// A transition's length applies the next time it is used; which transition, and the
-	// intro and outro, once nothing is on air.
+	// intro and outro, once nothing is on air; the channel, the next time a replay goes on
+	// air.
 	void setSettings(const AirSettings &settings);
 	// Shown with the replay from the next time it goes on air. In the scene mode the scene
 	// the user chose goes on air in place of the replay with its overlays, as long as OBS
@@ -171,6 +167,8 @@ private:
 	// After OBS removed a scene: falls back to the composition, and when it was the scene on
 	// air, takes it off as another source taking the channel would.
 	void dropRemovedScene();
+	// The channel the composition is on, or else the one it goes on next.
+	uint32_t channel() const noexcept;
 	bool holdsChannel() const;
 	// Whether the channel holds anything but what the composition put there, in which case
 	// the composition goes off air and leaves it. Checked before each write, so that the
@@ -246,6 +244,9 @@ private:
 	// The deadline asks the video its length again rather than ending it.
 	bool reprobe_ = false;
 	obs_source_t *expected_ = nullptr;
+	// The channel taken, which stays while anything is on air whatever the settings say.
+	// Read by the UI thread without the lock, as only it writes it.
+	uint32_t channel_ = kDefaultAirChannel;
 	bool onAir_ = false;
 	bool lost_ = false;
 	// Set while the composition is on the channel, so that the tick looks only then. Relaxed

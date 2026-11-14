@@ -34,6 +34,16 @@ inline constexpr std::chrono::milliseconds kMinImageTime{500};
 inline constexpr std::chrono::milliseconds kMaxImageTime{60000};
 inline constexpr std::chrono::milliseconds kDefaultImageTime{3000};
 
+// The output channels a replay can go on air through. Channels draw in order over the
+// program on channel 0, so a higher one draws over a lower one. The frontend keeps 1 to 6
+// for its audio devices, the downstream keyer plugin starts at 7, and libobs has 64. By
+// default the replay draws over everything.
+inline constexpr uint32_t kMinAirChannel = 7;
+inline constexpr uint32_t kMaxAirChannel = 63;
+inline constexpr uint32_t kDefaultAirChannel = 32;
+
+bool isAirChannel(int64_t channel);
+
 enum class AirMediaKind { None, Video, Image };
 
 // An intro or an outro: a video played to its end, or an image shown for a time.
@@ -65,6 +75,7 @@ struct AirSettings {
 	AirTransition into;
 	AirMedia outro;
 	AirTransition back;
+	uint32_t channel = kDefaultAirChannel;
 
 	bool operator==(const AirSettings &) const = default;
 };
@@ -157,15 +168,17 @@ struct SavedSettings {
 	SavedTransition into;
 	SavedMedia outro;
 	SavedTransition back;
+	int64_t airChannel = kDefaultAirChannel;
 	SavedOverlays overlays;
 };
 
 SavedSettings saveSettings(const BufferSettings &settings);
 
 // Empty when the version is not kSettingsVersion. Values out of range are brought
-// back into it, a resolution this build does not know becomes the canvas, and an intro
-// or outro of a kind it does not know becomes none. Overlays made at another canvas are
-// rescaled to this one, as loadOverlays() says.
+// back into it, except an air channel, which becomes the default. A resolution this
+// build does not know becomes the canvas, and an intro or outro of a kind it does not
+// know becomes none. Overlays made at another canvas are rescaled to this one, as
+// loadOverlays() says.
 std::optional<BufferSettings> loadSettings(const SavedSettings &saved, CanvasSize canvas);
 
 struct SourceIdentity {

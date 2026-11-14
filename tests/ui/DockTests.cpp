@@ -226,7 +226,8 @@ TEST_CASE("the advanced settings choose the replay encoder and whether other car
 	CHECK(nextFocus(encoder) == "otherAdapters");
 	CHECK(nextFocus(otherAdapters) == "forceH264");
 	CHECK(nextFocus(forceH264) == "bufferMemory");
-	CHECK(nextFocus(child<QSpinBox>(dock, "bufferMemory")) == "stats");
+	CHECK(nextFocus(child<QSpinBox>(dock, "bufferMemory")) == "airChannel");
+	CHECK(nextFocus(child<QSpinBox>(dock, "airChannel")) == "stats");
 	CHECK(nextFocus(child<QTableWidget>(dock, "stats")) == "airSettings");
 	CHECK(nextFocus(child<QPushButton>(dock, "airSettings")) == "overlaySettings");
 	CHECK(nextFocus(child<QPushButton>(dock, "overlaySettings")) == "startStop");
@@ -327,6 +328,34 @@ TEST_CASE("a wheel over the memory for buffers changes it only once it has the f
 	REQUIRE(memory->hasFocus());
 	turnWheel();
 	CHECK(backend.current.bufferMemoryMiB == 256);
+}
+
+TEST_CASE("the advanced settings set the channel replays go on air through")
+{
+	FakeBackend backend;
+	addSources(backend);
+	backend.current.showAdvanced = true;
+	backend.current.air.channel = 20;
+	backend.current.air.into = {"Swipe", 300ms};
+	TapeloopDock dock(backend, localeText());
+	dock.show();
+	auto *channel = child<QSpinBox>(dock, "airChannel");
+	CHECK(channel->value() == 20);
+	CHECK(channel->minimum() == 7);
+	CHECK(channel->maximum() == 63);
+	CHECK(channel->toolTip() == localeText()("Dock.AirChannel.Tooltip"));
+	CHECK((channel->focusPolicy() & Qt::WheelFocus) != Qt::WheelFocus);
+
+	channel->setValue(9);
+	CHECK(backend.current.air.channel == 9);
+	channel->setValue(63);
+	CHECK(backend.current.air.channel == 63);
+	// The rest of the on-air settings stay.
+	CHECK(backend.current.air.into.name == "Swipe");
+
+	backend.current.air.channel = 40;
+	dock.refresh();
+	CHECK(channel->value() == 40);
 }
 
 TEST_CASE("a memory for buffers being typed in the dock is not overwritten")
@@ -1153,6 +1182,7 @@ TEST_CASE("the on-air settings dialog gives back what it was given")
 	current.outro.imageTime = 7500ms;
 	current.back.name = "Gone";
 	current.back.duration = 50ms;
+	current.channel = 50;
 	const AirSettingsDialog dialog(current, {"Swipe", "Fade"}, localeText());
 	CHECK(dialog.chosen() == current);
 	CHECK(child<QComboBox>(dialog, "introTransition")->currentText() == "Swipe");
@@ -1454,7 +1484,7 @@ TEST_CASE("every control of the dock can be reached with the keyboard")
 		CAPTURE(widget->objectName().toStdString());
 		CHECK((widget->focusPolicy() & Qt::TabFocus) != 0);
 	}
-	CHECK(controls == 24);
+	CHECK(controls == 25);
 }
 
 TEST_CASE("every string the dock asks for is in the locale file")

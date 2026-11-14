@@ -103,6 +103,11 @@ bool isFixedHeight(uint32_t height)
 	return std::find(kFixedHeights.begin(), kFixedHeights.end(), height) != kFixedHeights.end();
 }
 
+bool isAirChannel(int64_t channel)
+{
+	return channel >= kMinAirChannel && channel <= kMaxAirChannel;
+}
+
 Nanoseconds BufferSettings::lengthFor(const std::string &uuid) const
 {
 	const auto found = sources.find(uuid);
@@ -172,6 +177,7 @@ SavedSettings saveSettings(const BufferSettings &settings)
 	saved.into = {settings.air.into.name, settings.air.into.duration.count()};
 	saved.outro = saveMedia(settings.air.outro);
 	saved.back = {settings.air.back.name, settings.air.back.duration.count()};
+	saved.airChannel = settings.air.channel;
 	saved.overlays = saveOverlays(settings.overlays);
 	return saved;
 }
@@ -211,6 +217,9 @@ std::optional<BufferSettings> loadSettings(const SavedSettings &saved, CanvasSiz
 	settings.air.into = loadTransition(saved.into);
 	settings.air.outro = loadMedia(saved.outro);
 	settings.air.back = loadTransition(saved.back);
+	if (isAirChannel(saved.airChannel)) {
+		settings.air.channel = static_cast<uint32_t>(saved.airChannel);
+	}
 	settings.overlays = loadOverlays(saved.overlays, canvas);
 	return settings;
 }

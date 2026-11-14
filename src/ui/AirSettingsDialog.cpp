@@ -72,7 +72,8 @@ AirSettingsDialog::AirSettingsDialog(const AirSettings &current, const std::vect
 	  videoFilters_{filter(text("AirSettings.VideoFiles"), kVideoPatterns),
 			filter(text("AirSettings.AllFiles"), "*")},
 	  imageFilters_{filter(text("AirSettings.ImageFiles"), kImagePatterns),
-			filter(text("AirSettings.AllFiles"), "*")}
+			filter(text("AirSettings.AllFiles"), "*")},
+	  channel_(current.channel)
 {
 	setWindowTitle(text("AirSettings.Title"));
 
@@ -207,6 +208,7 @@ AirSettings AirSettingsDialog::chosen() const
 	settings.into = transitionOf(intro_);
 	settings.outro = mediaOf(outro_);
 	settings.back = transitionOf(outro_);
+	settings.channel = channel_;
 	return settings;
 }
 

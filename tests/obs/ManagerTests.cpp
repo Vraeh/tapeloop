@@ -60,7 +60,6 @@ using tapeloop::obs::CaptureManager;
 using tapeloop::obs::CaptureState;
 using tapeloop::obs::ExportStatus;
 using tapeloop::obs::createSettingsData;
-using tapeloop::obs::kAirChannel;
 using tapeloop::obs::readSettingsData;
 using tapeloop::obs::SequencePlayer;
 using tapeloop::test::createTestPattern;
@@ -69,6 +68,9 @@ using tapeloop::test::ObsFixture;
 using tapeloop::test::waitFor;
 
 namespace {
+
+// The channel a replay goes on air through unless a test chooses another.
+constexpr uint32_t kAirChannel = tapeloop::kDefaultAirChannel;
 
 namespace fs = std::filesystem;
 
@@ -902,6 +904,7 @@ TEST_CASE_METHOD(ObsFixture, "settings are saved with the scene collection and l
 	settings.forceH264 = true;
 	settings.replayEncoder = "obs_x264";
 	settings.allowOtherAdapters = false;
+	settings.air.channel = 9;
 	settings.sources[uuidOf(camera)] = {true, 30s, std::nullopt, std::nullopt};
 	settings.sources[uuidOf(wide)] =
 		SourceSettings{false, std::nullopt, ReplayResolution{ResolutionMode::Output, 1080}, false};
@@ -2275,7 +2278,9 @@ TEST_CASE("the on-air settings are saved with the buffer settings", "[obs][manag
 	settings.air.into = {"Stinger", 900ms};
 	settings.air.outro = {tapeloop::AirMediaKind::Video, "/clips/outro.mp4", 3000ms};
 	settings.air.back = {"Swipe", 700ms};
+	settings.air.channel = 40;
 	OBSDataAutoRelease data = createSettingsData(tapeloop::saveSettings(settings));
+	CHECK(obs_data_get_int(data, "air_channel") == 40);
 	CHECK(std::string(obs_data_get_string(data, "intro")) == "image");
 	CHECK(std::string(obs_data_get_string(data, "intro_file")) == "/clips/intro.png");
 	CHECK(obs_data_get_int(data, "intro_image_ms") == 2500);
@@ -2287,11 +2292,32 @@ TEST_CASE("the on-air settings are saved with the buffer settings", "[obs][manag
 	CHECK(tapeloop::loadSettings(readSettingsData(data), tapeloop::CanvasSize{})->air == settings.air);
 
 	// Settings saved before them put a replay on air with a fade and nothing around it.
-	for (const char *key : {"intro", "intro_file", "intro_image_ms", "intro_transition", "intro_transition_ms",
-				"outro", "outro_file", "outro_image_ms", "back_transition", "back_transition_ms"}) {
+	for (const char *key :
+	     {"intro", "intro_file", "intro_image_ms", "intro_transition", "intro_transition_ms", "outro", "outro_file",
+	      "outro_image_ms", "back_transition", "back_transition_ms", "air_channel"}) {
 		obs_data_erase(data, key);
 	}
 	CHECK(tapeloop::loadSettings(readSettingsData(data), tapeloop::CanvasSize{})->air == tapeloop::AirSettings{});
+}
+
+TEST_CASE("a damaged air channel loads as the default", "[obs][manager]")
+{
+	OBSDataAutoRelease data = createSettingsData(tapeloop::saveSettings(BufferSettings{}));
+	const auto loadedChannel = [&] {
+		return tapeloop::loadSettings(readSettingsData(data), tapeloop::CanvasSize{})->air.channel;
+	};
+	obs_data_set_int(data, "air_channel", 12);
+	CHECK(loadedChannel() == 12);
+	obs_data_set_string(data, "air_channel", "12");
+	CHECK(loadedChannel() == 32);
+	obs_data_set_double(data, "air_channel", 12.5);
+	CHECK(loadedChannel() == 32);
+	obs_data_set_bool(data, "air_channel", true);
+	CHECK(loadedChannel() == 32);
+	for (const long long channel : {0LL, 6LL, 64LL, -12LL, 4294967308LL}) {
+		obs_data_set_int(data, "air_channel", channel);
+		CHECK(loadedChannel() == 32);
+	}
 }
 
 TEST_CASE_METHOD(ObsFixture, "a stored replay exports to MP4 and as a replay file", "[obs][manager][replay][export]")

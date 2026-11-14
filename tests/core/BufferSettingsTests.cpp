@@ -6,6 +6,7 @@
 #include <catch2/catch_test_macros.hpp>
 
 #include <chrono>
+#include <cstdint>
 #include <map>
 #include <optional>
 #include <string>
@@ -202,6 +203,39 @@ TEST_CASE("loaded on-air settings are brought back into range")
 
 	saved.outro.imageMs = -5;
 	CHECK(tapeloop::loadSettings(saved, kCanvas)->air.outro.imageTime == 500ms);
+}
+
+TEST_CASE("the air channel survives a save and a load")
+{
+	CHECK(BufferSettings{}.air.channel == 32);
+	CHECK(tapeloop::saveSettings(BufferSettings{}).airChannel == 32);
+
+	for (const uint32_t channel : {7u, 9u, 63u}) {
+		BufferSettings settings;
+		settings.air.channel = channel;
+		const SavedSettings saved = tapeloop::saveSettings(settings);
+		CHECK(saved.airChannel == channel);
+		const std::optional<BufferSettings> loaded = tapeloop::loadSettings(saved, kCanvas);
+		REQUIRE(loaded);
+		CHECK(loaded->air.channel == channel);
+	}
+}
+
+TEST_CASE("an air channel out of range loads as the default")
+{
+	// Below 7 are the program and the audio devices of OBS; libobs has no channel 64.
+	for (const int64_t channel : {int64_t{0}, int64_t{1}, int64_t{6}, int64_t{64}, int64_t{-1}, INT64_MIN,
+				      INT64_MAX, int64_t{UINT32_MAX} + 9}) {
+		SavedSettings saved;
+		saved.airChannel = channel;
+		const std::optional<BufferSettings> loaded = tapeloop::loadSettings(saved, kCanvas);
+		REQUIRE(loaded);
+		CHECK(loaded->air.channel == 32);
+	}
+	CHECK_FALSE(tapeloop::isAirChannel(6));
+	CHECK(tapeloop::isAirChannel(7));
+	CHECK(tapeloop::isAirChannel(63));
+	CHECK_FALSE(tapeloop::isAirChannel(64));
 }
 
 TEST_CASE("buffer lengths and fixed heights stay within what the dock offers")

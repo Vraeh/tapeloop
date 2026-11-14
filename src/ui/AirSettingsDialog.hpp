@@ -10,6 +10,7 @@
 #include <QStringList>
 
 #include <chrono>
+#include <cstdint>
 #include <string>
 #include <vector>
 
@@ -56,6 +57,7 @@ private:
 	QStringList imageFilters_;
 	Part intro_;
 	Part outro_;
+	uint32_t channel_;
 };
 
 } // namespace tapeloop::ui

@@ -81,6 +81,7 @@ private:
 	QSpinBox *bufferMemory_;
 	QLabel *memoryWarning_;
 	QLabel *memoryShort_;
+	QSpinBox *airChannel_;
 	QTableWidget *stats_;
 	QPushButton *airSettings_;
 	QPushButton *overlaySettings_;

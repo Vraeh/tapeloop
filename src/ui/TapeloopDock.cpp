@@ -166,6 +166,7 @@ TapeloopDock::TapeloopDock(DockBackend &backend, TextLookup text, QWidget *paren
 	  bufferMemory_(new QSpinBox(this)),
 	  memoryWarning_(new QLabel(text_("Dock.BufferMemory.Unsafe"), this)),
 	  memoryShort_(new QLabel(this)),
+	  airChannel_(new QSpinBox(this)),
 	  stats_(new QTableWidget(0, kStatsColumns, this)),
 	  airSettings_(new QPushButton(text_("Dock.AirSettings"), this)),
 	  overlaySettings_(new QPushButton(text_("Dock.OverlaySettings"), this)),
@@ -234,6 +235,13 @@ TapeloopDock::TapeloopDock(DockBackend &backend, TextLookup text, QWidget *paren
 	memoryWarning_->setObjectName("memoryWarning");
 	memoryWarning_->setWordWrap(true);
 	memoryWarning_->hide();
+	airChannel_->setObjectName("airChannel");
+	airChannel_->setToolTip(text_("Dock.AirChannel.Tooltip"));
+	airChannel_->setRange(static_cast<int>(kMinAirChannel), static_cast<int>(kMaxAirChannel));
+	airChannel_->setKeyboardTracking(false);
+	// Nor does a wheel turned over the dock move the replay above or below a keyer.
+	airChannel_->setFocusPolicy(Qt::StrongFocus);
+	airChannel_->installEventFilter(this);
 	stats_->setObjectName("stats");
 	stats_->setHorizontalHeaderLabels({text_("Dock.Source"), text_("Dock.Stats.Memory"), text_("Dock.Stats.Load"),
 					   text_("Dock.Stats.Skipped")});
@@ -305,6 +313,7 @@ TapeloopDock::TapeloopDock(DockBackend &backend, TextLookup text, QWidget *paren
 	advanced->addRow(forceH264_);
 	advanced->addRow(text_("Dock.BufferMemory"), bufferMemory_);
 	advanced->addRow(memoryWarning_);
+	advanced->addRow(text_("Dock.AirChannel"), airChannel_);
 	advanced->addRow(new QLabel(text_("Dock.Stats"), advancedSettings_));
 	advanced->addRow(stats_);
 
@@ -397,7 +406,8 @@ TapeloopDock::TapeloopDock(DockBackend &backend, TextLookup text, QWidget *paren
 	setTabOrder(replayEncoder_, otherAdapters_);
 	setTabOrder(otherAdapters_, forceH264_);
 	setTabOrder(forceH264_, bufferMemory_);
-	setTabOrder(bufferMemory_, stats_);
+	setTabOrder(bufferMemory_, airChannel_);
+	setTabOrder(airChannel_, stats_);
 	setTabOrder(stats_, airSettings_);
 	setTabOrder(airSettings_, overlaySettings_);
 	setTabOrder(overlaySettings_, startStop_);
@@ -410,6 +420,11 @@ TapeloopDock::TapeloopDock(DockBackend &backend, TextLookup text, QWidget *paren
 			bufferMemory_->setValue(mib);
 		}
 		changeSettings([](BufferSettings &settings, int set) { settings.bufferMemoryMiB = set; }, mib);
+	});
+	connect(airChannel_, &QSpinBox::valueChanged, this, [this](int value) {
+		changeSettings([](BufferSettings &settings,
+				  int set) { settings.air.channel = static_cast<uint32_t>(set); },
+			       value);
 	});
 	connect(otherAdapters_, &QCheckBox::toggled, this, [this](bool checked) {
 		changeSettings([](BufferSettings &settings, int on) { settings.allowOtherAdapters = on != 0; },
@@ -555,6 +570,7 @@ void TapeloopDock::refresh()
 		const QSignalBlocker blockOtherAdapters(otherAdapters_);
 		const QSignalBlocker blockAdvanced(advanced_);
 		const QSignalBlocker blockMemory(bufferMemory_);
+		const QSignalBlocker blockChannel(airChannel_);
 		// A value being typed is not overwritten.
 		if (!length_->hasFocus()) {
 			length_->setValue(seconds(settings.length));
@@ -569,6 +585,9 @@ void TapeloopDock::refresh()
 		advanced_->setChecked(settings.showAdvanced);
 		advancedSettings_->setVisible(settings.showAdvanced);
 		updateMemory(settings.bufferMemoryMiB);
+		if (!airChannel_->hasFocus()) {
+			airChannel_->setValue(static_cast<int>(settings.air.channel));
+		}
 		// The encoders are looked up only while the advanced settings show them.
 		if (settings.showAdvanced) {
 			updateEncoders(settings.replayEncoder);
@@ -598,7 +617,8 @@ void TapeloopDock::showEvent(QShowEvent *event)
 
 bool TapeloopDock::eventFilter(QObject *watched, QEvent *event)
 {
-	if (watched == bufferMemory_ && event->type() == QEvent::Wheel && !bufferMemory_->hasFocus()) {
+	if ((watched == bufferMemory_ || watched == airChannel_) && event->type() == QEvent::Wheel &&
+	    !static_cast<QWidget *>(watched)->hasFocus()) {
 		return true;
 	}
 	if (watched == sources_ && event->type() == QEvent::KeyPress) {
