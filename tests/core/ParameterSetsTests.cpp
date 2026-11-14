@@ -138,26 +138,40 @@ TEST_CASE("a packet the filter cannot read is copied whole")
 
 TEST_CASE("a packet's parameter sets are not looked for through the whole configuration")
 {
-	// A configuration of half a million SEI units with a sequence parameter set last, and a
-	// packet of as many copies of that set before a slice. Read through for each copy, the
-	// configuration would cost its 2.5 MB half a million times over, far past the time a
-	// test is given.
-	constexpr size_t kCount = size_t{1} << 19;
+	// A configuration of 4096 SEI units, 287 picture parameter sets and a sequence
+	// parameter set last, and a packet of 1024 copies of that set before a slice. Read
+	// through for each copy, the configuration costs a comparison per unit in it. A binary
+	// search through 288 sets costs at most nine, and one more finds the set equal.
+	constexpr size_t kUnits = 4096;
+	constexpr size_t kCopies = 1024;
 	const Bytes sei = {0x06, 0x80};
 	const Bytes sps = {0x67, 0x42};
 	Bytes config;
-	Bytes packet;
-	for (size_t i = 0; i < kCount; ++i) {
+	for (size_t i = 0; i < kUnits; ++i) {
 		config.insert(config.end(), kShort.begin(), kShort.end());
 		config.insert(config.end(), sei.begin(), sei.end());
-		packet.insert(packet.end(), kShort.begin(), kShort.end());
-		packet.insert(packet.end(), sps.begin(), sps.end());
+	}
+	for (size_t i = 0; i < 287; ++i) {
+		const Bytes pps = {0x68, static_cast<uint8_t>(i / 16 + 1), static_cast<uint8_t>(i % 16 + 1), 0x80};
+		config.insert(config.end(), kShort.begin(), kShort.end());
+		config.insert(config.end(), pps.begin(), pps.end());
 	}
 	config.insert(config.end(), kShort.begin(), kShort.end());
 	config.insert(config.end(), sps.begin(), sps.end());
+	Bytes packet;
+	for (size_t i = 0; i < kCopies; ++i) {
+		packet.insert(packet.end(), kShort.begin(), kShort.end());
+		packet.insert(packet.end(), sps.begin(), sps.end());
+	}
 	packet.insert(packet.end(), kShort.begin(), kShort.end());
 	packet.insert(packet.end(), kIdr.begin(), kIdr.end());
-	CHECK(filtered(VideoCodec::H264, config, packet) == join({kShort, kIdr}));
+
+	tapeloop::KnownParameterSets known;
+	known.assign(VideoCodec::H264, config);
+	Bytes out(packet.size());
+	out.resize(known.copyWithout(packet, out));
+	CHECK(out == join({kShort, kIdr}));
+	CHECK(known.comparisons() <= kCopies * 10);
 }
 
 TEST_CASE("a configuration's first 288 parameter sets are known, later ones are not")

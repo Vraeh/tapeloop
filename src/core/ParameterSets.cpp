@@ -388,11 +388,13 @@ bool KnownParameterSets::holds(std::span<const uint8_t> nal) const noexcept
 {
 	const auto found =
 		std::lower_bound(sets_.begin(), sets_.end(), nal, [this](Set set, std::span<const uint8_t> wanted) {
+			countComparison();
 			return before(bytesOf(set), wanted);
 		});
 	if (found == sets_.end()) {
 		return false;
 	}
+	countComparison();
 	const std::span<const uint8_t> set = bytesOf(*found);
 	return std::equal(set.begin(), set.end(), nal.begin(), nal.end());
 }
