@@ -55,6 +55,7 @@ public:
 
 	// How the next replay goes on air and back, as AirComposition's setSettings() says.
 	void setAir(const AirSettings &settings) { air_.setSettings(settings); }
+	void setOverlays(const OverlaySettings &overlays) { air_.setOverlays(overlays); }
 	// The user's transitions; null, or one that outlives the sequence player.
 	void setTransitions(const TransitionCatalog *catalog) noexcept { air_.setCatalog(catalog); }
 

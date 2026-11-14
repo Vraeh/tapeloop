@@ -42,6 +42,8 @@ void handleAirEvent(AirEvent event, SequencePlayer &sequence, CaptureManager &ma
 		// A collection with no file yet loads nothing, so it starts from what the
 		// cleanup left.
 		sequence.setAir(manager.settings().air);
+		// Which also lets go of every source of the collection the overlays held.
+		sequence.setOverlays(manager.settings().overlays);
 		break;
 	case AirEvent::CollectionChanged:
 		// OBS sends it after every collection it loads, the first one included;

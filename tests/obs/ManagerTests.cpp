@@ -20,6 +20,7 @@
 #include "obs/AirComposition.hpp"
 #include "obs/AirEvents.hpp"
 #include "obs/CaptureManager.hpp"
+#include "obs/Composition.hpp"
 #include "obs/ManagerDockBackend.hpp"
 #include "obs/ReplaySource.hpp"
 #include "obs/SequencePlayer.hpp"
@@ -904,6 +905,8 @@ TEST_CASE_METHOD(ObsFixture, "settings are saved with the scene collection and l
 	settings.sources[uuidOf(camera)] = {true, 30s, std::nullopt, std::nullopt};
 	settings.sources[uuidOf(wide)] =
 		SourceSettings{false, std::nullopt, ReplayResolution{ResolutionMode::Output, 1080}, false};
+	// Overlays load at the canvas OBS has.
+	settings.overlays.canvas = tapeloop::obs::mainCanvas();
 
 	OBSDataAutoRelease collection = obs_data_create();
 	{
@@ -2248,14 +2251,14 @@ TEST_CASE("the on-air settings are saved with the buffer settings", "[obs][manag
 	CHECK(std::string(obs_data_get_string(data, "outro")) == "video");
 	CHECK(std::string(obs_data_get_string(data, "back_transition")) == "Swipe");
 	CHECK(obs_data_get_int(data, "back_transition_ms") == 700);
-	CHECK(tapeloop::loadSettings(readSettingsData(data))->air == settings.air);
+	CHECK(tapeloop::loadSettings(readSettingsData(data), tapeloop::CanvasSize{})->air == settings.air);
 
 	// Settings saved before them put a replay on air with a fade and nothing around it.
 	for (const char *key : {"intro", "intro_file", "intro_image_ms", "intro_transition", "intro_transition_ms",
 				"outro", "outro_file", "outro_image_ms", "back_transition", "back_transition_ms"}) {
 		obs_data_erase(data, key);
 	}
-	CHECK(tapeloop::loadSettings(readSettingsData(data))->air == tapeloop::AirSettings{});
+	CHECK(tapeloop::loadSettings(readSettingsData(data), tapeloop::CanvasSize{})->air == tapeloop::AirSettings{});
 }
 
 TEST_CASE_METHOD(ObsFixture, "a stored replay exports to MP4 and as a replay file", "[obs][manager][replay][export]")

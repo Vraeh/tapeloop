@@ -5,7 +5,9 @@
 
 #include <obs.hpp>
 
+#include <cmath>
 #include <string>
+#include <utility>
 
 namespace tapeloop::obs {
 
@@ -50,6 +52,140 @@ void readTransition(obs_data_t *data, const std::string &prefix, SavedTransition
 {
 	readString(data, prefix, transition.name);
 	readInt(data, prefix + "_ms", transition.durationMs);
+}
+
+// Overlay values are whole numbers when saveOverlays() makes them, and read better as
+// JSON integers.
+void setNumber(obs_data_t *data, const char *key, double value)
+{
+	if (value >= -1e9 && value <= 1e9 && std::trunc(value) == value) {
+		obs_data_set_int(data, key, static_cast<long long>(value));
+	} else {
+		obs_data_set_double(data, key, value);
+	}
+}
+
+void setOverlays(obs_data_t *data, const SavedOverlays &overlays)
+{
+	OBSDataAutoRelease object = obs_data_create();
+	obs_data_set_string(object, "mode", overlays.mode.c_str());
+	OBSDataAutoRelease scene = obs_data_create();
+	obs_data_set_string(scene, "uuid", overlays.sceneUuid.c_str());
+	obs_data_set_string(scene, "name", overlays.sceneName.c_str());
+	obs_data_set_obj(object, "scene", scene);
+	OBSDataAutoRelease canvas = obs_data_create();
+	setNumber(canvas, "width", overlays.canvasWidth);
+	setNumber(canvas, "height", overlays.canvasHeight);
+	obs_data_set_obj(object, "canvas", canvas);
+
+	OBSDataArrayAutoRelease items = obs_data_array_create();
+	for (const SavedOverlay &overlay : overlays.items) {
+		OBSDataAutoRelease entry = obs_data_create();
+		obs_data_set_string(entry, "uuid", overlay.uuid.c_str());
+		obs_data_set_string(entry, "name", overlay.name.c_str());
+		obs_data_set_bool(entry, "visible", overlay.visible);
+		obs_data_set_string(entry, "anchor", overlay.anchor.c_str());
+		setNumber(entry, "x", overlay.x);
+		setNumber(entry, "y", overlay.y);
+		setNumber(entry, "width", overlay.width);
+		setNumber(entry, "height", overlay.height);
+		obs_data_set_string(entry, "fit", overlay.fit.c_str());
+		setNumber(entry, "opacity", overlay.opacity);
+		obs_data_set_string(entry, "blend", overlay.blend.c_str());
+		OBSDataAutoRelease crop = obs_data_create();
+		setNumber(crop, "left", overlay.crop.left);
+		setNumber(crop, "top", overlay.crop.top);
+		setNumber(crop, "right", overlay.crop.right);
+		setNumber(crop, "bottom", overlay.crop.bottom);
+		obs_data_set_obj(entry, "crop", crop);
+		obs_data_array_push_back(items, entry);
+	}
+	obs_data_set_array(object, "items", items);
+	obs_data_set_obj(data, "overlays", object);
+}
+
+// The type of a key's value, or OBS_DATA_NULL when it has none. The overlays are read
+// key by key and a value of another type, as a damaged or hand-edited file may hold,
+// keeps the default of the saved structures.
+obs_data_type typeOf(obs_data_t *data, const char *key)
+{
+	obs_data_item_t *item = obs_data_item_byname(data, key);
+	if (!item) {
+		return OBS_DATA_NULL;
+	}
+	const obs_data_type type = obs_data_item_has_user_value(item) ? obs_data_item_gettype(item) : OBS_DATA_NULL;
+	obs_data_item_release(&item);
+	return type;
+}
+
+void readText(obs_data_t *data, const char *key, std::string &value)
+{
+	if (typeOf(data, key) == OBS_DATA_STRING) {
+		value = obs_data_get_string(data, key);
+	}
+}
+
+void readNumber(obs_data_t *data, const char *key, double &value)
+{
+	if (typeOf(data, key) == OBS_DATA_NUMBER) {
+		value = obs_data_get_double(data, key);
+	}
+}
+
+void readFlag(obs_data_t *data, const char *key, bool &value)
+{
+	if (typeOf(data, key) == OBS_DATA_BOOLEAN) {
+		value = obs_data_get_bool(data, key);
+	}
+}
+
+obs_data_t *readObject(obs_data_t *data, const char *key)
+{
+	return typeOf(data, key) == OBS_DATA_OBJECT ? obs_data_get_obj(data, key) : nullptr;
+}
+
+SavedOverlays readOverlays(obs_data_t *object)
+{
+	SavedOverlays overlays;
+	readText(object, "mode", overlays.mode);
+	if (OBSDataAutoRelease scene = readObject(object, "scene")) {
+		readText(scene, "uuid", overlays.sceneUuid);
+		readText(scene, "name", overlays.sceneName);
+	}
+	if (OBSDataAutoRelease canvas = readObject(object, "canvas")) {
+		readNumber(canvas, "width", overlays.canvasWidth);
+		readNumber(canvas, "height", overlays.canvasHeight);
+	}
+	if (typeOf(object, "items") != OBS_DATA_ARRAY) {
+		return overlays;
+	}
+	OBSDataArrayAutoRelease items = obs_data_get_array(object, "items");
+	for (size_t i = 0; i < obs_data_array_count(items); ++i) {
+		OBSDataAutoRelease entry = obs_data_array_item(items, i);
+		if (!entry) {
+			continue;
+		}
+		SavedOverlay overlay;
+		readText(entry, "uuid", overlay.uuid);
+		readText(entry, "name", overlay.name);
+		readFlag(entry, "visible", overlay.visible);
+		readText(entry, "anchor", overlay.anchor);
+		readNumber(entry, "x", overlay.x);
+		readNumber(entry, "y", overlay.y);
+		readNumber(entry, "width", overlay.width);
+		readNumber(entry, "height", overlay.height);
+		readText(entry, "fit", overlay.fit);
+		readNumber(entry, "opacity", overlay.opacity);
+		readText(entry, "blend", overlay.blend);
+		if (OBSDataAutoRelease crop = readObject(entry, "crop")) {
+			readNumber(crop, "left", overlay.crop.left);
+			readNumber(crop, "top", overlay.crop.top);
+			readNumber(crop, "right", overlay.crop.right);
+			readNumber(crop, "bottom", overlay.crop.bottom);
+		}
+		overlays.items.push_back(std::move(overlay));
+	}
+	return overlays;
 }
 
 } // namespace
@@ -97,6 +233,7 @@ obs_data_t *createSettingsData(const SavedSettings &saved)
 	setTransition(data, "intro_transition", saved.into);
 	setMedia(data, "outro", saved.outro);
 	setTransition(data, "back_transition", saved.back);
+	setOverlays(data, saved.overlays);
 	obs_data_addref(data);
 	return data;
 }
@@ -144,6 +281,9 @@ SavedSettings readSettingsData(obs_data_t *data)
 	readTransition(data, "intro_transition", saved.into);
 	readMedia(data, "outro", saved.outro);
 	readTransition(data, "back_transition", saved.back);
+	if (OBSDataAutoRelease overlays = readObject(data, "overlays")) {
+		saved.overlays = readOverlays(overlays);
+	}
 	return saved;
 }
 

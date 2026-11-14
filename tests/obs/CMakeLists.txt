@@ -128,6 +128,7 @@ target_sources(
     CaptureTests.cpp
     ClipDecoder.cpp
     ClipDecoder.hpp
+    CompositionTests.cpp
     DecodeTests.cpp
     DockBackendTests.cpp
     HotkeyTests.cpp

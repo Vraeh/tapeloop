@@ -10,6 +10,7 @@
 #include "core/ReplayNames.hpp"
 #include "core/ReplayWriter.hpp"
 
+#include "obs/Composition.hpp"
 #include "obs/ObsEncoders.hpp"
 #include "obs/SettingsData.hpp"
 
@@ -53,6 +54,23 @@ bool addInput(void *param, obs_source_t *source) noexcept
 		const bool video = (obs_source_get_output_flags(source) & OBS_SOURCE_VIDEO) != 0;
 		static_cast<std::vector<SourceIdentity> *>(param)->push_back(
 			{obs_source_get_uuid(source), name ? name : "", video});
+	} catch (...) {
+		return false;
+	}
+	return true;
+}
+
+// Every input and scene, marked as an overlay could show it: with video, and not a group.
+bool addOverlaySource(void *param, obs_source_t *source) noexcept
+{
+	try {
+		const obs_source_type type = obs_source_get_type(source);
+		const bool video = (obs_source_get_output_flags(source) & OBS_SOURCE_VIDEO) != 0;
+		const bool showable = (type == OBS_SOURCE_TYPE_INPUT || type == OBS_SOURCE_TYPE_SCENE) &&
+				      !obs_source_is_group(source) && video;
+		const char *name = obs_source_get_name(source);
+		static_cast<std::vector<SourceIdentity> *>(param)->push_back(
+			{obs_source_get_uuid(source), name ? name : "", showable});
 	} catch (...) {
 		return false;
 	}
@@ -265,6 +283,16 @@ void CaptureManager::save(obs_data_t *collection) const
 		}
 	}
 	saved.sources = std::move(kept);
+	// The same for overlays. One shown twice is kept twice.
+	std::vector<SavedOverlay> shown;
+	for (SavedOverlay &overlay : saved.overlays.items) {
+		OBSSourceAutoRelease found = obs_get_source_by_uuid(overlay.uuid.c_str());
+		if (found) {
+			overlay.name = obs_source_get_name(found);
+			shown.push_back(std::move(overlay));
+		}
+	}
+	saved.overlays.items = std::move(shown);
 	OBSDataAutoRelease data = createSettingsData(saved);
 	obs_data_set_obj(collection, kSettingsKey, data);
 }
@@ -277,7 +305,7 @@ void CaptureManager::load(obs_data_t *collection)
 	OBSDataAutoRelease data = obs_data_get_obj(collection, kSettingsKey);
 	if (data) {
 		const SavedSettings saved = readSettingsData(data);
-		if (std::optional<BufferSettings> loaded = loadSettings(saved)) {
+		if (std::optional<BufferSettings> loaded = loadSettings(saved, mainCanvas())) {
 			settings = std::move(*loaded);
 			for (const SavedSource &source : saved.sources) {
 				savedNames_[source.uuid] = source.name;
@@ -296,6 +324,12 @@ void CaptureManager::load(obs_data_t *collection)
 	for (const auto &move : matchSourcesByName(settings, savedNames_, inputs)) {
 		blog(LOG_INFO, "[tapeloop] Found the saved source '%s' again by its name",
 		     savedNames_.at(move.first).c_str());
+	}
+	std::vector<SourceIdentity> showable;
+	obs_enum_sources(addOverlaySource, &showable);
+	obs_enum_scenes(addOverlaySource, &showable);
+	for (const auto &move : matchOverlaysByName(settings.overlays, showable)) {
+		blog(LOG_INFO, "[tapeloop] Found the overlay '%s' again by its name", move.first.c_str());
 	}
 
 	settings_ = std::move(settings);

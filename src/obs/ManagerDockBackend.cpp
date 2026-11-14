@@ -137,6 +137,7 @@ void ManagerDockBackend::setSettings(const BufferSettings &settings)
 	manager_.setSettings(settings);
 	if (sequence_) {
 		sequence_->setAir(manager_.settings().air);
+		sequence_->setOverlays(manager_.settings().overlays);
 	}
 }
 

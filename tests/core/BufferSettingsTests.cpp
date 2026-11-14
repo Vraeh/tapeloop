@@ -21,6 +21,12 @@ using tapeloop::SavedSource;
 using tapeloop::SourceIdentity;
 using tapeloop::SourceSettings;
 
+namespace {
+
+constexpr tapeloop::CanvasSize kCanvas{1920, 1080};
+
+} // namespace
+
 TEST_CASE("buffer settings start from the defaults")
 {
 	const BufferSettings settings;
@@ -93,23 +99,23 @@ TEST_CASE("buffer settings survive a save and a load")
 	CHECK(saved.sources[0].height == 2160);
 	CHECK_FALSE(saved.sources[2].lengthSeconds);
 
-	const std::optional<BufferSettings> loaded = tapeloop::loadSettings(saved);
+	const std::optional<BufferSettings> loaded = tapeloop::loadSettings(saved, kCanvas);
 	REQUIRE(loaded);
 	CHECK(*loaded == settings);
 
 	// A memory budget below nothing is the automatic one.
 	SavedSettings negative = saved;
 	negative.bufferMemoryMiB = -1;
-	CHECK(tapeloop::loadSettings(negative)->bufferMemoryMiB == 0);
+	CHECK(tapeloop::loadSettings(negative, kCanvas)->bufferMemoryMiB == 0);
 }
 
 TEST_CASE("settings of another version are not loaded")
 {
 	SavedSettings saved = tapeloop::saveSettings(BufferSettings{});
 	saved.version = 2;
-	CHECK_FALSE(tapeloop::loadSettings(saved));
+	CHECK_FALSE(tapeloop::loadSettings(saved, kCanvas));
 	saved.version = 0;
-	CHECK_FALSE(tapeloop::loadSettings(saved));
+	CHECK_FALSE(tapeloop::loadSettings(saved, kCanvas));
 }
 
 TEST_CASE("loaded settings are brought back into range")
@@ -122,7 +128,7 @@ TEST_CASE("loaded settings are brought back into range")
 	saved.sources.push_back({"b", "", true, -40, std::string("fixed"), std::nullopt, std::nullopt});
 	saved.sources.push_back({"", "Nameless", true, std::nullopt, std::nullopt, std::nullopt, std::nullopt});
 
-	const std::optional<BufferSettings> loaded = tapeloop::loadSettings(saved);
+	const std::optional<BufferSettings> loaded = tapeloop::loadSettings(saved, kCanvas);
 	REQUIRE(loaded);
 	CHECK(loaded->length == 10s);
 	CHECK(loaded->resolution.mode == ResolutionMode::Canvas);
@@ -133,9 +139,9 @@ TEST_CASE("loaded settings are brought back into range")
 	CHECK(loaded->sources.at("b").resolution->mode == ResolutionMode::Canvas);
 
 	saved.lengthSeconds = INT64_MAX;
-	CHECK(tapeloop::loadSettings(saved)->length == 300s);
+	CHECK(tapeloop::loadSettings(saved, kCanvas)->length == 300s);
 	saved.lengthSeconds = INT64_MIN;
-	CHECK(tapeloop::loadSettings(saved)->length == 10s);
+	CHECK(tapeloop::loadSettings(saved, kCanvas)->length == 10s);
 }
 
 TEST_CASE("a replay goes on air with a fade and no intro or outro by default")
@@ -172,7 +178,7 @@ TEST_CASE("on-air settings survive a save and a load")
 	CHECK(saved.outro.imageMs == 4500);
 	CHECK(saved.back.durationMs == 800);
 
-	const std::optional<BufferSettings> loaded = tapeloop::loadSettings(saved);
+	const std::optional<BufferSettings> loaded = tapeloop::loadSettings(saved, kCanvas);
 	REQUIRE(loaded);
 	CHECK(loaded->air == settings.air);
 
@@ -187,7 +193,7 @@ TEST_CASE("loaded on-air settings are brought back into range")
 	saved.outro = {"image", "logo.png", INT64_MAX};
 	saved.back = {"Cut", INT64_MAX};
 
-	const std::optional<BufferSettings> loaded = tapeloop::loadSettings(saved);
+	const std::optional<BufferSettings> loaded = tapeloop::loadSettings(saved, kCanvas);
 	REQUIRE(loaded);
 	CHECK(loaded->air.intro.kind == AirMediaKind::None);
 	CHECK(loaded->air.into.duration == 50ms);
@@ -195,7 +201,7 @@ TEST_CASE("loaded on-air settings are brought back into range")
 	CHECK(loaded->air.back.duration == 20s);
 
 	saved.outro.imageMs = -5;
-	CHECK(tapeloop::loadSettings(saved)->air.outro.imageTime == 500ms);
+	CHECK(tapeloop::loadSettings(saved, kCanvas)->air.outro.imageTime == 500ms);
 }
 
 TEST_CASE("buffer lengths and fixed heights stay within what the dock offers")
@@ -298,7 +304,7 @@ TEST_CASE("activation of sources off air is global with a per source override")
 	CHECK_FALSE(settings.activateFor("c"));
 	CHECK(settings.activateFor("unknown"));
 
-	const auto loaded = tapeloop::loadSettings(tapeloop::saveSettings(settings));
+	const auto loaded = tapeloop::loadSettings(tapeloop::saveSettings(settings), kCanvas);
 	REQUIRE(loaded);
 	CHECK(*loaded == settings);
 	CHECK(loaded->sources.at("a").activateOffAir == true);
@@ -327,4 +333,121 @@ TEST_CASE("only a capturable source takes the settings of a name, but any source
 		CHECK(moves == std::map<std::string, std::string>{{"gone", "camera"}});
 	}
 	CHECK(settings.sources.at("audio").length == 30s);
+}
+
+TEST_CASE("overlays are saved with the settings and rescaled to the canvas they load at")
+{
+	BufferSettings settings;
+	settings.overlays.canvas = {1280, 720};
+	tapeloop::OverlayItem logo;
+	logo.uuid = "logo";
+	logo.name = "Logo";
+	logo.anchor = tapeloop::OverlayAnchor::BottomRight;
+	logo.x = 40;
+	logo.y = 20;
+	logo.width = 320;
+	logo.height = 180;
+	logo.opacity = 60;
+	settings.overlays.items.push_back(logo);
+
+	const SavedSettings saved = tapeloop::saveSettings(settings);
+	CHECK(saved.overlays.canvasWidth == 1280);
+	REQUIRE(saved.overlays.items.size() == 1);
+	CHECK(saved.overlays.items[0].anchor == "bottom_right");
+
+	const auto same = tapeloop::loadSettings(saved, {1280, 720});
+	REQUIRE(same);
+	CHECK(*same == settings);
+
+	const auto larger = tapeloop::loadSettings(saved, kCanvas);
+	REQUIRE(larger);
+	CHECK(larger->overlays.canvas == kCanvas);
+	REQUIRE(larger->overlays.items.size() == 1);
+	const tapeloop::OverlayItem &scaled = larger->overlays.items[0];
+	CHECK(scaled.x == 60);
+	CHECK(scaled.y == 30);
+	CHECK(scaled.width == 480);
+	CHECK(scaled.height == 270);
+	CHECK(scaled.opacity == 60);
+}
+
+TEST_CASE("an overlay of a UUID that is gone shows the one source with its saved name")
+{
+	tapeloop::OverlaySettings overlays;
+	const auto add = [&overlays](const char *uuid, const char *name) {
+		tapeloop::OverlayItem item;
+		item.uuid = uuid;
+		item.name = name;
+		overlays.items.push_back(item);
+	};
+	add("old-logo", "Logo");
+	add("old-logo", "Logo");
+	add("kept", "Kept");
+	add("old-score", "Score");
+	add("", "Clock");
+
+	const std::vector<SourceIdentity> sources = {{"new-logo", "Logo"},
+						     {"kept", "Kept"},
+						     {"new-score", "Score"},
+						     {"new-clock", "Clock"}};
+	const auto moves = tapeloop::matchOverlaysByName(overlays, sources);
+	CHECK(moves ==
+	      std::map<std::string, std::string>{{"Logo", "new-logo"}, {"Score", "new-score"}, {"Clock", "new-clock"}});
+	CHECK(overlays.items[0].uuid == "new-logo");
+	CHECK(overlays.items[1].uuid == "new-logo");
+	CHECK(overlays.items[2].uuid == "kept");
+	CHECK(overlays.items[3].uuid == "new-score");
+	CHECK(overlays.items[4].uuid == "new-clock");
+}
+
+TEST_CASE("an overlay's saved name matches nothing when the choice is not clear")
+{
+	tapeloop::OverlaySettings overlays;
+	const auto add = [&overlays](const char *uuid, const char *name) {
+		tapeloop::OverlayItem item;
+		item.uuid = uuid;
+		item.name = name;
+		overlays.items.push_back(item);
+	};
+
+	SECTION("two sources share the name")
+	{
+		add("gone", "Logo");
+		CHECK(tapeloop::matchOverlaysByName(overlays, {{"a", "Logo"}, {"b", "Logo"}}).empty());
+	}
+	SECTION("two missing UUIDs claim the same source")
+	{
+		add("gone", "Logo");
+		add("also-gone", "Logo");
+		CHECK(tapeloop::matchOverlaysByName(overlays, {{"logo", "Logo"}}).empty());
+		CHECK(overlays.items[1].uuid == "also-gone");
+	}
+	SECTION("the source with the name cannot be shown")
+	{
+		add("gone", "Mic");
+		CHECK(tapeloop::matchOverlaysByName(overlays, {{"mic", "Mic", false}}).empty());
+	}
+	SECTION("no name was saved")
+	{
+		add("gone", "");
+		CHECK(tapeloop::matchOverlaysByName(overlays, {{"logo", ""}}).empty());
+	}
+	CHECK(overlays.items[0].uuid == "gone");
+}
+
+TEST_CASE("an overlay whose source is there stays on it, even shared with a moved one")
+{
+	tapeloop::OverlaySettings overlays;
+	tapeloop::OverlayItem item;
+	item.uuid = "logo";
+	item.name = "Old name";
+	overlays.items.push_back(item);
+	item.uuid = "gone";
+	item.name = "Logo";
+	overlays.items.push_back(item);
+
+	const auto moves = tapeloop::matchOverlaysByName(overlays, {{"logo", "Logo"}});
+	CHECK(moves == std::map<std::string, std::string>{{"Logo", "logo"}});
+	CHECK(overlays.items[0].uuid == "logo");
+	CHECK(overlays.items[1].uuid == "logo");
 }

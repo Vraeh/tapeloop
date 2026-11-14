@@ -5,6 +5,7 @@
 
 #include "core/EncoderPolicy.hpp"
 #include "core/MediaTime.hpp"
+#include "core/OverlayLayout.hpp"
 #include "core/ReplaySize.hpp"
 
 #include <chrono>
@@ -97,6 +98,7 @@ struct BufferSettings {
 	int64_t bufferMemoryMiB = 0;
 	std::map<std::string, SourceSettings> sources;
 	AirSettings air;
+	OverlaySettings overlays;
 
 	Nanoseconds lengthFor(const std::string &uuid) const;
 	ReplayResolution resolutionFor(const std::string &uuid) const;
@@ -155,14 +157,16 @@ struct SavedSettings {
 	SavedTransition into;
 	SavedMedia outro;
 	SavedTransition back;
+	SavedOverlays overlays;
 };
 
 SavedSettings saveSettings(const BufferSettings &settings);
 
 // Empty when the version is not kSettingsVersion. Values out of range are brought
 // back into it, a resolution this build does not know becomes the canvas, and an intro
-// or outro of a kind it does not know becomes none.
-std::optional<BufferSettings> loadSettings(const SavedSettings &saved);
+// or outro of a kind it does not know becomes none. Overlays made at another canvas are
+// rescaled to this one, as loadOverlays() says.
+std::optional<BufferSettings> loadSettings(const SavedSettings &saved, CanvasSize canvas);
 
 struct SourceIdentity {
 	std::string uuid;
@@ -178,5 +182,13 @@ struct SourceIdentity {
 std::map<std::string, std::string> matchSourcesByName(BufferSettings &settings,
 						      const std::map<std::string, std::string> &savedNames,
 						      const std::vector<SourceIdentity> &sources);
+
+// The same for overlays, where `capturable` says whether a source can be shown as one.
+// An overlay whose UUID `sources` does not have shows the source of its saved name
+// instead, when exactly one that can be shown has that name and no overlay of another
+// missing UUID claims it too. Unlike buffers, overlays may share a source. Returns the
+// moves, from the saved name to the new UUID.
+std::map<std::string, std::string> matchOverlaysByName(OverlaySettings &overlays,
+						       const std::vector<SourceIdentity> &sources);
 
 } // namespace tapeloop

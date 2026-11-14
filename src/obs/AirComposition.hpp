@@ -6,6 +6,8 @@
 #include "core/BufferSettings.hpp"
 #include "core/ReplayPlayerState.hpp"
 
+#include "obs/Composition.hpp"
+
 #include <obs.h>
 
 #include <atomic>
@@ -65,14 +67,14 @@ public:
 };
 
 // Puts the parts of a replay on air over the program, on a channel of its own, and takes
-// them off, without touching the user's scenes: the intro, the replay and the outro, each
-// from the transition into air when nothing was on air and by a cut from the part before
-// otherwise, and the way back to live through a transition of its own. The transitions
-// are private copies of the user's picked ones, made ahead of the first use because they
-// read their settings on a later tick and open their own video on a thread, and the intro
-// and outro private media or image sources, all made and released here. Everything runs
-// on the UI thread except the signals and the tick, which only note what they saw for the
-// UI thread to act on.
+// them off, without touching the user's scenes: the intro, the replay with its overlays,
+// and the outro, each from the transition into air when nothing was on air and by a cut
+// from the part before otherwise, and the way back to live through a transition of its
+// own. The transitions are private copies of the user's picked ones, made ahead of the
+// first use because they read their settings on a later tick and open their own video on
+// a thread, and the intro and outro private media or image sources, all made and
+// released here. Everything runs on the UI thread except the signals and the tick, which
+// only note what they saw for the UI thread to act on.
 class AirComposition {
 public:
 	// Shows this source as the replay. Both outlive the composition.
@@ -92,10 +94,13 @@ public:
 	// A transition's length applies the next time it is used; which transition, and the
 	// intro and outro, once nothing is on air.
 	void setSettings(const AirSettings &settings);
-	// Brings the transitions, intro and outro up to date before a replay starts, when
-	// nothing is on air: a transition edited in OBS is made again, and an intro or outro
-	// whose file was missing is looked for again. Blocks for a moment only when a
-	// transition was just made and is not ready.
+	// Shown with the replay from the next time it goes on air.
+	void setOverlays(const OverlaySettings &overlays);
+	const OverlaySettings &overlays() const noexcept { return composition_.overlays(); }
+	// Brings the transitions, intro, outro and overlays up to date before a replay starts,
+	// when nothing is on air: a transition edited in OBS is made again, and an intro, outro
+	// or overlay whose source was missing is looked for again. Blocks for a moment only
+	// when a transition was just made and is not ready.
 	void prepare();
 	bool hasIntro() const noexcept { return intro_ != nullptr; }
 	bool hasOutro() const noexcept { return outro_ != nullptr; }
@@ -126,8 +131,8 @@ public:
 	bool leaving() const noexcept { return leaving_; }
 	// Live once the way back started.
 	AirPhase shown() const noexcept { return shown_; }
-	// What the part shows: the replay, or the intro or outro made from the settings. Null
-	// for Live and for a part there is nothing to show for.
+	// What the part shows: the replay with its overlays, or the intro or outro made from
+	// the settings. Null for Live and for a part there is nothing to show for.
 	obs_source_t *partSource(AirPhase part) const noexcept;
 
 private:
@@ -152,6 +157,7 @@ private:
 	void makeMedia(obs_source_t *&media, AirMedia &made, const AirMedia &wanted, const char *name);
 	void releaseMedia(obs_source_t *&media);
 	void applyMedia();
+	void applyOverlays();
 	bool holdsChannel() const;
 	// Whether the channel holds anything but what the composition put there, in which case
 	// the composition goes off air and leaves it. Checked before each write, so that the
@@ -180,7 +186,7 @@ private:
 	static void handleMediaEnded(void *data, calldata_t *call) noexcept;
 	static void handleTransitionStop(void *data, calldata_t *call) noexcept;
 
-	obs_source_t *replay_ = nullptr;
+	Composition composition_;
 	AirListener &listener_;
 	const TransitionCatalog *catalog_ = nullptr;
 	AirSettings settings_;

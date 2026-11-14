@@ -15,6 +15,8 @@ target_sources(
     CaptureManager.hpp
     CaptureOutput.cpp
     CaptureOutput.hpp
+    Composition.cpp
+    Composition.hpp
     GpuPictures.hpp
     ManagerDockBackend.cpp
     ManagerDockBackend.hpp

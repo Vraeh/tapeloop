@@ -172,10 +172,11 @@ SavedSettings saveSettings(const BufferSettings &settings)
 	saved.into = {settings.air.into.name, settings.air.into.duration.count()};
 	saved.outro = saveMedia(settings.air.outro);
 	saved.back = {settings.air.back.name, settings.air.back.duration.count()};
+	saved.overlays = saveOverlays(settings.overlays);
 	return saved;
 }
 
-std::optional<BufferSettings> loadSettings(const SavedSettings &saved)
+std::optional<BufferSettings> loadSettings(const SavedSettings &saved, CanvasSize canvas)
 {
 	if (saved.version != kSettingsVersion) {
 		return std::nullopt;
@@ -210,6 +211,7 @@ std::optional<BufferSettings> loadSettings(const SavedSettings &saved)
 	settings.air.into = loadTransition(saved.into);
 	settings.air.outro = loadMedia(saved.outro);
 	settings.air.back = loadTransition(saved.back);
+	settings.overlays = loadOverlays(saved.overlays, canvas);
 	return settings;
 }
 
@@ -255,6 +257,43 @@ std::map<std::string, std::string> matchSourcesByName(BufferSettings &settings,
 		node.key() = target;
 		settings.sources.insert(std::move(node));
 		moves.emplace(from, target);
+	}
+	return moves;
+}
+
+std::map<std::string, std::string> matchOverlaysByName(OverlaySettings &overlays,
+						       const std::vector<SourceIdentity> &sources)
+{
+	std::set<std::string> present;
+	std::map<std::string, std::vector<std::string>> byName;
+	for (const SourceIdentity &source : sources) {
+		present.insert(source.uuid);
+		if (source.capturable) {
+			byName[source.name].push_back(source.uuid);
+		}
+	}
+	const auto targetOf = [&](const OverlayItem &item) -> const std::string * {
+		if (present.contains(item.uuid) || item.name.empty()) {
+			return nullptr;
+		}
+		const auto named = byName.find(item.name);
+		return named != byName.end() && named->second.size() == 1 ? &named->second.front() : nullptr;
+	};
+
+	std::map<std::string, std::set<std::string>> claims;
+	for (const OverlayItem &item : overlays.items) {
+		if (const std::string *target = targetOf(item)) {
+			claims[*target].insert(item.uuid);
+		}
+	}
+
+	std::map<std::string, std::string> moves;
+	for (OverlayItem &item : overlays.items) {
+		const std::string *target = targetOf(item);
+		if (target && claims.at(*target).size() == 1) {
+			moves.emplace(item.name, *target);
+			item.uuid = *target;
+		}
 	}
 	return moves;
 }

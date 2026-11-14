@@ -75,6 +75,7 @@ using tapeloop::obs::SequencePlayer;
 using tapeloop::obs::TransitionCatalog;
 using tapeloop::obs::TransitionTemplate;
 using tapeloop::test::captureOf;
+using tapeloop::test::createTestPattern;
 using tapeloop::test::FakeDecoder;
 using tapeloop::test::Gops;
 using tapeloop::test::kMediaStandInId;
@@ -784,6 +785,30 @@ bool listSceneItem(obs_scene_t *scene, obs_sceneitem_t *item, void *param) noexc
 	return true;
 }
 
+bool addLayer(obs_scene_t *, obs_sceneitem_t *item, void *param) noexcept
+{
+	static_cast<std::vector<obs_source_t *> *>(param)->push_back(obs_sceneitem_get_source(item));
+	return true;
+}
+
+// What the replay's part holds, bottom first: the replay, then the overlays.
+std::vector<obs_source_t *> layersOf(const SequencePlayer &sequence)
+{
+	std::vector<obs_source_t *> layers;
+	obs_scene_enum_items(obs_scene_from_source(sequence.air().partSource(AirPhase::Source)), addLayer, &layers);
+	return layers;
+}
+
+tapeloop::OverlaySettings overlaysOf(obs_source_t *source)
+{
+	tapeloop::OverlayItem item;
+	item.uuid = obs_source_get_uuid(source);
+	item.name = obs_source_get_name(source);
+	tapeloop::OverlaySettings overlays;
+	overlays.items.push_back(item);
+	return overlays;
+}
+
 bool listScene(void *param, obs_source_t *source) noexcept
 {
 	static_cast<std::vector<std::string> *>(param)->push_back(std::string("scene ") + obs_source_get_name(source));
@@ -1379,7 +1404,7 @@ TEST_CASE_METHOD(ObsFixture, "a replay goes on air through its intro and outro a
 	REQUIRE(runUntil([&] { return sequence->state().phase() != AirPhase::Intro; }));
 	CHECK(sequence->state().phase() == AirPhase::Source);
 	CHECK(channelName() == "Tapeloop in");
-	CHECK(shownName() == "Tapeloop replay");
+	CHECK(shownName() == "Tapeloop composition");
 
 	REQUIRE(runUntil([&] { return sequence->state().phase() != AirPhase::Source; }));
 	const auto outroShown = std::chrono::steady_clock::now();
@@ -2046,7 +2071,7 @@ TEST_CASE_METHOD(ObsFixture, "a part that ends under a transition stops it", "[o
 	// Short of its length, the video's and a quarter of a second, so the part did this.
 	CHECK(air.in->stops() == 1);
 	CHECK(air.in->stopped());
-	CHECK(shownName() == "Tapeloop replay");
+	CHECK(shownName() == "Tapeloop composition");
 	CHECK(holdsFor(1000ms, [&] { return air.in->stops() == 1; }));
 }
 
@@ -2055,7 +2080,7 @@ TEST_CASE_METHOD(ObsFixture, "a skip during a transition stops it at once", "[ob
 	StingerOnAir air(20000ms);
 	air.sequence->skip();
 	CHECK(air.sequence->state().phase() == AirPhase::Source);
-	CHECK(shownName() == "Tapeloop replay");
+	CHECK(shownName() == "Tapeloop composition");
 	CHECK(air.in->stops() == 1);
 	CHECK(air.in->stopped());
 }
@@ -2175,7 +2200,7 @@ TEST_CASE_METHOD(ObsFixture, "a transition whose video never opens holds a repla
 	const auto first = timePutOnAir();
 	CHECK(first < 1s);
 	CHECK(gaveUp.lines == 1);
-	CHECK(shownName() == "Tapeloop replay");
+	CHECK(shownName() == "Tapeloop composition");
 	// With no length to go by, it runs out at once as OBS's own does.
 	CHECK(runUntil([] { return timeOnChannel() >= 1.0f; }));
 	comeOff();
@@ -2190,7 +2215,7 @@ TEST_CASE_METHOD(ObsFixture, "a transition whose video never opens holds a repla
 	catalog.stinger = "{}";
 	const auto noVideo = timePutOnAir();
 	CHECK(noVideo < first);
-	CHECK(shownName() == "Tapeloop replay");
+	CHECK(shownName() == "Tapeloop composition");
 
 	sequence.reset();
 	obs_wait_for_destroy_queue();
@@ -2242,7 +2267,7 @@ TEST_CASE_METHOD(ObsFixture, "without OBS's fade, a replay cuts on air and off",
 	REQUIRE(sequence->putOnAir(captured.id()));
 	{
 		const OBSSourceAutoRelease onChannel = obs_get_output_source(kAirChannel);
-		CHECK(onChannel.Get() == sequence->source());
+		CHECK(onChannel.Get() == sequence->air().partSource(AirPhase::Source));
 	}
 	CHECK(playing(*sequence) == "a");
 	sequence->takeOffAir();
@@ -2252,6 +2277,30 @@ TEST_CASE_METHOD(ObsFixture, "without OBS's fade, a replay cuts on air and off",
 
 	sequence.reset();
 	obs_wait_for_destroy_queue();
+}
+
+TEST_CASE_METHOD(ObsFixture, "overlays set while a replay is on air show from the next one", "[obs][sequence][air]")
+{
+	AirSetup setup;
+	const OBSSourceAutoRelease logo = createTestPattern(64, 36, "Logo");
+	const std::vector<obs_source_t *> replayOnly{setup.sequence->source()};
+	const std::vector<obs_source_t *> withLogo{setup.sequence->source(), logo.Get()};
+	const auto lists = listsOfObs();
+	setup.putOnAir();
+
+	setup.sequence->setOverlays(overlaysOf(logo));
+	CHECK(layersOf(*setup.sequence) == replayOnly);
+	CHECK_FALSE(obs_source_showing(logo));
+	setup.sequence->takeOffAir();
+	CHECK(layersOf(*setup.sequence) == withLogo);
+	CHECK(setup.sequence->air().overlays() == overlaysOf(logo));
+
+	setup.putOnAir();
+	CHECK(shownName() == "Tapeloop composition");
+	CHECK(obs_source_showing(logo));
+	CHECK(listsOfObs() == lists);
+	setup.sequence->takeOffAir();
+	CHECK_FALSE(obs_source_showing(logo));
 }
 
 TEST_CASE_METHOD(ObsFixture, "a sequence lets go of what it made for air before OBS shuts down", "[obs][sequence][air]")
@@ -2575,7 +2624,7 @@ TEST_CASE_METHOD(ObsFixture, "a first part leaves a source that took the channel
 	air.show(AirPhase::Source);
 	CHECK(listener.off == 1);
 	CHECK(air.onAir());
-	CHECK(channelName() == "A replay");
+	CHECK(channelName() == "Tapeloop composition");
 }
 
 TEST_CASE_METHOD(ObsFixture, "a channel given back before the UI thread looks keeps the replay on air",
@@ -2786,6 +2835,26 @@ TEST_CASE_METHOD(ObsFixture, "a collection's cleanup cuts a replay on air and st
 	CHECK(setup.sequence->closed());
 	CHECK(setup.manager.settings().sources.empty());
 	CHECK_FALSE(setup.sequence->air().hasOutro());
+}
+
+TEST_CASE_METHOD(ObsFixture, "a collection's cleanup takes the overlays off the replay", "[obs][sequence][air]")
+{
+	AirSetup setup;
+	const OBSSourceAutoRelease logo = createTestPattern(64, 36, "Logo");
+	EventHost host;
+	CaptureManager manager{host};
+	tapeloop::BufferSettings settings;
+	settings.overlays = overlaysOf(logo);
+	manager.setSettings(settings);
+	setup.sequence->setOverlays(settings.overlays);
+	setup.putOnAir();
+	REQUIRE(obs_source_showing(logo));
+
+	handleAirEvent(AirEvent::CollectionCleanup, *setup.sequence, manager);
+	CHECK(setup.phase() == AirPhase::Live);
+	CHECK(setup.sequence->air().overlays().items.empty());
+	CHECK(layersOf(*setup.sequence) == std::vector<obs_source_t *>{setup.sequence->source()});
+	CHECK_FALSE(obs_source_showing(logo));
 }
 
 TEST_CASE_METHOD(ObsFixture, "a collection change in the order OBS sends it leaves the next replay ready",

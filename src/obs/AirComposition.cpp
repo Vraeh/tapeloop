@@ -71,9 +71,7 @@ void noteUnopened(obs_source_t *, obs_source_t *child, void *param) noexcept
 
 } // namespace
 
-AirComposition::AirComposition(obs_source_t *replay, AirListener &listener)
-	: replay_(obs_source_get_ref(replay)),
-	  listener_(listener)
+AirComposition::AirComposition(obs_source_t *replay, AirListener &listener) : composition_(replay), listener_(listener)
 {
 	signal_handler_connect(obs_get_signal_handler(), "channel_change", handleChannelChange, this);
 	obs_add_tick_callback(handleTick, this);
@@ -99,10 +97,17 @@ void AirComposition::setSettings(const AirSettings &settings)
 	applyTransitions();
 }
 
+void AirComposition::setOverlays(const OverlaySettings &overlays)
+{
+	composition_.setOverlays(overlays);
+	applyOverlays();
+}
+
 void AirComposition::prepare()
 {
 	applyMedia();
 	applyTransitions();
+	applyOverlays();
 	awaitTransitions();
 }
 
@@ -217,8 +222,7 @@ void AirComposition::destroy()
 	releaseTransition(out_);
 	releaseMedia(intro_);
 	releaseMedia(outro_);
-	obs_source_release(replay_);
-	replay_ = nullptr;
+	composition_.destroy();
 	alive_.reset();
 }
 
@@ -228,7 +232,7 @@ obs_source_t *AirComposition::partSource(AirPhase part) const noexcept
 	case AirPhase::Intro:
 		return intro_;
 	case AirPhase::Source:
-		return replay_;
+		return composition_.source();
 	case AirPhase::Outro:
 		return outro_;
 	case AirPhase::Live:
@@ -409,6 +413,14 @@ void AirComposition::applyMedia()
 	makeMedia(outro_, outroMade_, settings_.outro, "Tapeloop outro");
 }
 
+void AirComposition::applyOverlays()
+{
+	if (destroyed_ || onChannel_) {
+		return;
+	}
+	composition_.apply();
+}
+
 bool AirComposition::holdsChannel() const
 {
 	obs_source_t *current = obs_get_output_source(kAirChannel);
@@ -501,6 +513,7 @@ void AirComposition::offAir(bool emptyChannel)
 	shown_ = AirPhase::Live;
 	leaving_ = false;
 	applyMedia();
+	applyOverlays();
 }
 
 void AirComposition::onTask(const Task &task)
