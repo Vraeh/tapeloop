@@ -89,8 +89,6 @@ struct EncoderChoice {
 	std::string name;
 };
 
-// What the dock reads and changes. The plugin implements it on top of the capture
-// manager; tests replace it, so the widgets run without OBS.
 // The controls of the replay player, as its hotkeys have them.
 enum class PlayerControl {
 	PlayPause,
@@ -117,6 +115,8 @@ struct DockPlayer {
 	Nanoseconds length{0};
 };
 
+// What the dock reads and changes. The plugin implements it on top of the capture
+// manager; tests replace it, so the widgets run without OBS.
 class DockBackend {
 public:
 	DockBackend() = default;
