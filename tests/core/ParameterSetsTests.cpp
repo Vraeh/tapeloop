@@ -32,8 +32,10 @@ Bytes join(std::initializer_list<Bytes> parts)
 
 Bytes filtered(VideoCodec codec, const Bytes &config, const Bytes &packet)
 {
+	tapeloop::KnownParameterSets known;
+	known.assign(codec, config);
 	Bytes out(packet.size() + 1, 0xEE);
-	const size_t written = tapeloop::copyWithoutKnownParameterSets(codec, config, packet, out);
+	const size_t written = known.copyWithout(packet, out);
 	REQUIRE(written <= packet.size());
 	CHECK(out[packet.size()] == 0xEE);
 	out.resize(written);
@@ -132,6 +134,58 @@ TEST_CASE("a packet the filter cannot read is copied whole")
 	CHECK(filtered(VideoCodec::H264, config, {}).empty());
 	CHECK(filtered(VideoCodec::H264, config, Bytes{0, 0}) == Bytes({0, 0}));
 	CHECK(filtered(VideoCodec::H264, config, kLong) == kLong);
+}
+
+TEST_CASE("a packet's parameter sets are not looked for through the whole configuration")
+{
+	// A configuration of half a million SEI units with a sequence parameter set last, and a
+	// packet of as many copies of that set before a slice. Read through for each copy, the
+	// configuration would cost its 2.5 MB half a million times over, far past the time a
+	// test is given.
+	constexpr size_t kCount = size_t{1} << 19;
+	const Bytes sei = {0x06, 0x80};
+	const Bytes sps = {0x67, 0x42};
+	Bytes config;
+	Bytes packet;
+	for (size_t i = 0; i < kCount; ++i) {
+		config.insert(config.end(), kShort.begin(), kShort.end());
+		config.insert(config.end(), sei.begin(), sei.end());
+		packet.insert(packet.end(), kShort.begin(), kShort.end());
+		packet.insert(packet.end(), sps.begin(), sps.end());
+	}
+	config.insert(config.end(), kShort.begin(), kShort.end());
+	config.insert(config.end(), sps.begin(), sps.end());
+	packet.insert(packet.end(), kShort.begin(), kShort.end());
+	packet.insert(packet.end(), kIdr.begin(), kIdr.end());
+	CHECK(filtered(VideoCodec::H264, config, packet) == join({kShort, kIdr}));
+}
+
+TEST_CASE("a configuration's first 288 parameter sets are known, later ones are not")
+{
+	// Picture parameter sets that all differ, written from the last in byte order to the
+	// first, so that keeping the first in byte order instead of the first written fails.
+	std::vector<Bytes> sets;
+	for (size_t i = 0; i < 289; ++i) {
+		sets.push_back({0x68, static_cast<uint8_t>(0xF0 - i / 16), static_cast<uint8_t>(0xF0 - i % 16), 0x80});
+	}
+	Bytes config = join({kLong, kSps});
+	for (const Bytes &set : sets) {
+		config.insert(config.end(), kLong.begin(), kLong.end());
+		config.insert(config.end(), set.begin(), set.end());
+	}
+	// The SPS counts among them, so the last two picture parameter sets are not known.
+	for (const size_t known : {size_t{0}, size_t{1}, size_t{140}, size_t{286}}) {
+		CHECK(filtered(VideoCodec::H264, config, join({kLong, sets[known], kLong, kIdr})) ==
+		      join({kLong, kIdr}));
+	}
+	for (const size_t unknown : {size_t{287}, size_t{288}}) {
+		const Bytes keyframe = join({kLong, sets[unknown], kLong, kIdr});
+		CHECK(filtered(VideoCodec::H264, config, keyframe) == keyframe);
+	}
+	// Known sets go together in any order, sets of other sizes among them.
+	CHECK(filtered(VideoCodec::H264, config,
+		       join({kLong, sets[200], kLong, kSps, kLong, sets[3], kLong, sets[200], kLong, kIdr})) ==
+	      join({kLong, kIdr}));
 }
 
 namespace {

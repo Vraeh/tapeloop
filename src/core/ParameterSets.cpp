@@ -88,47 +88,20 @@ std::optional<Nal> nalBeforeSlice(VideoCodec codec, std::span<const uint8_t> dat
 	return nal;
 }
 
-bool configHolds(std::span<const uint8_t> config, std::span<const uint8_t> wanted) noexcept
+// Shorter first, so that sets of different sizes are told apart without reading them.
+bool before(std::span<const uint8_t> a, std::span<const uint8_t> b) noexcept
 {
-	size_t length = 0;
-	if (!startsWithStartCode(config, length)) {
-		return false;
+	if (a.size() != b.size()) {
+		return a.size() < b.size();
 	}
-	for (size_t start = 0; start < config.size();) {
-		const Nal nal = nalAfter(config, start, length);
-		if (std::equal(nal.bytes.begin(), nal.bytes.end(), wanted.begin(), wanted.end())) {
-			return true;
-		}
-		start = nal.next;
-		length = nal.nextLength;
-	}
-	return false;
+	return std::lexicographical_compare(a.begin(), a.end(), b.begin(), b.end());
 }
 
-// Whether the parameter sets before the packet's first slice can all go: there is one,
-// the configuration holds each, and something else is left.
-bool canDropSets(VideoCodec codec, std::span<const uint8_t> config, std::span<const uint8_t> packet,
-		 size_t length) noexcept
-{
-	bool sets = false;
-	bool kept = false;
-	for (size_t start = 0; start < packet.size();) {
-		const std::optional<Nal> nal = nalBeforeSlice(codec, packet, start, length);
-		if (!nal) {
-			return sets;
-		}
-		if (nal->bytes.empty() || !isParameterSet(codec, nal->bytes.front())) {
-			kept = true;
-		} else if (configHolds(config, nal->bytes)) {
-			sets = true;
-		} else {
-			return false;
-		}
-		start = nal->next;
-		length = nal->nextLength;
-	}
-	return sets && kept;
-}
+// A configuration from a file can hold millions of parameter sets, but no stream tells
+// more than these apart: H.264 numbers 32 sequence and 256 picture parameter sets, HEVC
+// fewer. Past them the numbers repeat, and the sets after them are not known: a packet
+// that repeats one goes whole, which a decoder takes all the same.
+constexpr size_t kMaxKnownSets = 32 + 256;
 
 // The bits of a NAL unit after its header, without the bytes that keep it from holding a
 // start code, read as FFmpeg's muxer reads them. Reading past the end gives zeros and
@@ -384,8 +357,71 @@ bool h264SpsIsWhole(std::span<const uint8_t> nal) noexcept
 
 } // namespace
 
-size_t copyWithoutKnownParameterSets(VideoCodec codec, std::span<const uint8_t> config, std::span<const uint8_t> packet,
-				     std::span<uint8_t> out) noexcept
+void KnownParameterSets::assign(VideoCodec codec, std::span<const uint8_t> config)
+{
+	sets_.clear();
+	codec_ = codec;
+	config_.assign(config.begin(), config.end());
+	size_t length = 0;
+	if (!startsWithStartCode(config_, length)) {
+		return;
+	}
+	// Reserved first, so that adding a set never throws and leaves them unsorted.
+	sets_.reserve(kMaxKnownSets);
+	for (size_t start = 0; start < config_.size() && sets_.size() < kMaxKnownSets;) {
+		const Nal nal = nalAfter(config_, start, length);
+		if (!nal.bytes.empty() && isParameterSet(codec, nal.bytes.front())) {
+			sets_.push_back({start + length, nal.bytes.size()});
+		}
+		start = nal.next;
+		length = nal.nextLength;
+	}
+	std::sort(sets_.begin(), sets_.end(), [this](Set a, Set b) { return before(bytesOf(a), bytesOf(b)); });
+}
+
+std::span<const uint8_t> KnownParameterSets::bytesOf(Set set) const noexcept
+{
+	return std::span<const uint8_t>(config_).subspan(set.at, set.size);
+}
+
+bool KnownParameterSets::holds(std::span<const uint8_t> nal) const noexcept
+{
+	const auto found =
+		std::lower_bound(sets_.begin(), sets_.end(), nal, [this](Set set, std::span<const uint8_t> wanted) {
+			return before(bytesOf(set), wanted);
+		});
+	if (found == sets_.end()) {
+		return false;
+	}
+	const std::span<const uint8_t> set = bytesOf(*found);
+	return std::equal(set.begin(), set.end(), nal.begin(), nal.end());
+}
+
+// Whether the parameter sets before the packet's first slice can all go: there is one,
+// the configuration holds each, and something else is left.
+bool KnownParameterSets::canDropSets(std::span<const uint8_t> packet, size_t length) const noexcept
+{
+	bool sets = false;
+	bool kept = false;
+	for (size_t start = 0; start < packet.size();) {
+		const std::optional<Nal> nal = nalBeforeSlice(codec_, packet, start, length);
+		if (!nal) {
+			return sets;
+		}
+		if (nal->bytes.empty() || !isParameterSet(codec_, nal->bytes.front())) {
+			kept = true;
+		} else if (holds(nal->bytes)) {
+			sets = true;
+		} else {
+			return false;
+		}
+		start = nal->next;
+		length = nal->nextLength;
+	}
+	return sets && kept;
+}
+
+size_t KnownParameterSets::copyWithout(std::span<const uint8_t> packet, std::span<uint8_t> out) const noexcept
 {
 	size_t written = 0;
 	const auto copy = [&](size_t from, size_t to) {
@@ -394,18 +430,18 @@ size_t copyWithoutKnownParameterSets(VideoCodec codec, std::span<const uint8_t> 
 		written += piece.size();
 	};
 	size_t length = 0;
-	if (config.empty() || !startsWithStartCode(packet, length) || !canDropSets(codec, config, packet, length)) {
+	if (sets_.empty() || !startsWithStartCode(packet, length) || !canDropSets(packet, length)) {
 		copy(0, packet.size());
 		return written;
 	}
 
 	for (size_t start = 0; start < packet.size();) {
-		const std::optional<Nal> nal = nalBeforeSlice(codec, packet, start, length);
+		const std::optional<Nal> nal = nalBeforeSlice(codec_, packet, start, length);
 		if (!nal) {
 			copy(start, packet.size());
 			return written;
 		}
-		if (nal->bytes.empty() || !isParameterSet(codec, nal->bytes.front())) {
+		if (nal->bytes.empty() || !isParameterSet(codec_, nal->bytes.front())) {
 			copy(start, nal->next);
 		}
 		start = nal->next;
