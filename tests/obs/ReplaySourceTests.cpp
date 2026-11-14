@@ -16,6 +16,7 @@
 #include "decode/PictureDecoder.hpp"
 #include "obs/ReplayPlayer.hpp"
 #include "obs/ReplaySource.hpp"
+#include "obs/ReplayView.hpp"
 
 #include <catch2/catch_test_macros.hpp>
 #include <obs.hpp>
@@ -32,6 +33,7 @@
 #include <mutex>
 #include <optional>
 #include <span>
+#include <string>
 #include <thread>
 #include <vector>
 
@@ -48,11 +50,15 @@ using tapeloop::decode::Picture;
 using tapeloop::decode::PictureDecoder;
 using tapeloop::obs::createReplaySource;
 using tapeloop::obs::kReplaySourceId;
+using tapeloop::obs::kReplayViewId;
 using tapeloop::obs::kSpeedPresets;
 using tapeloop::obs::PlayerState;
 using tapeloop::obs::registerReplaySource;
+using tapeloop::obs::registerReplayView;
 using tapeloop::obs::ReplayPlayer;
 using tapeloop::obs::replayPlayer;
+using tapeloop::obs::setViewedReplay;
+using tapeloop::obs::unsetViewedReplay;
 using tapeloop::test::AllocationCounter;
 using tapeloop::test::captureClip;
 using tapeloop::test::expectedFrames;
@@ -179,14 +185,19 @@ private:
 };
 
 // A target to draw a source into from the test thread, as a scene would, and read back
-// the frame number it shows. Made and destroyed inside the graphics context.
+// the frame number it shows in the part the size of the clip that starts left pixels in.
+// Made and destroyed inside the graphics context.
 class SourceScreen {
 public:
-	explicit SourceScreen(obs_source_t *source) : source_(source)
+	explicit SourceScreen(obs_source_t *source, uint32_t width = kClipWidth, uint32_t left = 0)
+		: source_(source),
+		  width_(width),
+		  left_(left)
 	{
+		REQUIRE(left + kClipWidth <= width);
 		obs_enter_graphics();
 		target_ = gs_texrender_create(GS_RGBA, GS_ZS_NONE);
-		stage_ = gs_stagesurface_create(kClipWidth, kClipHeight, GS_RGBA);
+		stage_ = gs_stagesurface_create(width_, kClipHeight, GS_RGBA);
 		obs_leave_graphics();
 		REQUIRE(target_);
 		REQUIRE(stage_);
@@ -209,12 +220,12 @@ public:
 	{
 		obs_enter_graphics();
 		gs_texrender_reset(target_);
-		const bool began = gs_texrender_begin(target_, kClipWidth, kClipHeight);
+		const bool began = gs_texrender_begin(target_, width_, kClipHeight);
 		if (began) {
 			vec4 clear;
 			vec4_zero(&clear);
 			gs_clear(GS_CLEAR_COLOR, &clear, 0.0f, 0);
-			gs_ortho(0.0f, static_cast<float>(kClipWidth), 0.0f, static_cast<float>(kClipHeight), -100.0f,
+			gs_ortho(0.0f, static_cast<float>(width_), 0.0f, static_cast<float>(kClipHeight), -100.0f,
 				 100.0f);
 			// The device culls back faces until OBS's video thread first renders.
 			gs_set_cull_mode(GS_NEITHER);
@@ -236,7 +247,9 @@ public:
 			mapped = gs_stagesurface_map(stage_, &data, &stride);
 			if (mapped) {
 				for (size_t i = 0; i < reds_.size(); ++i) {
-					reds_[i] = data[(i / kClipWidth) * stride + (i % kClipWidth) * 4];
+					const uint8_t *pixel = data + (i / width_) * stride + (i % width_) * 4;
+					reds_[i] = pixel[0];
+					alphas_[i] = pixel[3];
 				}
 				gs_stagesurface_unmap(stage_);
 			}
@@ -247,15 +260,25 @@ public:
 			return std::nullopt;
 		}
 		REQUIRE(mapped);
-		return tapeloop::test::readFrameNumber(reds_.data(), kClipWidth, static_cast<int>(kClipWidth),
+		return tapeloop::test::readFrameNumber(reds_.data() + left_, width_, static_cast<int>(kClipWidth),
 						       static_cast<int>(kClipHeight));
+	}
+
+	// Of the last draw read back.
+	uint8_t alphaAt(uint32_t x, uint32_t y) const { return alphas_.at(size_t{y} * width_ + x); }
+	bool drewNothing() const
+	{
+		return std::ranges::all_of(alphas_, [](uint8_t alpha) { return alpha == 0; });
 	}
 
 private:
 	obs_source_t *source_;
+	uint32_t width_;
+	uint32_t left_;
 	gs_texrender_t *target_ = nullptr;
 	gs_stagesurf_t *stage_ = nullptr;
-	std::vector<uint8_t> reds_ = std::vector<uint8_t>(size_t{kClipWidth} * kClipHeight);
+	std::vector<uint8_t> reds_ = std::vector<uint8_t>(size_t{width_} * kClipHeight);
+	std::vector<uint8_t> alphas_ = std::vector<uint8_t>(size_t{width_} * kClipHeight);
 };
 
 // Releases a source and waits for OBS's destroy thread, so that whatever its player
@@ -717,4 +740,63 @@ TEST_CASE_METHOD(ObsFixture, "a replay source without a decoder moves its playhe
 	CHECK(state.frame > 0);
 	CHECK_FALSE(state.drawn);
 	CHECK(obs_source_get_width(run.source()) == 0);
+}
+
+TEST_CASE_METHOD(ObsFixture, "a replay view draws the replay being played in the middle of the canvas",
+		 "[obs][player][source][view]")
+{
+	const Clip clip = captureClip(1);
+	const std::vector<ExpectedFrame> expected = expectedFrames(clip);
+	// Twice as wide as the clip, which fits it at its own size with a margin on each side.
+	constexpr uint32_t kCanvasWidth = kClipWidth * 2;
+	constexpr uint32_t kLeft = kClipWidth / 2;
+	REQUIRE(ObsFixture::resetCanvas({kCanvasWidth, kClipHeight, 30}) == OBS_VIDEO_SUCCESS);
+	registerReplaySource(makeDecoder);
+	registerReplayView("Replay view");
+	// Offered among OBS's sources to add, never duplicated by a paste, and added without its
+	// properties shown.
+	CHECK(obs_get_source_output_flags(kReplayViewId) ==
+	      (OBS_SOURCE_VIDEO | OBS_SOURCE_CUSTOM_DRAW | OBS_SOURCE_SRGB | OBS_SOURCE_DO_NOT_DUPLICATE |
+	       OBS_SOURCE_CAP_DONT_SHOW_PROPERTIES));
+	CHECK(std::string(obs_source_get_display_name(kReplayViewId)) == "Replay view");
+	const OBSSourceAutoRelease view = obs_source_create(kReplayViewId, "View", nullptr, nullptr);
+	const OBSSourceAutoRelease other = obs_source_create(kReplayViewId, "Other view", nullptr, nullptr);
+	REQUIRE(view);
+	REQUIRE(other);
+	CHECK(obs_source_get_width(view) == kCanvasWidth);
+	CHECK(obs_source_get_height(view) == kClipHeight);
+
+	SourceRun run(expected);
+	SourceScreen screen(view, kCanvasWidth, kLeft);
+	SourceScreen otherScreen(other, kCanvasWidth, kLeft);
+	screen.draw(true);
+	CHECK(screen.drewNothing());
+	// Nothing while the replay has nothing loaded either.
+	setViewedReplay(run.source());
+	screen.draw(true);
+	CHECK(screen.drewNothing());
+
+	REQUIRE(run.control().load(gopsOf(clip)));
+	run.control().play();
+	for (int tick = 0; tick < 5; ++tick) {
+		const PlayerState state = run.frame();
+		CHECK(screen.draw(true) == expected[state.frame].number);
+		CHECK(otherScreen.draw(true) == expected[state.frame].number);
+		CHECK(screen.alphaAt(kLeft - 1, kClipHeight / 2) == 0);
+		CHECK(screen.alphaAt(kLeft, kClipHeight / 2) == 255);
+		CHECK(screen.alphaAt(kLeft + kClipWidth - 1, kClipHeight / 2) == 255);
+		CHECK(screen.alphaAt(kLeft + kClipWidth, kClipHeight / 2) == 0);
+	}
+
+	// Only a replay source is viewed, and only that source unsets itself.
+	setViewedReplay(view);
+	screen.draw(true);
+	CHECK(screen.drewNothing());
+	setViewedReplay(run.source());
+	unsetViewedReplay(other);
+	screen.draw(true);
+	CHECK_FALSE(screen.drewNothing());
+	unsetViewedReplay(run.source());
+	screen.draw(true);
+	CHECK(screen.drewNothing());
 }

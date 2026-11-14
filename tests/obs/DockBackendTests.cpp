@@ -13,6 +13,7 @@
 #include "obs/CaptureManager.hpp"
 #include "obs/ManagerDockBackend.hpp"
 #include "obs/ReplaySource.hpp"
+#include "obs/ReplayView.hpp"
 #include "obs/SequencePlayer.hpp"
 
 #include <catch2/catch_test_macros.hpp>
@@ -558,4 +559,70 @@ TEST_CASE_METHOD(ObsFixture, "a source created since the list was last set can b
 	REQUIRE(backend.moveSource(uuidC, uuidA));
 	CHECK(keysOf(sequence) == std::vector<std::string>{uuidC, uuidA, uuidB + "-"});
 	CHECK(namesOf(backend.sources()) == std::vector<std::string>{"C camera", "A camera", "B camera-"});
+}
+
+TEST_CASE_METHOD(ObsFixture, "the dock is offered the user's scenes and told which hold a replay view",
+		 "[obs][dock][air]")
+{
+	class Catalog final : public tapeloop::obs::SceneCatalog {
+	public:
+		std::vector<tapeloop::OverlayScene> scenes() const override
+		{
+			return {{"9f1c0a7e-0000-4000-8000-000000000007", "Match"}};
+		}
+	};
+
+	tapeloop::obs::registerReplaySource({});
+	tapeloop::obs::registerReplayView("Replay view");
+	const tapeloop::test::UiTasks ui;
+	OfflineHost host;
+	CaptureManager manager(host);
+	CHECK(ManagerDockBackend(manager).scenes().empty());
+	const Catalog catalog;
+	SequencePlayer sequence(manager.library());
+	ManagerDockBackend backend(manager, &sequence, &catalog);
+	CHECK(backend.scenes() == catalog.scenes());
+
+	const OBSSceneAutoRelease plain = obs_scene_create("Plain");
+	const OBSSceneAutoRelease direct = obs_scene_create("Direct");
+	const OBSSceneAutoRelease hidden = obs_scene_create("Hidden");
+	const OBSSceneAutoRelease nesting = obs_scene_create("Nesting");
+	const OBSSceneAutoRelease grouping = obs_scene_create("Grouping");
+	const OBSSourceAutoRelease view = obs_source_create(tapeloop::obs::kReplayViewId, "View", nullptr, nullptr);
+	const OBSSourceAutoRelease input = createTestPattern(64, 36, "Input");
+	obs_scene_add(plain, input);
+	obs_scene_add(direct, view);
+	obs_sceneitem_set_visible(obs_scene_add(hidden, view), false);
+	obs_scene_add(nesting, obs_scene_get_source(direct));
+	obs_sceneitem_t *group = obs_scene_add_group(grouping, "Group");
+	obs_sceneitem_group_add_item(group, obs_scene_add(grouping, view));
+	const auto holds = [&backend](obs_scene_t *scene) {
+		return backend.sceneHoldsReplay(obs_source_get_uuid(obs_scene_get_source(scene)));
+	};
+	CHECK_FALSE(holds(plain));
+	CHECK(holds(direct));
+	CHECK(holds(hidden));
+	CHECK(holds(nesting));
+	CHECK(holds(grouping));
+	CHECK_FALSE(backend.sceneHoldsReplay(obs_source_get_uuid(input)));
+	CHECK_FALSE(backend.sceneHoldsReplay(obs_source_get_uuid(view)));
+	CHECK_FALSE(backend.sceneHoldsReplay("9f1c0a7e-0000-4000-8000-000000000008"));
+	CHECK_FALSE(backend.sceneHoldsReplay(""));
+	CHECK_FALSE(backend.sceneHoldsReplay(std::string(obs_source_get_uuid(obs_scene_get_source(direct))) + "0"));
+
+	BufferSettings settings = backend.settings();
+	settings.overlays.mode = tapeloop::OverlayMode::Scene;
+	settings.overlays.scene = {obs_source_get_uuid(obs_scene_get_source(direct)), "Direct"};
+	backend.setSettings(settings);
+	CHECK(backend.missingScene().empty());
+	obs_source_remove(obs_scene_get_source(direct));
+	CHECK_FALSE(holds(direct));
+	CHECK(backend.missingScene() == "Direct");
+	// Without a sequence nothing goes on air, so nothing is missing.
+	CHECK(ManagerDockBackend(manager).missingScene().empty());
+
+	obs_source_remove(obs_sceneitem_get_source(group));
+	for (obs_scene_t *scene : {plain.Get(), hidden.Get(), nesting.Get(), grouping.Get()}) {
+		obs_source_remove(obs_scene_get_source(scene));
+	}
 }

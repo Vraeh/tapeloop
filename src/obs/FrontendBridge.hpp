@@ -5,6 +5,7 @@
 
 #include "obs/AirComposition.hpp"
 #include "obs/CaptureManager.hpp"
+#include "obs/ManagerDockBackend.hpp"
 #include "obs/ReplayHotkeys.hpp"
 #include "obs/SequencePlayer.hpp"
 
@@ -24,7 +25,7 @@ namespace tapeloop::obs {
 // the replay on air with the user's transitions, and Tapeloop's hotkeys, whose bindings
 // the profile keeps. Created and destroyed on the UI thread, at module load and unload,
 // after the replay source is registered.
-class FrontendBridge : private CaptureHost, private TransitionCatalog {
+class FrontendBridge : private CaptureHost, private TransitionCatalog, private SceneCatalog {
 public:
 	FrontendBridge();
 	~FrontendBridge() override;
@@ -36,6 +37,7 @@ public:
 
 	CaptureManager &manager() noexcept { return *manager_; }
 	SequencePlayer &sequence() noexcept { return *sequence_; }
+	const SceneCatalog &sceneCatalog() const noexcept { return *this; }
 
 private:
 	bool streamingActive() const override;
@@ -48,6 +50,7 @@ private:
 	// the scene collection outlives it.
 	std::optional<TransitionTemplate> find(const std::string &name) const override;
 	std::vector<std::string> names() const override;
+	std::vector<OverlayScene> scenes() const override;
 	// The frontend API is gone by the time the module unloads, so the callbacks go at
 	// the exit event.
 	void removeFrontendCallbacks() noexcept;

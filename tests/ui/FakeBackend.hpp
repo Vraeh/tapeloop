@@ -44,6 +44,10 @@ public:
 	tapeloop::AirRefusal refusal = tapeloop::AirRefusal::None;
 	std::string introMissing;
 	std::string outroMissing;
+	std::vector<OverlayScene> sceneList;
+	// The scenes that hold a replay view.
+	std::vector<std::string> sceneViews;
+	std::string sceneMissing;
 
 	std::vector<tapeloop::ui::DockSource> sources() const override
 	{
@@ -182,6 +186,12 @@ public:
 	tapeloop::AirRefusal airRefusal() const override { return refusal; }
 	std::string missingIntro() const override { return introMissing; }
 	std::string missingOutro() const override { return outroMissing; }
+	std::vector<OverlayScene> scenes() const override { return sceneList; }
+	bool sceneHoldsReplay(const std::string &uuid) const override
+	{
+		return std::find(sceneViews.begin(), sceneViews.end(), uuid) != sceneViews.end();
+	}
+	std::string missingScene() const override { return sceneMissing; }
 	void pickReplay(uint64_t id) override
 	{
 		++picks;

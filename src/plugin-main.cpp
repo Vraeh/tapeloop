@@ -11,6 +11,7 @@
 #include "obs/OverlayOpacity.hpp"
 #include "obs/RenderAdapter.hpp"
 #include "obs/ReplaySource.hpp"
+#include "obs/ReplayView.hpp"
 #include "ui/TapeloopDock.hpp"
 
 #include <obs-frontend-api.h>
@@ -34,7 +35,8 @@ std::unique_ptr<tapeloop::obs::ManagerDockBackend> dockBackend;
 
 void addDock()
 {
-	dockBackend = std::make_unique<tapeloop::obs::ManagerDockBackend>(bridge->manager(), &bridge->sequence());
+	dockBackend = std::make_unique<tapeloop::obs::ManagerDockBackend>(bridge->manager(), &bridge->sequence(),
+									  &bridge->sceneCatalog());
 	auto *dock = new tapeloop::ui::TapeloopDock(*dockBackend, [](const char *key) {
 		return QString::fromUtf8(obs_module_text(key));
 	});
@@ -95,6 +97,7 @@ bool obs_module_load()
 	try {
 		tapeloop::obs::registerCaptureOutput();
 		tapeloop::obs::registerReplaySource(replayDecoders());
+		tapeloop::obs::registerReplayView(obs_module_text("ReplayView.Name"));
 		tapeloop::obs::registerOverlayOpacity(overlayOpacityEffect());
 		bridge = std::make_unique<tapeloop::obs::FrontendBridge>();
 		addDock();

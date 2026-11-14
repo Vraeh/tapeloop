@@ -6,6 +6,7 @@
 #include "core/GopReader.hpp"
 #include "core/ReplayWriter.hpp"
 #include "obs/ReplaySource.hpp"
+#include "obs/ReplayView.hpp"
 
 #include <util/base.h>
 
@@ -66,6 +67,7 @@ SequencePlayer::SequencePlayer(const ReplayLibrary &library)
 {
 	if (source_) {
 		player_ = replayPlayer(source_);
+		setViewedReplay(source_);
 	}
 	obs_add_tick_callback(handleTick, this);
 }
@@ -76,6 +78,7 @@ SequencePlayer::~SequencePlayer()
 	obs_remove_tick_callback(handleTick, this);
 	alive_.reset();
 	if (source_) {
+		unsetViewedReplay(source_);
 		obs_source_release(source_);
 	}
 }

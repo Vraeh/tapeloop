@@ -9,15 +9,32 @@
 
 namespace tapeloop::obs {
 
+// The user's scenes as OBS's scene list has them, read on the UI thread.
+class SceneCatalog {
+public:
+	SceneCatalog() = default;
+	virtual ~SceneCatalog() = default;
+
+	SceneCatalog(const SceneCatalog &) = delete;
+	SceneCatalog &operator=(const SceneCatalog &) = delete;
+	SceneCatalog(SceneCatalog &&) = delete;
+	SceneCatalog &operator=(SceneCatalog &&) = delete;
+
+	virtual std::vector<OverlayScene> scenes() const = 0;
+};
+
 // The dock's view of the capture manager and the sequence player: the video inputs of the
 // scene collection with their selection and capture state, in the order of the sequence
 // and then, for those it does not list yet, by name regardless of case. Without a
 // sequence player every source is shown, they stay sorted by name and neither changes.
+// Without a scene catalog there are no scenes to pick.
 class ManagerDockBackend : public ui::DockBackend {
 public:
-	explicit ManagerDockBackend(CaptureManager &manager, SequencePlayer *sequence = nullptr)
+	explicit ManagerDockBackend(CaptureManager &manager, SequencePlayer *sequence = nullptr,
+				    const SceneCatalog *scenes = nullptr)
 		: manager_(manager),
-		  sequence_(sequence)
+		  sequence_(sequence),
+		  scenes_(scenes)
 	{
 	}
 
@@ -53,6 +70,12 @@ public:
 	{
 		return sequence_ ? sequence_->air().missingOutro() : std::string();
 	}
+	std::vector<OverlayScene> scenes() const override;
+	bool sceneHoldsReplay(const std::string &uuid) const override;
+	std::string missingScene() const override
+	{
+		return sequence_ ? sequence_->air().missingScene() : std::string();
+	}
 	bool canExport(ExportFormat format) const override { return manager_.canExport(format); }
 	bool exportReplay(uint64_t id, ExportFormat format) override { return manager_.exportReplay(id, format); }
 	std::vector<ui::DockExport> exports() const override;
@@ -64,6 +87,7 @@ private:
 
 	CaptureManager &manager_;
 	SequencePlayer *sequence_;
+	const SceneCatalog *scenes_;
 };
 
 } // namespace tapeloop::obs

@@ -150,6 +150,14 @@ public:
 	// empty when there is none.
 	virtual std::string missingIntro() const = 0;
 	virtual std::string missingOutro() const = 0;
+	// The user's scenes the scene mode can show, in the order of OBS's scene list.
+	virtual std::vector<OverlayScene> scenes() const = 0;
+	// Whether the scene holds a Tapeloop replay view, hidden or nested ones too; false
+	// when OBS does not have it.
+	virtual bool sceneHoldsReplay(const std::string &uuid) const = 0;
+	// The name of the scene the scene mode asks for and replays go on air without, empty
+	// when there is none.
+	virtual std::string missingScene() const = 0;
 
 	virtual bool canExport(ExportFormat format) const = 0;
 	// Exports a stored replay in the background. False when refused.

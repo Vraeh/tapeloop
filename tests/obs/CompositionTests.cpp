@@ -468,3 +468,52 @@ TEST_CASE_METHOD(ObsFixture, "a damaged saved overlay keeps the defaults of what
 	manager.load(collection);
 	CHECK(manager.settings().overlays.items.empty());
 }
+
+TEST_CASE_METHOD(ObsFixture, "the replay scene is found again by its name, and kept by name while it is missing",
+		 "[obs][composition]")
+{
+	const OBSSceneAutoRelease scene = obs_scene_create("Replay scene");
+	const OBSSourceAutoRelease input = createTestPattern(64, 64, "Logo");
+	obs_source_t *source = obs_scene_get_source(scene);
+	const tapeloop::test::LogCounter found("Found the replay scene");
+	QuietHost host;
+	BufferSettings settings;
+	settings.overlays.mode = tapeloop::OverlayMode::Scene;
+	settings.overlays.scene = {"9f1c0a7e-0000-4000-8000-000000000004", "Replay scene"};
+	const auto saved = [&host](const BufferSettings &wanted) {
+		OBSDataAutoRelease collection = obs_data_create();
+		CaptureManager manager(host);
+		manager.setSettings(wanted);
+		manager.save(collection);
+		return collection;
+	};
+	const auto loaded = [&host](obs_data_t *collection) {
+		CaptureManager manager(host);
+		manager.load(collection);
+		return manager.settings().overlays.scene;
+	};
+
+	// Saved as it was, as OBS does not have it, and found by its name on load.
+	OBSDataAutoRelease collection = saved(settings);
+	CHECK(loaded(collection) == tapeloop::OverlayScene{obs_source_get_uuid(source), "Replay scene"});
+	CHECK(found.lines == 1);
+
+	// Saved under the name it has now.
+	settings.overlays.scene = {obs_source_get_uuid(source), "Before"};
+	collection = saved(settings);
+	CHECK(loaded(collection) == tapeloop::OverlayScene{obs_source_get_uuid(source), "Replay scene"});
+
+	// A key that only begins with its UUID, which libobs alone would take for it, is kept
+	// as it is.
+	const tapeloop::OverlayScene longer{std::string(obs_source_get_uuid(source)) + "0", "Before"};
+	settings.overlays.scene = longer;
+	CHECK(loaded(saved(settings)) == longer);
+
+	// Not found by the name of a source that is not a scene.
+	const tapeloop::OverlayScene logo{"9f1c0a7e-0000-4000-8000-000000000004", "Logo"};
+	settings.overlays.scene = logo;
+	CHECK(loaded(saved(settings)) == logo);
+	CHECK(found.lines == 1);
+
+	obs_source_remove(source);
+}

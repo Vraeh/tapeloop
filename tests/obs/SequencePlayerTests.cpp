@@ -22,6 +22,7 @@
 #include "obs/CaptureManager.hpp"
 #include "obs/ReplayPlayer.hpp"
 #include "obs/ReplaySource.hpp"
+#include "obs/ReplayView.hpp"
 #include "obs/SequencePlayer.hpp"
 
 #include <catch2/catch_test_macros.hpp>
@@ -70,7 +71,9 @@ using tapeloop::obs::exitInOrder;
 using tapeloop::obs::handleAirEvent;
 using tapeloop::obs::kAirChannel;
 using tapeloop::obs::PlayerState;
+using tapeloop::obs::kReplayViewId;
 using tapeloop::obs::registerReplaySource;
+using tapeloop::obs::registerReplayView;
 using tapeloop::obs::SequencePlayer;
 using tapeloop::obs::TransitionCatalog;
 using tapeloop::obs::TransitionTemplate;
@@ -828,6 +831,64 @@ std::vector<std::string> listsOfObs()
 	lists.push_back(std::string("program ") + (program ? obs_source_get_name(program) : ""));
 	std::sort(lists.begin(), lists.end());
 	return lists;
+}
+
+// A scene of the user's with a view of the replay in it, and the overlays that choose it
+// for the scene mode. The main canvas keeps it until it is removed, which it is when it
+// goes, if the test has not removed it before.
+struct UserScene {
+	UserScene()
+	{
+		registerReplayView("Replay view");
+		REQUIRE(scene);
+		REQUIRE(view);
+		REQUIRE(obs_scene_add(scene, view));
+	}
+
+	~UserScene() { obs_source_remove(source()); }
+
+	UserScene(const UserScene &) = delete;
+	UserScene &operator=(const UserScene &) = delete;
+	UserScene(UserScene &&) = delete;
+	UserScene &operator=(UserScene &&) = delete;
+
+	obs_source_t *source() const { return obs_scene_get_source(scene); }
+
+	tapeloop::OverlaySettings overlays() const
+	{
+		tapeloop::OverlaySettings overlays;
+		overlays.mode = tapeloop::OverlayMode::Scene;
+		overlays.scene = {obs_source_get_uuid(source()), obs_source_get_name(source())};
+		return overlays;
+	}
+
+	const OBSSceneAutoRelease scene = obs_scene_create("Replay scene");
+	const OBSSourceAutoRelease view = obs_source_create(kReplayViewId, "Replay view", nullptr, nullptr);
+};
+
+// Removes the scene a replay is on air in, which ends the replay as another source taking
+// its channel does, and leaves the next one with its overlays.
+void checkSceneRemovedOnAir()
+{
+	AirSetup setup;
+	UserScene user;
+	setup.sequence->setOverlays(user.overlays());
+	setup.putOnAir();
+	REQUIRE(setup.phase() == AirPhase::Source);
+	REQUIRE(setup.sequence->air().partSource(AirPhase::Source) == user.source());
+	const tapeloop::test::LogCounter said("The scene on air was removed");
+
+	obs_source_remove(user.source());
+	CHECK(runUntil([&] { return setup.phase() == AirPhase::Live; }));
+	CHECK(said.lines == 1);
+	CHECK_FALSE(setup.sequence->air().onAir());
+	CHECK(channelName().empty());
+	CHECK(setup.sequence->air().missingScene() == "Replay scene");
+
+	setup.putOnAir();
+	CHECK(setup.sequence->air().partSource(AirPhase::Source) != user.source());
+	CHECK(setup.sequence->air().onAir());
+	setup.sequence->takeOffAir();
 }
 
 } // namespace
@@ -3020,4 +3081,97 @@ TEST_CASE_METHOD(ObsFixture, "a program with no transition is not black", "[obs]
 	obs_set_output_source(0, nullptr);
 	setup.answer(AirEvent::ProgramTransitionStopped);
 	setup.checkStillOn();
+}
+
+TEST_CASE_METHOD(ObsFixture, "a replay in the scene mode goes on air in the user's scene", "[obs][sequence][air]")
+{
+	AirSetup setup;
+	UserScene user;
+	const OBSSceneAutoRelease other = obs_scene_create("Other scene");
+	// A scene in program can be the replay's too.
+	obs_set_output_source(0, user.source());
+	setup.sequence->setOverlays(user.overlays());
+	CHECK(setup.sequence->air().missingScene().empty());
+
+	setup.putOnAir();
+	CHECK(shownName() == "Replay scene");
+	CHECK(setup.sequence->air().partSource(AirPhase::Source) == user.source());
+	CHECK(obs_source_showing(user.view));
+	// Another scene going is nothing to the replay.
+	obs_source_remove(obs_scene_get_source(other));
+	UiTasks::run();
+	CHECK(setup.phase() == AirPhase::Source);
+	CHECK(shownName() == "Replay scene");
+	setup.sequence->takeOffAir();
+	CHECK(channelName().empty());
+
+	obs_set_output_source(0, nullptr);
+	CHECK_FALSE(obs_source_showing(user.view));
+	setup.sequence->setOverlays({});
+	setup.putOnAir();
+	CHECK(shownName() == "Tapeloop composition");
+	setup.sequence->takeOffAir();
+}
+
+TEST_CASE_METHOD(ObsFixture, "a replay in the scene mode goes on air with its overlays while the scene is missing",
+		 "[obs][sequence][air]")
+{
+	AirSetup setup;
+	UserScene user;
+	const tapeloop::test::LogCounter said("is not there, so the replay goes on air with its overlays");
+	tapeloop::OverlaySettings gone = user.overlays();
+	gone.scene = {"9f1c0a7e-0000-4000-8000-000000000005", "Gone"};
+	setup.sequence->setOverlays(gone);
+	CHECK(setup.sequence->air().missingScene() == "Gone");
+	CHECK(said.lines == 1);
+	setup.putOnAir();
+	CHECK(shownName() == "Tapeloop composition");
+	setup.sequence->takeOffAir();
+	// Said once for as long as it is missing.
+	CHECK(said.lines == 1);
+
+	gone.scene.name.clear();
+	setup.sequence->setOverlays(gone);
+	CHECK(setup.sequence->air().missingScene() == gone.scene.uuid);
+
+	// What the uuid finds must be a scene of the user's.
+	const OBSSourceAutoRelease input = createTestPattern(64, 36, "Input");
+	gone.scene = {obs_source_get_uuid(input), "Input"};
+	setup.sequence->setOverlays(gone);
+	CHECK(setup.sequence->air().missingScene() == "Input");
+	// libobs would find the scene its first 36 characters name.
+	gone.scene = {std::string(obs_source_get_uuid(user.source())) + "0", "Longer"};
+	setup.sequence->setOverlays(gone);
+	CHECK(setup.sequence->air().missingScene() == "Longer");
+	const OBSSceneAutoRelease holder = obs_scene_create("Holder");
+	obs_source_t *group = obs_sceneitem_get_source(obs_scene_add_group(holder, "Group"));
+	gone.scene = {obs_source_get_uuid(group), "Group"};
+	setup.sequence->setOverlays(gone);
+	CHECK(setup.sequence->air().missingScene() == "Group");
+	gone.scene = {obs_source_get_uuid(setup.sequence->air().partSource(AirPhase::Source)), "Composition"};
+	setup.sequence->setOverlays(gone);
+	CHECK(setup.sequence->air().missingScene() == "Composition");
+
+	setup.sequence->setOverlays(user.overlays());
+	CHECK(setup.sequence->air().missingScene().empty());
+	obs_source_remove(user.source());
+	CHECK(setup.sequence->air().missingScene() == "Replay scene");
+	setup.putOnAir();
+	CHECK(shownName() == "Tapeloop composition");
+	setup.sequence->takeOffAir();
+	obs_source_remove(group);
+	obs_source_remove(obs_scene_get_source(holder));
+}
+
+TEST_CASE_METHOD(ObsFixture, "a scene removed while a replay is on air in it cuts the replay short",
+		 "[obs][sequence][air]")
+{
+	checkSceneRemovedOnAir();
+}
+
+TEST_CASE_METHOD(ObsFixture, "a scene removed while a transition holds it cuts the replay short",
+		 "[obs][sequence][air]")
+{
+	registerFade();
+	checkSceneRemovedOnAir();
 }

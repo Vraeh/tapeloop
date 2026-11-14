@@ -34,16 +34,16 @@ ReplayExporter::WriterFactory mp4Writers()
 #endif
 }
 
-// Releases what obs_frontend_get_transitions handed out.
-class TransitionList {
+// Releases what obs_frontend_get_transitions or obs_frontend_get_scenes handed out.
+class FrontendSources {
 public:
-	TransitionList() { obs_frontend_get_transitions(&list_); }
-	~TransitionList() { obs_frontend_source_list_free(&list_); }
+	explicit FrontendSources(void (*list)(obs_frontend_source_list *)) { list(&list_); }
+	~FrontendSources() { obs_frontend_source_list_free(&list_); }
 
-	TransitionList(const TransitionList &) = delete;
-	TransitionList &operator=(const TransitionList &) = delete;
-	TransitionList(TransitionList &&) = delete;
-	TransitionList &operator=(TransitionList &&) = delete;
+	FrontendSources(const FrontendSources &) = delete;
+	FrontendSources &operator=(const FrontendSources &) = delete;
+	FrontendSources(FrontendSources &&) = delete;
+	FrontendSources &operator=(FrontendSources &&) = delete;
 
 	std::span<obs_source_t *const> sources() const noexcept
 	{
@@ -142,7 +142,7 @@ void FrontendBridge::buffersStopped()
 
 std::optional<TransitionTemplate> FrontendBridge::find(const std::string &name) const
 {
-	const TransitionList transitions;
+	const FrontendSources transitions(obs_frontend_get_transitions);
 	for (obs_source_t *transition : transitions.sources()) {
 		const char *found = obs_source_get_name(transition);
 		if (!found || name != found) {
@@ -159,10 +159,26 @@ std::optional<TransitionTemplate> FrontendBridge::find(const std::string &name) 
 std::vector<std::string> FrontendBridge::names() const
 {
 	std::vector<std::string> found;
-	const TransitionList transitions;
+	const FrontendSources transitions(obs_frontend_get_transitions);
 	for (obs_source_t *transition : transitions.sources()) {
 		if (const char *name = obs_source_get_name(transition)) {
 			found.emplace_back(name);
+		}
+	}
+	return found;
+}
+
+std::vector<OverlayScene> FrontendBridge::scenes() const
+{
+	// Read each time rather than kept from the last scene list change, which a rename
+	// by a script does not report.
+	std::vector<OverlayScene> found;
+	const FrontendSources scenes(obs_frontend_get_scenes);
+	for (obs_source_t *scene : scenes.sources()) {
+		const char *uuid = obs_source_get_uuid(scene);
+		const char *name = obs_source_get_name(scene);
+		if (uuid && name) {
+			found.push_back({uuid, name});
 		}
 	}
 	return found;

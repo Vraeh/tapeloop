@@ -94,7 +94,9 @@ public:
 	// A transition's length applies the next time it is used; which transition, and the
 	// intro and outro, once nothing is on air.
 	void setSettings(const AirSettings &settings);
-	// Shown with the replay from the next time it goes on air.
+	// Shown with the replay from the next time it goes on air. In the scene mode the scene
+	// the user chose goes on air in place of the replay with its overlays, as long as OBS
+	// has it.
 	void setOverlays(const OverlaySettings &overlays);
 	const OverlaySettings &overlays() const noexcept { return composition_.overlays(); }
 	// Brings the transitions, intro, outro and overlays up to date before a replay starts,
@@ -109,6 +111,10 @@ public:
 	// replay is about to go on air and when one has gone off.
 	std::string missingIntro() const;
 	std::string missingOutro() const;
+	// The name of the scene the scene mode asks for and OBS does not have, or its UUID when
+	// the name is not known; empty when there is none. As of the last look at it, as for
+	// the intro, and when OBS removes a scene.
+	std::string missingScene() const;
 	// Whether the channel is empty or holds the composition.
 	bool channelFree() const;
 
@@ -131,8 +137,9 @@ public:
 	bool leaving() const noexcept { return leaving_; }
 	// Live once the way back started.
 	AirPhase shown() const noexcept { return shown_; }
-	// What the part shows: the replay with its overlays, or the intro or outro made from
-	// the settings. Null for Live and for a part there is nothing to show for.
+	// What the part shows: the replay with its overlays, or the user's scene that went on
+	// air in its place, or the intro or outro made from the settings. Null for Live and for
+	// a part there is nothing to show for.
 	obs_source_t *partSource(AirPhase part) const noexcept;
 
 private:
@@ -143,6 +150,7 @@ private:
 		bool lost = false;
 		bool probe = false;
 		bool ended = false;
+		bool removed = false;
 	};
 
 	// Makes the transition from the user's pick, again only when the pick changed. Left
@@ -158,6 +166,11 @@ private:
 	void releaseMedia(obs_source_t *&media);
 	void applyMedia();
 	void applyOverlays();
+	// Holds the scene the scene mode asks for weakly, or nothing when OBS does not have it.
+	void applyScene();
+	// After OBS removed a scene: falls back to the composition, and when it was the scene on
+	// air, takes it off as another source taking the channel would.
+	void dropRemovedScene();
 	bool holdsChannel() const;
 	// Whether the channel holds anything but what the composition put there, in which case
 	// the composition goes off air and leaves it. Checked before each write, so that the
@@ -185,6 +198,7 @@ private:
 	static void handleMediaStarted(void *data, calldata_t *call) noexcept;
 	static void handleMediaEnded(void *data, calldata_t *call) noexcept;
 	static void handleTransitionStop(void *data, calldata_t *call) noexcept;
+	static void handleSourceRemove(void *data, calldata_t *call) noexcept;
 
 	Composition composition_;
 	AirListener &listener_;
@@ -201,6 +215,11 @@ private:
 	obs_source_t *outro_ = nullptr;
 	AirMedia introMade_;
 	AirMedia outroMade_;
+	// The user's scene for the scene mode, and while it is the part on air, held.
+	obs_weak_source_t *scene_ = nullptr;
+	obs_source_t *airedScene_ = nullptr;
+	// The scene last logged as missing, so that it is logged once.
+	std::string missingLogged_;
 	obs_source_t *onChannel_ = nullptr;
 	AirPhase shown_ = AirPhase::Live;
 	bool leaving_ = false;

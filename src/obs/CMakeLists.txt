@@ -36,6 +36,8 @@ target_sources(
     ReplayPlayer.hpp
     ReplaySource.cpp
     ReplaySource.hpp
+    ReplayView.cpp
+    ReplayView.hpp
     SequencePlayer.cpp
     SequencePlayer.hpp
     SettingsData.cpp

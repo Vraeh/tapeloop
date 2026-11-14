@@ -73,7 +73,9 @@ void noteUnopened(obs_source_t *, obs_source_t *child, void *param) noexcept
 
 AirComposition::AirComposition(obs_source_t *replay, AirListener &listener) : composition_(replay), listener_(listener)
 {
-	signal_handler_connect(obs_get_signal_handler(), "channel_change", handleChannelChange, this);
+	signal_handler_t *signals = obs_get_signal_handler();
+	signal_handler_connect(signals, "channel_change", handleChannelChange, this);
+	signal_handler_connect(signals, "source_remove", handleSourceRemove, this);
 	obs_add_tick_callback(handleTick, this);
 }
 
@@ -128,6 +130,13 @@ void AirComposition::show(AirPhase part)
 		listener_.wentOffAir();
 		return;
 	}
+	if (part == AirPhase::Source && !airedScene_) {
+		airedScene_ = obs_weak_source_get_source(scene_);
+		if (airedScene_ && obs_source_removed(airedScene_)) {
+			obs_source_release(airedScene_);
+			airedScene_ = nullptr;
+		}
+	}
 
 	obs_source_t *target = partSource(part);
 	// Watched before it goes on air, as a video says it started from the next tick on.
@@ -167,6 +176,10 @@ void AirComposition::show(AirPhase part)
 		endTransition(in_, target);
 	} else {
 		takeChannel(target);
+	}
+	if (part != AirPhase::Source && airedScene_) {
+		obs_source_release(airedScene_);
+		airedScene_ = nullptr;
 	}
 	shown_ = part;
 }
@@ -217,7 +230,12 @@ void AirComposition::destroy()
 	// Waits for a tick running now, after which nothing is handed to the UI thread. The
 	// signals wait in the same way for a handler running now.
 	obs_remove_tick_callback(handleTick, this);
-	signal_handler_disconnect(obs_get_signal_handler(), "channel_change", handleChannelChange, this);
+	signal_handler_t *signals = obs_get_signal_handler();
+	signal_handler_disconnect(signals, "channel_change", handleChannelChange, this);
+	signal_handler_disconnect(signals, "source_remove", handleSourceRemove, this);
+	obs_weak_source_release(scene_);
+	scene_ = nullptr;
+	missingLogged_.clear();
 	releaseTransition(in_);
 	releaseTransition(out_);
 	releaseMedia(intro_);
@@ -232,7 +250,7 @@ obs_source_t *AirComposition::partSource(AirPhase part) const noexcept
 	case AirPhase::Intro:
 		return intro_;
 	case AirPhase::Source:
-		return composition_.source();
+		return airedScene_ ? airedScene_ : composition_.source();
 	case AirPhase::Outro:
 		return outro_;
 	case AirPhase::Live:
@@ -347,6 +365,19 @@ std::string AirComposition::missingOutro() const
 	return !destroyed_ && !outro_ && outroMade_.present() ? outroMade_.path : std::string();
 }
 
+std::string AirComposition::missingScene() const
+{
+	const OverlaySettings &overlays = composition_.overlays();
+	if (destroyed_ || overlays.mode != OverlayMode::Scene) {
+		return {};
+	}
+	const OBSSourceAutoRelease scene = obs_weak_source_get_source(scene_);
+	if (scene && !obs_source_removed(scene)) {
+		return {};
+	}
+	return overlays.scene.name.empty() ? overlays.scene.uuid : overlays.scene.name;
+}
+
 void AirComposition::makeMedia(obs_source_t *&media, AirMedia &made, const AirMedia &wanted, const char *name)
 {
 	// A file that was missing is looked for again.
@@ -419,6 +450,46 @@ void AirComposition::applyOverlays()
 		return;
 	}
 	composition_.apply();
+	applyScene();
+}
+
+void AirComposition::applyScene()
+{
+	const OverlaySettings &overlays = composition_.overlays();
+	OBSSourceAutoRelease wanted;
+	// libobs reads a whole UUID's length from the key it is given, whatever the key's own
+	// length, so a saved key of another length is a scene not found.
+	if (overlays.mode == OverlayMode::Scene && overlays.scene.uuid.size() == UUID_STR_LENGTH) {
+		wanted = obs_get_source_by_uuid(overlays.scene.uuid.c_str());
+	}
+	// The lookup finds private and removed sources too.
+	if (wanted && (!obs_scene_from_source(wanted) || obs_obj_is_private(wanted) || obs_source_removed(wanted))) {
+		wanted = nullptr;
+	}
+	if (wanted && obs_weak_source_references_source(scene_, wanted)) {
+		return;
+	}
+	obs_weak_source_release(scene_);
+	scene_ = wanted ? obs_source_get_weak_source(wanted) : nullptr;
+	const std::string missing = missingScene();
+	if (!missing.empty() && missing != missingLogged_) {
+		blog(LOG_WARNING, "[tapeloop] The scene %s is not there, so the replay goes on air with its overlays",
+		     missing.c_str());
+	}
+	missingLogged_ = missing;
+}
+
+void AirComposition::dropRemovedScene()
+{
+	if (airedScene_ && obs_source_removed(airedScene_)) {
+		blog(LOG_INFO, "[tapeloop] The scene on air was removed, so the replay is off air");
+		offAir(true);
+		listener_.wentOffAir();
+		return;
+	}
+	if (!destroyed_ && !onChannel_) {
+		applyScene();
+	}
 }
 
 bool AirComposition::holdsChannel() const
@@ -510,6 +581,8 @@ void AirComposition::offAir(bool emptyChannel)
 		// so a source pass that saw them go has run only after the second.
 		goneSeenAtTick_ = ticks_ + 2;
 	}
+	obs_source_release(airedScene_);
+	airedScene_ = nullptr;
 	shown_ = AirPhase::Live;
 	leaving_ = false;
 	applyMedia();
@@ -518,6 +591,10 @@ void AirComposition::offAir(bool emptyChannel)
 
 void AirComposition::onTask(const Task &task)
 {
+	if (task.removed) {
+		dropRemovedScene();
+		return;
+	}
 	// The channel's signal may come from anywhere, so it is checked against the channel.
 	if (task.lost && onChannel_ && channelLost()) {
 		listener_.wentOffAir();
@@ -671,6 +748,25 @@ void AirComposition::handleTransitionStop(void *data, calldata_t *call) noexcept
 	if (source == self.watchedTransition_) {
 		self.stopped_ = true;
 	}
+}
+
+void AirComposition::handleSourceRemove(void *data, calldata_t *call) noexcept
+{
+	// Only a scene can be the one the scene mode shows. Which one it is, is for the UI
+	// thread to tell.
+	if (!obs_scene_from_source(sourceOf(call))) {
+		return;
+	}
+	auto &self = *static_cast<AirComposition *>(data);
+	// Should it fail, a removed scene is still left out the next time it would go on air.
+	std::unique_ptr<Task> task(new (std::nothrow) Task);
+	if (!task) {
+		return;
+	}
+	task->alive = self.alive_;
+	task->composition = &self;
+	task->removed = true;
+	obs_queue_task(OBS_TASK_UI, runTask, task.release(), false);
 }
 
 } // namespace tapeloop::obs

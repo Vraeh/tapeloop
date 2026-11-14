@@ -77,6 +77,43 @@ bool addOverlaySource(void *param, obs_source_t *source) noexcept
 	return true;
 }
 
+// Every scene, marked as the scene mode could show it: not a group.
+bool addScene(void *param, obs_source_t *source) noexcept
+{
+	try {
+		const char *name = obs_source_get_name(source);
+		static_cast<std::vector<SourceIdentity> *>(param)->push_back(
+			{obs_source_get_uuid(source), name ? name : "", !obs_source_is_group(source)});
+	} catch (...) {
+		return false;
+	}
+	return true;
+}
+
+// The scene of the scene mode found again by its name when no scene has its UUID, as a
+// source is: only when exactly one scene has the name.
+bool matchSceneByName(OverlayScene &scene, const std::vector<SourceIdentity> &scenes)
+{
+	if (scene.name.empty() ||
+	    std::ranges::any_of(scenes, [&](const SourceIdentity &found) { return found.uuid == scene.uuid; })) {
+		return false;
+	}
+	const SourceIdentity *named = nullptr;
+	for (const SourceIdentity &found : scenes) {
+		if (found.capturable && found.name == scene.name) {
+			if (named) {
+				return false;
+			}
+			named = &found;
+		}
+	}
+	if (!named) {
+		return false;
+	}
+	scene.uuid = named->uuid;
+	return true;
+}
+
 // Sources that restart, unpause or refresh when they become active. Holding one active
 // off air would keep it from doing so when it is cut to air, so activation leaves them
 // out. The ids and settings are those of OBS 32's media source, VLC source, image
@@ -293,6 +330,16 @@ void CaptureManager::save(obs_data_t *collection) const
 		}
 	}
 	saved.overlays.items = std::move(shown);
+	// A scene that is not there keeps its UUID and name, so that it shows as missing.
+	// libobs reads a whole UUID's length from the key, whatever the key's own length.
+	OBSSourceAutoRelease scene;
+	if (saved.overlays.sceneUuid.size() == UUID_STR_LENGTH) {
+		scene = obs_get_source_by_uuid(saved.overlays.sceneUuid.c_str());
+	}
+	if (scene) {
+		const char *name = obs_source_get_name(scene);
+		saved.overlays.sceneName = name ? name : "";
+	}
 	OBSDataAutoRelease data = createSettingsData(saved);
 	obs_data_set_obj(collection, kSettingsKey, data);
 }
@@ -330,6 +377,12 @@ void CaptureManager::load(obs_data_t *collection)
 	obs_enum_scenes(addOverlaySource, &showable);
 	for (const auto &move : matchOverlaysByName(settings.overlays, showable)) {
 		blog(LOG_INFO, "[tapeloop] Found the overlay '%s' again by its name", move.first.c_str());
+	}
+	std::vector<SourceIdentity> scenes;
+	obs_enum_scenes(addScene, &scenes);
+	if (matchSceneByName(settings.overlays.scene, scenes)) {
+		blog(LOG_INFO, "[tapeloop] Found the replay scene '%s' again by its name",
+		     settings.overlays.scene.name.c_str());
 	}
 
 	settings_ = std::move(settings);
