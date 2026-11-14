@@ -171,6 +171,7 @@ TEST_CASE("a packet's parameter sets are not looked for through the whole config
 	Bytes out(packet.size());
 	out.resize(known.copyWithout(packet, out));
 	CHECK(out == join({kShort, kIdr}));
+	CHECK(known.comparisons() >= kCopies);
 	CHECK(known.comparisons() <= kCopies * 10);
 }
 

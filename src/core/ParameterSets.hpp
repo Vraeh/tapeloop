@@ -34,7 +34,9 @@ public:
 
 #ifdef TAPELOOP_COUNT_COMPARISONS
 	// The known sets the packets so far were compared with, so that a test can bound
-	// what a lookup costs without timing it. Only the core tests build it.
+	// what a lookup costs without timing it. Only the test project builds it: the core
+	// tests and the fuzzers. The count covers what holds() compares, so the tests also
+	// check a lower bound.
 	size_t comparisons() const noexcept { return comparisons_; }
 #endif
 
