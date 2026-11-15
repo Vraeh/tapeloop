@@ -3,6 +3,9 @@
 Tapeloop is maintained by one person in spare time, so please open an issue to discuss
 a change before writing it. Bug reports with an OBS log attached are always welcome.
 
+How the code is organized, which thread runs what and how the tests fit together is
+described in [docs/architecture.md](docs/architecture.md).
+
 ## Branches
 
 The project follows git-flow:

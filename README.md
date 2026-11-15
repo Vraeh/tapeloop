@@ -78,6 +78,9 @@ the warnings in the dock and in the log mean.
 The [file format page](docs/file-format.md) describes the replay files byte by byte
 and what a program that reads them must check.
 
+The [architecture page](docs/architecture.md) is for contributors: the modules, the
+threads, the buffers, decoding, the composition on air and the tests.
+
 ## Building
 
 Tapeloop uses the build system of the
