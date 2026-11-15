@@ -54,7 +54,7 @@ When OBS has finished loading, and when the recording folder changes, Tapeloop s
 the `Tapeloop` folder. For each folder directly inside it, in name order, the scan:
 
 - deletes every `*.tplp.part`, which a crash left half written;
-- reads every `*.tplp` that is a regular file, following links, and lists it as a
+- reads every `*.tplp` that is a regular file, and lists it as a
   replay. A file that does not decode, or that refers to a segment that is not a
   regular file, is listed as damaged;
 - deletes every `*.tapeloop-part` in `Export` that no export of this OBS session is
@@ -435,19 +435,12 @@ What they do not enforce:
 - The format does not store a picture size; it is in the bitstream and the
   configuration, which go to the decoder as they are. The decoder refuses pictures
   above the limit above.
-- There is no limit on a GOP chunk's size other than the file it is in. A reader
-  allocates the size the index gives only after the chunk's own header, with the CRC
-  the index names, gives the same size, and the chunk lies inside the file.
-- There is no limit on the size of a segment or a self-contained replay, or on the
-  number of segments a manifest refers to.
-- The configuration can be of any size that fits the blob. Only the first 288
-  parameter sets in it (32 sequence and 256 picture parameter sets, as many as H.264
-  can number) are remembered for dropping repeated sets from packets; the others are
-  ignored for that.
 - The start and end of the index, the capture times and the replay id are not checked
   against anything but each other (the footer's id must equal the header's).
 - An index with no sources decodes. The writer never makes one: a capture needs a
   source with frames.
+
+More limits on sizes and counts may be added before the first stable release.
 
 The writer's own limits: a segment rolls over at 1 GiB, a source name is cut to 1024
 bytes, tags must fit one slot, and every count and the blob must fit 32 bits.
@@ -465,8 +458,8 @@ Files:
 - Only regular files are opened (on Windows, also a volume or a whole disk). A named
   pipe or another device at a replay's path is refused at once instead of waiting for
   a writer. The type comes from the opened file, not from the path when it was listed.
-- Links are followed when a file is opened. The scan deletes nothing in a folder that
-  is a link, nor in an `Export` that is a link.
+- The scan deletes nothing in a folder that is a link, nor in an `Export` that is a
+  link.
 
 The footer, before anything else is read:
 
@@ -495,9 +488,7 @@ The header and the index:
   index;
 - the packet counts of a source's GOPs add up to its frame count; its frame times
   strictly increase; `in` is not after `out`, and both lie within the frame times;
-- no byte of a file belongs to two GOP entries. Segments are told apart by the name
-  their key gives, so different names that open one file (letter case, Unicode forms,
-  links) count as different files.
+- no byte of a file belongs to two GOP entries.
 
 A replay is listed as intact only when every segment it refers to exists as a regular
 file.
