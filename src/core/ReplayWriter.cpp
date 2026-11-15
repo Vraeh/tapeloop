@@ -7,12 +7,17 @@
 #include "core/ReplayNames.hpp"
 
 #include <algorithm>
+#include <atomic>
 #include <functional>
 #include <memory>
 #include <optional>
 #include <random>
 #include <stdexcept>
+#include <string>
 #include <system_error>
+#include <tuple>
+#include <utility>
+#include <vector>
 
 namespace tapeloop {
 namespace {
@@ -109,19 +114,29 @@ std::optional<ReplayIndex> decodeManifestBytes(const ManifestBytes &bytes)
 	return decodeManifest(bytes.head, bytes.index, bytes.footer, bytes.size);
 }
 
+#ifdef TAPELOOP_COUNT_LOOKUPS
+std::atomic<size_t> &lookupCount() noexcept
+{
+	static std::atomic<size_t> count{0};
+	return count;
+}
+
+void countLookup() noexcept
+{
+	lookupCount().fetch_add(1, std::memory_order_relaxed);
+}
+#else
+void countLookup() noexcept {}
+#endif
+
 bool segmentsExist(const std::filesystem::path &manifest, const ReplayIndex &index)
 {
-	for (const StoredSource &source : index.sources) {
-		std::optional<uint32_t> checked;
-		for (const StoredGop &gop : source.gops) {
-			if (gop.segment == checked) {
-				continue;
-			}
-			checked = gop.segment;
-			std::error_code error;
-			if (!std::filesystem::is_regular_file(segmentPath(manifest, source, gop.segment), error)) {
-				return false;
-			}
+	for (const SegmentFile &file : segmentFilesOf(index)) {
+		countLookup();
+		std::error_code error;
+		if (!std::filesystem::is_regular_file(segmentPath(manifest, index.sources[file.source], file.segment),
+						      error)) {
+			return false;
 		}
 	}
 	return true;
@@ -294,8 +309,17 @@ void ReplayWriter::writeTags(const std::filesystem::path &manifest, std::span<co
 		throw std::invalid_argument("not an intact replay manifest: " + utf8FromPath(manifest));
 	}
 	const TagWrite next = nextTagWrite(bytes.head);
-	file.writeAt(next.offset, encodeTagSlot(tags, next.generation));
+	const std::vector<uint8_t> slot = encodeTagSlot(tags, next.generation);
+	file.writeAt(next.offset, slot);
 	file.flush();
+	if (next.then) {
+		// The older slot is on the disk before the newer one is overwritten, so that a cut
+		// between the writes leaves the newer slot's tags. The other order, or no flush on
+		// a disk that reorders writes, could leave the older slot's instead, from before
+		// the last edit.
+		file.writeAt(*next.then, slot);
+		file.flush();
+	}
 }
 
 void ReplayWriter::prepareFolder()
@@ -454,21 +478,38 @@ std::filesystem::path ReplayWriter::publishManifest(const std::string &stem, std
 		const std::string name = safeFileName(stem, kMaxFileNameBytes - suffix.size()) + suffix;
 		const std::filesystem::path manifest = folder_ / pathFromUtf8(name + std::string(kManifestExtension));
 		const std::filesystem::path part = folder_ / pathFromUtf8(name + std::string(kPartExtension));
-		if (std::filesystem::exists(manifest) || std::filesystem::exists(part)) {
+		if (nameTaken(manifest) || nameTaken(part)) {
 			continue;
 		}
+		// Another writer in the folder can take either name right after the check. The
+		// part is created only if its name is still free, and deleted only once this call
+		// has created it. The manifest gets its name from renameIfFree, which replaces
+		// nothing there, except where the file system can neither rename exclusively nor
+		// make hard links: then a file another writer creates between renameIfFree's look
+		// at the name and its rename is replaced.
+		File file;
 		try {
-			File file(part, File::Mode::CreateNew);
+			file = File(part, File::Mode::CreateNew);
+		} catch (const std::system_error &e) {
+			if (e.code() == std::errc::file_exists) {
+				continue;
+			}
+			throw;
+		}
+		try {
 			file.writeAt(0, bytes);
 			file.flush();
 			file.close();
-			renameFile(part, manifest);
+			if (renameIfFree(part, manifest)) {
+				return manifest;
+			}
 		} catch (...) {
 			std::error_code ignored;
 			std::filesystem::remove(part, ignored);
 			throw;
 		}
-		return manifest;
+		std::error_code ignored;
+		std::filesystem::remove(part, ignored);
 	}
 	throw std::runtime_error("no free name for a replay in " + utf8FromPath(folder_));
 }
@@ -533,5 +574,45 @@ std::filesystem::path segmentPath(const std::filesystem::path &manifest, const S
 	}
 	return manifest.parent_path() / pathFromUtf8(kDataFolder) / pathFromUtf8(segmentFileName(source.key, segment));
 }
+
+std::vector<SegmentFile> segmentFilesOf(const ReplayIndex &index)
+{
+	// A segment's file name is the safe form of its key, so keys that differ can share it.
+	std::vector<std::pair<std::string, uint32_t>> names;
+	names.reserve(index.sources.size());
+	for (size_t s = 0; s < index.sources.size(); ++s) {
+		names.emplace_back(safeFileName(index.sources[s].key), static_cast<uint32_t>(s));
+	}
+	std::sort(names.begin(), names.end());
+	std::vector<uint32_t> namedBy(names.size());
+	for (size_t i = 0; i < names.size(); ++i) {
+		const bool shared = i > 0 && names[i].first == names[i - 1].first;
+		namedBy[names[i].second] = shared ? namedBy[names[i - 1].second] : names[i].second;
+	}
+
+	std::vector<SegmentFile> files;
+	for (size_t s = 0; s < index.sources.size(); ++s) {
+		std::optional<uint32_t> last;
+		for (const StoredGop &gop : index.sources[s].gops) {
+			if (gop.segment != last) {
+				last = gop.segment;
+				// Every GOP of a self-contained replay is in the one file.
+				files.push_back({gop.segment == kOwnFile ? 0 : namedBy[s], gop.segment});
+			}
+		}
+	}
+	std::sort(files.begin(), files.end(), [](const SegmentFile &a, const SegmentFile &b) {
+		return std::tie(a.source, a.segment) < std::tie(b.source, b.segment);
+	});
+	files.erase(std::unique(files.begin(), files.end()), files.end());
+	return files;
+}
+
+#ifdef TAPELOOP_COUNT_LOOKUPS
+size_t segmentLookups() noexcept
+{
+	return lookupCount().load(std::memory_order_relaxed);
+}
+#endif
 
 } // namespace tapeloop

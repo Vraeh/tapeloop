@@ -111,8 +111,9 @@ public:
 	// the replay is not saved.
 	WrittenReplay write(const ReplayCapture &capture);
 
-	// Writes the tags into the manifest's older tag slot, so that a torn write leaves the
-	// slot with the previous ones (see nextTagWrite). Throws std::system_error when the
+	// Writes the tags into the manifest's older tag slot and, when the newer one holds the
+	// last generation, into that one after it (see nextTagWrite), so that a write cut
+	// short leaves the previous tags or the new ones. Throws std::system_error when the
 	// manifest cannot be written, std::invalid_argument when it is not an intact one, and
 	// std::length_error when the tags do not fit their slot.
 	void writeTags(const std::filesystem::path &manifest, std::span<const std::string> tags);
@@ -211,5 +212,28 @@ std::optional<ReplayIndex> readReplayIndex(const std::filesystem::path &manifest
 // Where the segment of a source that a manifest refers to lives: for kOwnFile, the
 // self-contained replay itself.
 std::filesystem::path segmentPath(const std::filesystem::path &manifest, const StoredSource &source, uint32_t segment);
+
+// A file that holds GOPs of a replay, as segmentPath finds it: the index of a source
+// whose key names it, and its sequence or kOwnFile.
+struct SegmentFile {
+	uint32_t source = 0;
+	uint32_t segment = 0;
+
+	bool operator==(const SegmentFile &) const = default;
+};
+
+// Lists each file that holds GOPs of the replay once, ordered by source and sequence.
+// Sources whose keys give one file name share their files, listed under the first of
+// them. A scan looks up only these, so it makes one lookup per distinct file name and
+// sequence the replay uses, however many GOPs refer to each. Where file names are not
+// case sensitive, names that differ only in case are still looked up apart, so the
+// lookups can be more than the files that exist.
+std::vector<SegmentFile> segmentFilesOf(const ReplayIndex &index);
+
+#ifdef TAPELOOP_COUNT_LOOKUPS
+// The segment files scans have looked up so far, so that a test can bound what a scan
+// costs without timing it. Only the core tests and fuzzers build it.
+size_t segmentLookups() noexcept;
+#endif
 
 } // namespace tapeloop

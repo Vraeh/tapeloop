@@ -67,6 +67,14 @@ one version to the next.
   Sync and AMD AMF can be used too, but have not been tried yet. Without any of them
   Tapeloop falls back to x264, which costs CPU time.
 
+## Documentation
+
+The [user guide](docs/user-guide.md) walks through installing the plugin, capturing
+replays, the sequence and its hotkeys, putting a replay on air and exporting.
+
+The [troubleshooting page](docs/troubleshooting.md) says where the logs are and what
+the warnings in the dock and in the log mean.
+
 ## Building
 
 Tapeloop uses the build system of the
