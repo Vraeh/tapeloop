@@ -16,6 +16,8 @@ struct SequenceEntry {
 	// Chosen by the caller to tell sources apart, as for MomentClip.
 	std::string sourceKey;
 	bool shown = true;
+
+	bool operator==(const SequenceEntry &) const = default;
 };
 
 // The sources a replay shows, in the order it shows them. A hidden source keeps its place,

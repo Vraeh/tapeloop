@@ -16,8 +16,10 @@ using tapeloop::AirMediaKind;
 using tapeloop::BufferSettings;
 using tapeloop::ReplayResolution;
 using tapeloop::ResolutionMode;
+using tapeloop::SavedSequenceEntry;
 using tapeloop::SavedSettings;
 using tapeloop::SavedSource;
+using tapeloop::SequenceEntry;
 using tapeloop::SourceIdentity;
 using tapeloop::SourceSettings;
 
@@ -354,4 +356,65 @@ TEST_CASE("only a capturable source takes the settings of a name, but any source
 		CHECK(moves == std::map<std::string, std::string>{{"gone", "camera"}});
 	}
 	CHECK(settings.sources.at("audio").length == 30s);
+}
+
+TEST_CASE("the dock's list survives a save and a load in its order")
+{
+	BufferSettings settings;
+	settings.sequence = {{"wide", true}, {"camera", false}, {"goal", true}};
+
+	const SavedSettings saved = tapeloop::saveSettings(settings);
+	REQUIRE(saved.sequence.size() == 3);
+	CHECK(saved.sequence[1].uuid == "camera");
+	CHECK_FALSE(saved.sequence[1].shown);
+
+	const auto loaded = tapeloop::loadSettings(saved);
+	REQUIRE(loaded);
+	CHECK(loaded->sequence == settings.sequence);
+
+	// Settings saved before the list was kept have none.
+	SavedSettings older = saved;
+	older.sequence.clear();
+	CHECK(tapeloop::loadSettings(older)->sequence.empty());
+}
+
+TEST_CASE("a saved list entry without a UUID or listed twice is left out")
+{
+	SavedSettings saved;
+	saved.sequence = {SavedSequenceEntry{"", "Nameless", false}, SavedSequenceEntry{"camera", "Camera", false},
+			  SavedSequenceEntry{"wide", "Wide", true}, SavedSequenceEntry{"camera", "Camera", true}};
+
+	const auto loaded = tapeloop::loadSettings(saved);
+	REQUIRE(loaded);
+	CHECK(loaded->sequence == std::vector<SequenceEntry>{{"camera", false}, {"wide", true}});
+}
+
+TEST_CASE("the dock's list keeps the sources found and moves a gone UUID by its name")
+{
+	const std::map<std::string, std::string> names = {{"old-camera", "Camera"},
+							  {"deleted", "Deleted"},
+							  {"twin-a", "Twin"},
+							  {"held", "Wide"},
+							  {"audio-name", "Mic"}};
+	const std::vector<SourceIdentity> sources = {{"new-camera", "Camera"}, {"kept", "Kept"}, {"twin-1", "Twin"},
+						     {"twin-2", "Twin"},       {"wide", "Wide"}, {"mic", "Mic", false},
+						     {"added", "Added"}};
+	std::vector<SequenceEntry> sequence = {{"deleted", true},     {"old-camera", false}, {"twin-a", false},
+					       {"kept", false},       {"held", false},       {"wide", true},
+					       {"audio-name", false}, {"mic", false}};
+
+	tapeloop::matchSequenceByName(sequence, names, sources);
+	// The deleted source finds no name; the twins' name is not clear; Wide is listed
+	// already; the only source named Mic cannot capture. A source added since the save
+	// is not listed: the sequence adds it at the end.
+	CHECK(sequence ==
+	      std::vector<SequenceEntry>{{"new-camera", false}, {"kept", false}, {"wide", true}, {"mic", false}});
+}
+
+TEST_CASE("two gone list entries with one name both find nothing")
+{
+	std::vector<SequenceEntry> sequence = {{"gone", false}, {"also-gone", true}, {"kept", true}};
+	tapeloop::matchSequenceByName(sequence, {{"gone", "Camera"}, {"also-gone", "Camera"}},
+				      {{"camera", "Camera"}, {"kept", "Kept"}});
+	CHECK(sequence == std::vector<SequenceEntry>{{"kept", true}});
 }

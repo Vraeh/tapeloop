@@ -52,8 +52,10 @@ using tapeloop::Replay;
 using tapeloop::ReplayState;
 using tapeloop::ReplayResolution;
 using tapeloop::ResolutionMode;
+using tapeloop::SavedSequenceEntry;
 using tapeloop::SavedSettings;
 using tapeloop::SavedSource;
+using tapeloop::SequenceEntry;
 using tapeloop::SourceSettings;
 using tapeloop::obs::CaptureManager;
 using tapeloop::obs::CaptureState;
@@ -951,6 +953,7 @@ TEST_CASE_METHOD(ObsFixture, "settings of an unknown version are kept as they ca
 	BufferSettings edited = manager.settings();
 	edited.startWithOutputs = false;
 	manager.setSettings(edited);
+	manager.setSequence({{"camera", false}});
 	CHECK(host.saves == 0);
 }
 
@@ -1010,6 +1013,99 @@ TEST_CASE_METHOD(ObsFixture, "a duplicated scene collection keeps its selection 
 		CHECK((source.uuid == uuidOf(camera) || source.uuid == uuidOf(wide)));
 	}
 	manager.manualStop();
+}
+
+TEST_CASE_METHOD(ObsFixture, "the dock's list is saved with the settings and loaded back", "[obs][manager]")
+{
+	OBSSourceAutoRelease camera = createTestPattern(640, 360, "Camera");
+	OBSSourceAutoRelease wide = createTestPattern(640, 360, "Wide");
+	FakeHost host;
+	OBSDataAutoRelease collection = obs_data_create();
+	{
+		CaptureManager manager(host);
+		manager.setSequence({{uuidOf(wide), false},
+				     {"9f1c0a7e-0000-4000-8000-000000000001", false},
+				     {uuidOf(camera), true}});
+		CHECK(host.saves == 1);
+		manager.save(collection);
+	}
+	OBSDataAutoRelease written = obs_data_get_obj(collection, tapeloop::obs::kSettingsKey);
+	const SavedSettings saved = readSettingsData(written);
+	// The source that is gone is left out of the save.
+	REQUIRE(saved.sequence.size() == 2);
+	CHECK(saved.sequence[0].name == "Wide");
+	CHECK_FALSE(saved.sequence[0].shown);
+	CHECK(saved.sequence[1].name == "Camera");
+	CHECK(saved.sequence[1].shown);
+
+	CaptureManager loaded(host);
+	loaded.load(collection);
+	const std::vector<SequenceEntry> order = {{uuidOf(wide), false}, {uuidOf(camera), true}};
+	CHECK(loaded.settings().sequence == order);
+
+	// Settings saved before the list was kept load as they did, with none.
+	obs_data_erase(written, "sequence");
+	loaded.load(collection);
+	CHECK(loaded.settings().sequence.empty());
+	CHECK(loaded.settings() == BufferSettings{});
+}
+
+TEST_CASE_METHOD(ObsFixture, "a saved list edited by hand loads only what it can read", "[obs][manager]")
+{
+	OBSSourceAutoRelease camera = createTestPattern(640, 360, "Camera");
+	OBSSourceAutoRelease wide = createTestPattern(640, 360, "Wide");
+	const std::string cameraUuid = uuidOf(camera);
+	const std::string wideUuid = uuidOf(wide);
+	const auto loadJson = [](const std::string &sequence) {
+		const std::string json = R"({"version": 1, "sequence": )" + sequence + "}";
+		OBSDataAutoRelease data = obs_data_create_from_json(json.c_str());
+		REQUIRE(data);
+		OBSDataAutoRelease collection = obs_data_create();
+		obs_data_set_obj(collection, tapeloop::obs::kSettingsKey, data);
+		FakeHost host;
+		CaptureManager manager(host);
+		manager.load(collection);
+		return manager.settings().sequence;
+	};
+
+	CHECK(loadJson(R"("camera")").empty());
+	CHECK(loadJson(R"({"uuid": ")" + cameraUuid + R"("})").empty());
+	CHECK(loadJson("[5, [], null]").empty());
+	const std::vector<SequenceEntry> read =
+		loadJson(R"([7, {"uuid": 7, "shown": false}, {}, {"uuid": "", "shown": false}, )"
+			 R"({"uuid": ")" +
+			 cameraUuid +
+			 R"(", "shown": "no"}, )"
+			 R"({"uuid": ")" +
+			 cameraUuid +
+			 R"(", "shown": false}, )"
+			 R"({"uuid": ")" +
+			 cameraUuid.substr(0, 23) +
+			 R"(", "shown": false}, )"
+			 R"({"uuid": ")" +
+			 wideUuid +
+			 R"(0", "name": 3, "shown": false}, )"
+			 R"({"uuid": ")" +
+			 wideUuid + R"(", "name": ["Wide"], "shown": 0}])");
+	CHECK(read == std::vector<SequenceEntry>{{cameraUuid, true}, {wideUuid, true}});
+}
+
+TEST_CASE_METHOD(ObsFixture, "a duplicated scene collection keeps the dock's list by name", "[obs][manager]")
+{
+	OBSSourceAutoRelease camera = createTestPattern(640, 360, "Camera");
+	OBSSourceAutoRelease wide = createTestPattern(640, 360, "Wide");
+	SavedSettings saved;
+	saved.sequence = {SavedSequenceEntry{"4f8beeda-0000-4000-8000-000000000001", "Wide", false},
+			  SavedSequenceEntry{"4f8beeda-0000-4000-8000-000000000002", "Deleted", false},
+			  SavedSequenceEntry{"4f8beeda-0000-4000-8000-000000000003", "Camera", true}};
+	OBSDataAutoRelease data = createSettingsData(saved);
+	OBSDataAutoRelease collection = obs_data_create();
+	obs_data_set_obj(collection, tapeloop::obs::kSettingsKey, data);
+
+	FakeHost host;
+	CaptureManager manager(host);
+	manager.load(collection);
+	CHECK(manager.settings().sequence == std::vector<SequenceEntry>{{uuidOf(wide), false}, {uuidOf(camera), true}});
 }
 
 TEST_CASE_METHOD(ObsFixture, "two saved sources with one name find neither of them", "[obs][manager]")

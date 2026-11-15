@@ -39,6 +39,16 @@ void readInt(obs_data_t *data, const std::string &key, int64_t &value)
 	}
 }
 
+// A value of another type, as a file edited by hand can hold, leaves the value alone.
+void readBool(obs_data_t *data, const char *key, bool &value)
+{
+	obs_data_item_t *item = obs_data_item_byname(data, key);
+	if (obs_data_item_gettype(item) == OBS_DATA_BOOLEAN) {
+		value = obs_data_item_get_bool(item);
+	}
+	obs_data_item_release(&item);
+}
+
 void readMedia(obs_data_t *data, const std::string &prefix, SavedMedia &media)
 {
 	readString(data, prefix, media.kind);
@@ -96,6 +106,18 @@ obs_data_t *createSettingsData(const SavedSettings &saved)
 	}
 	obs_data_set_array(data, "sources", sources);
 
+	OBSDataArrayAutoRelease sequence = obs_data_array_create();
+	for (const SavedSequenceEntry &place : saved.sequence) {
+		OBSDataAutoRelease entry = obs_data_create();
+		obs_data_set_string(entry, "uuid", place.uuid.c_str());
+		if (!place.name.empty()) {
+			obs_data_set_string(entry, "name", place.name.c_str());
+		}
+		obs_data_set_bool(entry, "shown", place.shown);
+		obs_data_array_push_back(sequence, entry);
+	}
+	obs_data_set_array(data, "sequence", sequence);
+
 	setMedia(data, "intro", saved.intro);
 	setTransition(data, "intro_transition", saved.into);
 	setMedia(data, "outro", saved.outro);
@@ -144,6 +166,17 @@ SavedSettings readSettingsData(obs_data_t *data)
 			source.activateOffAir = obs_data_get_bool(entry, "activate_offair");
 		}
 		saved.sources.push_back(std::move(source));
+	}
+
+	// Settings saved before the list was kept have none, and every source is shown.
+	OBSDataArrayAutoRelease sequence = obs_data_get_array(data, "sequence");
+	for (size_t i = 0; i < obs_data_array_count(sequence); ++i) {
+		OBSDataAutoRelease entry = obs_data_array_item(sequence, i);
+		SavedSequenceEntry place;
+		place.uuid = obs_data_get_string(entry, "uuid");
+		place.name = obs_data_get_string(entry, "name");
+		readBool(entry, "shown", place.shown);
+		saved.sequence.push_back(std::move(place));
 	}
 
 	readMedia(data, "intro", saved.intro);

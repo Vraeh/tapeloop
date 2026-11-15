@@ -67,6 +67,13 @@ void handleAirEvent(AirEvent event, SequencePlayer &sequence, CaptureManager &ma
 	}
 }
 
+void loadCollection(obs_data_t *collection, SequencePlayer &sequence, CaptureManager &manager)
+{
+	manager.load(collection);
+	sequence.setAir(manager.settings().air);
+	sequence.setEntries(manager.settings().sequence);
+}
+
 void exitInOrder(const std::function<void()> &letGoOfAir, const std::function<void()> &endManager)
 {
 	try {

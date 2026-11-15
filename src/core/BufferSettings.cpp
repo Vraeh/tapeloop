@@ -209,6 +209,9 @@ SavedSettings saveSettings(const BufferSettings &settings)
 		}
 		saved.sources.push_back(std::move(entry));
 	}
+	for (const SequenceEntry &entry : settings.sequence) {
+		saved.sequence.push_back({entry.sourceKey, {}, entry.shown});
+	}
 	saved.intro = saveMedia(settings.air.intro);
 	saved.into = {settings.air.into.name, settings.air.into.duration.count()};
 	saved.outro = saveMedia(settings.air.outro);
@@ -250,6 +253,12 @@ std::optional<BufferSettings> loadSettings(const SavedSettings &saved)
 		}
 		settings.sources[entry.uuid] = source;
 	}
+	std::set<std::string> listed;
+	for (const SavedSequenceEntry &entry : saved.sequence) {
+		if (!entry.uuid.empty() && listed.insert(entry.uuid).second) {
+			settings.sequence.push_back({entry.uuid, entry.shown});
+		}
+	}
 	settings.air.intro = loadMedia(saved.intro);
 	settings.air.into = loadTransition(saved.into);
 	settings.air.outro = loadMedia(saved.outro);
@@ -257,24 +266,24 @@ std::optional<BufferSettings> loadSettings(const SavedSettings &saved)
 	return settings;
 }
 
-std::map<std::string, std::string> matchSourcesByName(BufferSettings &settings,
-						      const std::map<std::string, std::string> &savedNames,
-						      const std::vector<SourceIdentity> &sources)
+namespace {
+
+// The source each missing UUID moves to by its saved name: the one capturable source
+// with that name, when nothing holds it yet and no other missing UUID claims it too.
+std::map<std::string, std::string> claimByName(const std::vector<std::string> &missing,
+					       const std::set<std::string> &held,
+					       const std::map<std::string, std::string> &savedNames,
+					       const std::vector<SourceIdentity> &sources)
 {
-	std::set<std::string> present;
 	std::map<std::string, std::vector<std::string>> byName;
 	for (const SourceIdentity &source : sources) {
-		present.insert(source.uuid);
 		if (source.capturable) {
 			byName[source.name].push_back(source.uuid);
 		}
 	}
 
 	std::map<std::string, std::vector<std::string>> claims;
-	for (const auto &[uuid, source] : settings.sources) {
-		if (present.contains(uuid)) {
-			continue;
-		}
+	for (const std::string &uuid : missing) {
 		const auto name = savedNames.find(uuid);
 		if (name == savedNames.end() || name->second.empty()) {
 			continue;
@@ -284,23 +293,79 @@ std::map<std::string, std::string> matchSourcesByName(BufferSettings &settings,
 			continue;
 		}
 		const std::string &target = named->second.front();
-		if (!settings.sources.contains(target)) {
+		if (!held.contains(target)) {
 			claims[target].push_back(uuid);
 		}
 	}
 
 	std::map<std::string, std::string> moves;
 	for (const auto &[target, claimants] : claims) {
-		if (claimants.size() != 1) {
-			continue;
+		if (claimants.size() == 1) {
+			moves.emplace(claimants.front(), target);
 		}
-		const std::string &from = claimants.front();
+	}
+	return moves;
+}
+
+std::set<std::string> presentIn(const std::vector<SourceIdentity> &sources)
+{
+	std::set<std::string> present;
+	for (const SourceIdentity &source : sources) {
+		present.insert(source.uuid);
+	}
+	return present;
+}
+
+} // namespace
+
+std::map<std::string, std::string> matchSourcesByName(BufferSettings &settings,
+						      const std::map<std::string, std::string> &savedNames,
+						      const std::vector<SourceIdentity> &sources)
+{
+	const std::set<std::string> present = presentIn(sources);
+	std::vector<std::string> missing;
+	std::set<std::string> held;
+	for (const auto &[uuid, source] : settings.sources) {
+		held.insert(uuid);
+		if (!present.contains(uuid)) {
+			missing.push_back(uuid);
+		}
+	}
+
+	const std::map<std::string, std::string> moves = claimByName(missing, held, savedNames, sources);
+	for (const auto &[from, target] : moves) {
 		auto node = settings.sources.extract(from);
 		node.key() = target;
 		settings.sources.insert(std::move(node));
-		moves.emplace(from, target);
 	}
 	return moves;
+}
+
+void matchSequenceByName(std::vector<SequenceEntry> &sequence, const std::map<std::string, std::string> &savedNames,
+			 const std::vector<SourceIdentity> &sources)
+{
+	const std::set<std::string> present = presentIn(sources);
+	std::vector<std::string> missing;
+	std::set<std::string> held;
+	for (const SequenceEntry &entry : sequence) {
+		held.insert(entry.sourceKey);
+		if (!present.contains(entry.sourceKey)) {
+			missing.push_back(entry.sourceKey);
+		}
+	}
+
+	const std::map<std::string, std::string> moves = claimByName(missing, held, savedNames, sources);
+	std::vector<SequenceEntry> kept;
+	kept.reserve(sequence.size());
+	for (SequenceEntry &entry : sequence) {
+		if (const auto moved = moves.find(entry.sourceKey); moved != moves.end()) {
+			entry.sourceKey = moved->second;
+		} else if (!present.contains(entry.sourceKey)) {
+			continue;
+		}
+		kept.push_back(std::move(entry));
+	}
+	sequence = std::move(kept);
 }
 
 } // namespace tapeloop
