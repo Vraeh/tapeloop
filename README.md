@@ -72,6 +72,9 @@ one version to the next.
 The [user guide](docs/user-guide.md) walks through installing the plugin, capturing
 replays, the sequence and its hotkeys, putting a replay on air and exporting.
 
+The [troubleshooting page](docs/troubleshooting.md) says where the logs are and what
+the warnings in the dock and in the log mean.
+
 ## Building
 
 Tapeloop uses the build system of the
