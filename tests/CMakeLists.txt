@@ -39,6 +39,9 @@ add_subdirectory(../src/core core)
 # Counts what a parameter set lookup compares, for a test that must fail rather than hang
 # when a lookup reads the whole configuration again.
 target_compile_definitions(tapeloop-core PUBLIC TAPELOOP_COUNT_COMPARISONS)
+# The tests follow the writes and flushes of the core's files through a hook that the
+# plugin is built without.
+target_compile_definitions(tapeloop-core PUBLIC TAPELOOP_FILE_HOOK)
 
 add_executable(tapeloop-core-tests)
 target_sources(

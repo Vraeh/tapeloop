@@ -9,6 +9,10 @@
 #include <system_error>
 #include <utility>
 
+#ifdef TAPELOOP_FILE_HOOK
+#include <atomic>
+#endif
+
 #ifdef _WIN32
 #ifndef WIN32_LEAN_AND_MEAN
 #define WIN32_LEAN_AND_MEAN
@@ -46,6 +50,23 @@ std::string describe(std::string_view what, const std::filesystem::path &path)
 	text += utf8FromPath(path);
 	return text;
 }
+
+#ifdef TAPELOOP_FILE_HOOK
+
+std::atomic<FileHook> &fileHook() noexcept
+{
+	static std::atomic<FileHook> hook{nullptr};
+	return hook;
+}
+
+void beforeStep(FileStep step, uint64_t offset, size_t size)
+{
+	if (const FileHook hook = fileHook().load()) {
+		hook(step, offset, size);
+	}
+}
+
+#endif
 
 #ifdef _WIN32
 
@@ -127,6 +148,13 @@ int openRegularFile(const std::filesystem::path &path, int flags)
 #endif
 
 } // namespace
+
+#ifdef TAPELOOP_FILE_HOOK
+void setFileHook(FileHook hook) noexcept
+{
+	fileHook().store(hook);
+}
+#endif
 
 #ifdef _WIN32
 
@@ -235,6 +263,9 @@ bool File::isOpen() const noexcept
 
 void File::writeAt(uint64_t offset, std::span<const uint8_t> bytes)
 {
+#ifdef TAPELOOP_FILE_HOOK
+	beforeStep(FileStep::Write, offset, bytes.size());
+#endif
 	while (!bytes.empty()) {
 		const auto chunk = static_cast<DWORD>(std::min(bytes.size(), kMaxTransfer));
 		OVERLAPPED at{};
@@ -284,6 +315,9 @@ uint64_t File::size() const
 
 void File::flush()
 {
+#ifdef TAPELOOP_FILE_HOOK
+	beforeStep(FileStep::Flush, 0, 0);
+#endif
 	if (!FlushFileBuffers(handle_)) {
 		throwLastError("cannot flush a file");
 	}
@@ -344,6 +378,9 @@ bool File::isOpen() const noexcept
 
 void File::writeAt(uint64_t offset, std::span<const uint8_t> bytes)
 {
+#ifdef TAPELOOP_FILE_HOOK
+	beforeStep(FileStep::Write, offset, bytes.size());
+#endif
 	while (!bytes.empty()) {
 		const ssize_t written =
 			::pwrite(fd_, bytes.data(), std::min(bytes.size(), kMaxTransfer), static_cast<off_t>(offset));
@@ -390,6 +427,9 @@ uint64_t File::size() const
 
 void File::flush()
 {
+#ifdef TAPELOOP_FILE_HOOK
+	beforeStep(FileStep::Flush, 0, 0);
+#endif
 #ifdef __APPLE__
 	// fsync on macOS leaves the data in the drive's own cache; F_FULLFSYNC flushes that
 	// too, and is refused by some file systems, which fsync then covers.

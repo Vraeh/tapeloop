@@ -111,8 +111,9 @@ public:
 	// the replay is not saved.
 	WrittenReplay write(const ReplayCapture &capture);
 
-	// Writes the tags into the manifest's older tag slot, so that a torn write leaves the
-	// slot with the previous ones (see nextTagWrite). Throws std::system_error when the
+	// Writes the tags into the manifest's older tag slot and, when the newer one holds the
+	// last generation, into that one after it (see nextTagWrite), so that a write cut
+	// short leaves the previous tags or the new ones. Throws std::system_error when the
 	// manifest cannot be written, std::invalid_argument when it is not an intact one, and
 	// std::length_error when the tags do not fit their slot.
 	void writeTags(const std::filesystem::path &manifest, std::span<const std::string> tags);

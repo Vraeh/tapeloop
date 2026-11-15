@@ -15,8 +15,10 @@
 
 #include <algorithm>
 #include <chrono>
+#include <cstddef>
 #include <cstdint>
 #include <filesystem>
+#include <limits>
 #include <memory>
 #include <optional>
 #include <set>
@@ -28,6 +30,7 @@
 using tapeloop::CaptureSource;
 using tapeloop::Clip;
 using tapeloop::File;
+using tapeloop::FileStep;
 using tapeloop::GopBuilder;
 using tapeloop::ReplayCapture;
 using tapeloop::ReplayIndex;
@@ -388,6 +391,104 @@ TEST_CASE("tags go to the older slot of a manifest")
 	const uint64_t newer = next.offset == tapeloop::kTagSlotA ? tapeloop::kTagSlotB : tapeloop::kTagSlotA;
 	File(manifest, File::Mode::ReadWrite).writeAt(newer, std::vector<uint8_t>(64, 0xEE));
 	CHECK(tapeloop::decodeTags(fileBytes(manifest)) == std::vector<std::string>{"Goal", "Foul"});
+}
+
+TEST_CASE("tags reach a manifest whose slot holds the last generation")
+{
+	TempDirectory dir;
+	ReplayWriter writer;
+	ReplayCapture capture = captureOf(dir.path(), {sourceOf("a", makeGops(2))});
+	capture.tags = {"Goal"};
+	const fs::path manifest = writer.write(capture).manifest;
+	const std::vector<std::string> last = {"Corner"};
+	File(manifest, File::Mode::ReadWrite)
+		.writeAt(tapeloop::kTagSlotA, tapeloop::encodeTagSlot(last, std::numeric_limits<uint64_t>::max()));
+	REQUIRE(tapeloop::decodeTags(fileBytes(manifest)) == last);
+
+	writer.writeTags(manifest, std::vector<std::string>{"Foul"});
+	CHECK(tapeloop::decodeTags(fileBytes(manifest)) == std::vector<std::string>{"Foul"});
+	writer.writeTags(manifest, std::vector<std::string>{"Save"});
+	const std::vector<uint8_t> bytes = fileBytes(manifest);
+	CHECK(tapeloop::decodeTags(bytes) == std::vector<std::string>{"Save"});
+	CHECK(tapeloop::nextTagWrite(bytes).generation == 3);
+	CHECK(tapeloop::decodeManifest(bytes));
+}
+
+namespace {
+
+struct StepAt {
+	FileStep step = FileStep::Write;
+	uint64_t offset = 0;
+	size_t size = 0;
+	bool operator==(const StepAt &) const = default;
+};
+
+struct Cut {};
+
+std::vector<StepAt> fileSteps;
+size_t cutAt = 0;
+
+void recordStep(FileStep step, uint64_t offset, size_t size)
+{
+	if (fileSteps.size() == cutAt) {
+		throw Cut{};
+	}
+	fileSteps.push_back({step, offset, size});
+}
+
+// Records into fileSteps every write and flush of a File while it lives, and throws Cut
+// in place of the step numbered cut, from 0, as a crash right before it would.
+class RecordedSteps {
+public:
+	explicit RecordedSteps(size_t cut = std::numeric_limits<size_t>::max())
+	{
+		fileSteps.clear();
+		cutAt = cut;
+		tapeloop::setFileHook(recordStep);
+	}
+	~RecordedSteps() { tapeloop::setFileHook(nullptr); }
+	RecordedSteps(const RecordedSteps &) = delete;
+	RecordedSteps &operator=(const RecordedSteps &) = delete;
+};
+
+} // namespace
+
+TEST_CASE("tags starting the slots over reach the disk in the older slot first")
+{
+	TempDirectory dir;
+	ReplayWriter writer;
+	ReplayCapture capture = captureOf(dir.path(), {sourceOf("a", makeGops(2))});
+	capture.tags = {"Goal"};
+	const fs::path manifest = writer.write(capture).manifest;
+	// The older slot holds tags from before those of the newer one, at the last generation.
+	const std::vector<std::string> earlier = {"Corner"};
+	const std::vector<std::string> last = {"Foul"};
+	{
+		File file(manifest, File::Mode::ReadWrite);
+		file.writeAt(tapeloop::kTagSlotA, tapeloop::encodeTagSlot(earlier, 5));
+		file.writeAt(tapeloop::kTagSlotB, tapeloop::encodeTagSlot(last, std::numeric_limits<uint64_t>::max()));
+	}
+	REQUIRE(tapeloop::decodeTags(fileBytes(manifest)) == last);
+
+	// A crash right before the second write leaves the last tags, not the earlier ones.
+	{
+		const RecordedSteps steps(2);
+		CHECK_THROWS_AS(writer.writeTags(manifest, std::vector<std::string>{"Save"}), Cut);
+	}
+	CHECK(tapeloop::decodeTags(fileBytes(manifest)) == last);
+
+	{
+		const RecordedSteps steps;
+		writer.writeTags(manifest, std::vector<std::string>{"Save"});
+	}
+	const std::vector<StepAt> expected = {
+		{FileStep::Write, tapeloop::kTagSlotA, tapeloop::kTagSlotSize},
+		{FileStep::Flush, 0, 0},
+		{FileStep::Write, tapeloop::kTagSlotB, tapeloop::kTagSlotSize},
+		{FileStep::Flush, 0, 0},
+	};
+	CHECK(fileSteps == expected);
+	CHECK(tapeloop::decodeTags(fileBytes(manifest)) == std::vector<std::string>{"Save"});
 }
 
 TEST_CASE("tags are written only into an intact manifest and when they fit")
