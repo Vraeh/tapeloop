@@ -14,8 +14,8 @@ OBS writes one log file for each session, and Tapeloop writes into it. Every lin
 Tapeloop writes starts with `[tapeloop]`.
 
 - Help, then Log Files, then "View Current Log" opens the log of this session.
-- Help, then Log Files, then "Show Log Files" opens the folder with the logs of every
-  session.
+- Help, then Log Files, then "Show Log Files" opens the folder with the logs of the
+  last ten or so sessions; OBS deletes older ones.
 - The folder on Windows is `%APPDATA%\obs-studio\logs`.
 - A portable OBS keeps it in `config\obs-studio\logs` inside its own folder, beside
   `bin`.
@@ -58,8 +58,8 @@ Please do not use the upload buttons of OBS's log menu. Attach the file instead.
   here are not saved`: the collection was saved by a version of Tapeloop this one does
   not know. Changes you make in the dock are not kept.
 - `[tapeloop] This scene collection has settings of version %lld, which this version
-  does not know; they are kept as they are and the defaults apply`: the same cause. The
-  stored settings are left untouched and the defaults are used meanwhile.
+  does not know; they are kept as they are and the defaults apply`: the same cause.
+  The stored settings are left untouched and the defaults are used meanwhile.
 - `[tapeloop] Found the saved source '%s' again by its name` is informational: a
   selected source whose identity changed was matched by its name.
 - `[tapeloop] The selected source '%s' is not in this scene collection` is
@@ -167,7 +167,7 @@ Choosing an encoder:
   capture '%s'`: nothing could encode the source, so it has no buffer. Send the log.
   `No encoder can capture` means no usable encoder was found at all; for `No encoder
   could start`, the `could not encode` lines above it name the encoders that failed to
-  start.
+  start. An encoder OBS could not create is skipped without one.
 
 Other reasons a buffer does not start:
 
@@ -175,8 +175,8 @@ Other reasons a buffer does not start:
   source is too big for a buffer.
 - `[tapeloop] '%s' is %ux%u, too small to encode at height %u`: the source itself is
   too small or too narrow to encode (under 2 pixels on a side at the replay's height).
-  Replays are never scaled up, so the Resolution setting does not cause this; check
-  the source's size and crop.
+  Replays are never scaled up, so a higher Resolution helps only a source many times
+  taller than it is wide; check the source's size and crop.
 - `[tapeloop] OBS has no video, not capturing '%s'`: OBS had no video to take the
   picture from. The code gives no remedy; send the log.
 - `[tapeloop] Could not create a view of '%s' at %ux%u`: the code gives no remedy.
@@ -250,8 +250,8 @@ new recording folder; see "Export" in the [user guide](user-guide.md#export).
 
 - `[tapeloop] A replay player cannot show pictures decoded on the GPU, so it decodes
   them in memory from now on. Replays work, but this costs CPU time: it is not the
-  optimal path`. That replay source decodes on the CPU from then on, until it is
-  removed or OBS restarts; other replay sources are not affected.
+  optimal path`. From then on replays decode on the CPU, in the player and on
+  air, until OBS restarts.
 - `[tapeloop] This graphics card or OBS's renderer gives no shared NV12 textures, so
   replay pictures are copied through memory. Replays work, but this costs CPU time
   and memory bandwidth: it is not the optimal path`.
@@ -309,7 +309,7 @@ Log lines:
 - `[tapeloop] Exporting '%s' to MP4` or `as a replay file`, and `Exported '%s' to 1
   file in '%s'` or `to %zu files in '%s'`, are informational.
 
-The export buttons stay greyed out for a replay that is not saved yet or is damaged.
+The export buttons stay greyed out for a replay that is saving, not saved or damaged.
 A saved replay whose files cannot be read fails with "Could not export %1: %2". See
 "Capture and saving" and "Replay list and files", and also "Export" in the
 [user guide](user-guide.md#export).
