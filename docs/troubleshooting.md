@@ -14,9 +14,11 @@ OBS writes one log file for each session, and Tapeloop writes into it. Every lin
 Tapeloop writes starts with `[tapeloop]`.
 
 - Help, then Log Files, then "View Current Log" opens the log of this session.
-- Help, then Log Files, then "View Current Log" opens the log of the session you are in.
+- Help, then Log Files, then "Show Log Files" opens the folder with the logs of every
+  session.
 - The folder on Windows is `%APPDATA%\obs-studio\logs`.
-- A portable OBS keeps it in `config\obs-studio\logs`, beside the OBS folder.
+- A portable OBS keeps it in `config\obs-studio\logs` inside its own folder, beside
+  `bin`.
 - Crash reports are in the `crashes` folder next to `logs`. Help, then Crash Reports,
   then "Show Crash Reports" opens it.
 
@@ -42,7 +44,8 @@ Please do not use the upload buttons of OBS's log menu. Attach the file instead.
   If it is missing, the plugin did not load: check the install steps in the
   [user guide](user-guide.md#installing) and the log for lines about `tapeloop`.
 - `[tapeloop] decoding with FFmpeg %s` follows it in builds that include FFmpeg.
-  Without it the build cannot export to MP4.
+  Without it the build has no decoder: replays show no picture in the player or on
+  air, and MP4 export is not offered.
 - `[tapeloop] could not start` (error): the plugin stopped while loading and gave
   up, so there is no dock. The code gives no remedy. Send the log.
 - `[tapeloop] could not stop cleanly` (error): something failed while OBS closed the
@@ -60,8 +63,9 @@ Please do not use the upload buttons of OBS's log menu. Attach the file instead.
 - `[tapeloop] Found the saved source '%s' again by its name` is informational: a
   selected source whose identity changed was matched by its name.
 - `[tapeloop] The selected source '%s' is not in this scene collection` is
-  informational: a source you selected earlier is gone, renamed or from another
-  collection. Select it again if you still want it.
+  informational: a source you selected earlier was deleted, and no other source has
+  its name. Select its replacement if you still want a buffer for it. Renaming a
+  source does not cause this.
 - `[tapeloop] Saving or loading the settings failed` (error): the settings of the
   scene collection were not saved or read. Send the log.
 
@@ -101,10 +105,13 @@ Encoder failed:
   on doing so until OBS closes. A buffer starts again when it is started, or when its
   source is unticked and ticked." After that, the source shows "This source's HEVC
   encoder failed earlier, so until OBS closes it tries the H.264 encoder of the same
-  graphics card first." For any other encoder the code gives no remedy: send the log.
+  graphics card first." For any other encoder, start the buffers again or untick and
+  tick the source: it tries the same encoders again. If it fails again, send the log.
+  The status can also mean the buffer could not store what the encoder gave it, which
+  the log may not mention.
 
-Slower paths. These work but cost more CPU or memory. The dock shows an information
-icon with a tooltip, and the log has a warning:
+Slower paths. These work but cost more CPU time or memory bandwidth. The dock shows
+an information icon with a tooltip, and the log has a warning:
 
 - "This source is encoded on the CPU by x264, because no hardware encoder could take
   it. Its replays work, but it costs CPU time: it is not the optimal path." Log: `'%s'
@@ -113,7 +120,8 @@ icon with a tooltip, and the log has a warning:
 - "This source is encoded on the CPU by x264, the replay encoder chosen in the
   advanced settings. ..." Log: `'%s' is encoded by %s on the CPU, the encoder chosen
   for replays. ...`. You chose it. Set "Replay encoder" back to "Automatic
-  (recommended)" to change it.
+  (recommended)", then stop and start the buffers, or untick and tick the source: a
+  running buffer keeps its encoder until its next start.
 - "This source's encoder takes every frame read back through memory instead of OBS's
   textures. ..." Log: `'%s' is encoded by %s, which takes every frame read back
   through memory instead of OBS's textures. Replays work, but this costs CPU time
@@ -122,7 +130,9 @@ icon with a tooltip, and the log has a warning:
   so every frame is read back through memory for it. ..." Log: `'%s' is encoded by
   %s, which runs on another graphics card than the one OBS renders on, ...`.
   "Allow encoders on another graphics card" in the advanced settings controls whether
-  the automatic order may use such an encoder.
+  the automatic order may use such an encoder. Change it, then stop and start the
+  buffers, or untick and tick the source: a running buffer keeps its encoder until its
+  next start.
 - "This source's encoder cannot take OBS's textures, so every frame is read back
   through memory for it. ..." Log: `'%s' is encoded by %s, which cannot take OBS's
   textures, so every frame is read back through memory for it. ...`.
@@ -151,17 +161,22 @@ Choosing an encoder:
   replays, could not start for '%s', which %s encodes instead, the next encoder in
   the automatic order` or `%s, the encoder chosen for replays, is not available, so
   %s encodes '%s' instead, the next encoder in the automatic order`. Pick another
-  encoder or "Automatic".
+  encoder or "Automatic", then stop and start the buffers, or untick and tick the
+  source: a running buffer keeps its encoder until its next start.
 - `[tapeloop] No encoder could start for '%s'` and `[tapeloop] No encoder can
-  capture '%s'`: nothing could encode the source, so it has no buffer. Send the log;
-  it lists each encoder tried.
+  capture '%s'`: nothing could encode the source, so it has no buffer. Send the log.
+  `No encoder can capture` means no usable encoder was found at all; for `No encoder
+  could start`, the `could not encode` lines above it name the encoders that failed to
+  start.
 
 Other reasons a buffer does not start:
 
 - `[tapeloop] '%s' is %ux%u, larger than the %u pixels a capture allows`: the
   source is too big for a buffer.
-- `[tapeloop] '%s' is %ux%u, too small to encode at height %u`: the source is too
-  small for the chosen output height (the "Resolution" setting).
+- `[tapeloop] '%s' is %ux%u, too small to encode at height %u`: the source itself is
+  too small or too narrow to encode (under 2 pixels on a side at the replay's height).
+  Replays are never scaled up, so the Resolution setting does not cause this; check
+  the source's size and crop.
 - `[tapeloop] OBS has no video, not capturing '%s'`: OBS had no video to take the
   picture from. The code gives no remedy; send the log.
 - `[tapeloop] Could not create a view of '%s' at %ux%u`: the code gives no remedy.
@@ -220,14 +235,23 @@ A source that restarts when it becomes active:
 - `[tapeloop] The tags of '%s' could not be saved: %s`: the tag edit did not reach
   the disk. Check the reason that follows.
 
-A `.tplp` file or folder you placed in the Tapeloop folder is listed after you start
-OBS; see "Export" in the [user guide](user-guide.md#export).
+A `.tplp` file is listed only when it sits in a folder inside the `Tapeloop` folder,
+such as `Tapeloop\Imported\`, after OBS starts or after the buffers next start with a
+new recording folder; see "Export" in the [user guide](user-guide.md#export).
+
+## Any time
+
+- `[tapeloop] A hotkey failed` (error), `[tapeloop] A task on the UI thread failed`
+  (error), `[tapeloop] Handling a frontend event failed` (error): something went wrong
+  inside Tapeloop and was caught, and these can come from any area. Note what you
+  pressed and send the log.
 
 ## Playback
 
 - `[tapeloop] A replay player cannot show pictures decoded on the GPU, so it decodes
   them in memory from now on. Replays work, but this costs CPU time: it is not the
-  optimal path`. The player fell back to the CPU for good until OBS restarts.
+  optimal path`. That replay source decodes on the CPU from then on, until it is
+  removed or OBS restarts; other replay sources are not affected.
 - `[tapeloop] This graphics card or OBS's renderer gives no shared NV12 textures, so
   replay pictures are copied through memory. Replays work, but this costs CPU time
   and memory bandwidth: it is not the optimal path`.
@@ -239,9 +263,7 @@ OBS; see "Export" in the [user guide](user-guide.md#export).
 - `[tapeloop] The picture effect does not compile: %s` (error): the picture effect of
   the replay player could not be built. Send the log with your graphics card and
   driver.
-- `[tapeloop] A hotkey failed` (error), `[tapeloop] A task on the UI thread failed`
-  (error), `[tapeloop] Handling a frontend event failed` (error),
-  `[tapeloop] Going on to the next source failed` (error): something went wrong
+- `[tapeloop] Going on to the next source failed` (error): something went wrong
   inside Tapeloop and was caught. Note what you pressed and send the log.
 
 ## On air
@@ -280,14 +302,14 @@ Log lines:
 - "Exporting %1: %2%" and "Exporting %1: %2%, %3 more waiting" are progress, and
   "Exported %1 to %2" says where the files are.
 - "Could not export %1: %2". The reason follows. The log has the same: `[tapeloop]
-  The export of '%s' failed: %s`. One reason is `MP4 export is not available here`,
-  which means this build has no FFmpeg. Otherwise the code gives no remedy: send the
-  log.
+  The export of '%s' failed: %s`. A build without FFmpeg shows no Export to MP4
+  button; see "Loading". Otherwise the code gives no remedy: send the log.
 - `[tapeloop] The export of '%s' was not started, OBS is closing`: the export waited
   while you closed OBS. Start it again next session.
 - `[tapeloop] Exporting '%s' to MP4` or `as a replay file`, and `Exported '%s' to 1
   file in '%s'` or `to %zu files in '%s'`, are informational.
 
-Exports of a replay that is not saved, damaged or unreadable fail; see "Capture and
-saving" and "Replay list and files". See also "Export" in the
+The export buttons stay greyed out for a replay that is not saved yet or is damaged.
+A saved replay whose files cannot be read fails with "Could not export %1: %2". See
+"Capture and saving" and "Replay list and files", and also "Export" in the
 [user guide](user-guide.md#export).
