@@ -16,8 +16,9 @@ namespace tapeloop::obs {
 
 // Draws decoded pictures with OBS. A picture in memory is copied into textures of the
 // renderer's own, reused while the size and layout stay the same, and converted to RGB
-// by an effect of the plugin's own while it is drawn. Everything here runs on the
-// graphics thread, inside the graphics context, destruction included.
+// by an effect of the plugin's own while it is drawn. Everything here, destruction
+// included, runs inside the graphics context, on whichever thread entered it: OBS's
+// graphics thread, or a thread another plugin draws the replay source on.
 class PictureRenderer {
 public:
 	PictureRenderer() = default;

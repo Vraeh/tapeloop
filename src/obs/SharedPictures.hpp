@@ -19,18 +19,20 @@
 
 namespace tapeloop::obs {
 
-// Windows only. Hands pictures a decoder keeps on the GPU to the graphics thread without
-// a trip through memory: OBS makes two NV12 textures shared with a keyed mutex, the
-// decoder's device copies each picture into the one the graphics thread is not drawing,
-// and the graphics thread switches to it at its next latch(). OBS's device and the
-// decoder's are different devices on the same adapter (renderAdapterLuid).
+// Windows only. Hands pictures a decoder keeps on the GPU to whatever draws the replay,
+// without a trip through memory: OBS makes two NV12 textures shared with a keyed mutex,
+// the decoder's device copies each picture into the one not being drawn, and the drawing
+// side switches to it at its next latch(). OBS's device and the decoder's are different
+// devices on the same adapter (renderAdapterLuid).
 //
-// The constructor, the destructor, prepare(), latch(), draw() and generation() run on the
-// graphics thread inside the graphics context; publish() on the decoder's thread. After a
-// device loss OBS makes the textures again with new handles, which publish() then opens;
-// what they held is gone, and the generation says so. A call on a shared texture or its
-// keyed mutex that fails is said in the log, at most once a minute for each kind of call,
-// since it can fail on every frame.
+// publish() runs on the decoder's thread. The constructor, the destructor, prepare(),
+// latch(), draw() and generation() run inside the graphics context, on whichever thread
+// entered it: OBS's graphics thread, or a thread another plugin draws the source on. The
+// context lets in one thread at a time, so these calls never overlap. After a device
+// loss OBS makes the textures again with new handles, which publish() then opens; what
+// they held is gone, and the generation says so. A call on a shared texture or its keyed
+// mutex that fails is said in the log, at most once a minute for each kind of call, since
+// it can fail on every frame.
 class SharedPictures final : public GpuPictures {
 public:
 	SharedPictures() noexcept;
@@ -66,7 +68,7 @@ private:
 	static void rebuildDevice(void *device, void *data) noexcept;
 	void destroyTextures() noexcept;
 
-	// Graphics thread only.
+	// Only touched inside the graphics context.
 	std::array<gs_texture_t *, 2> luma_{};
 	std::array<gs_texture_t *, 2> chroma_{};
 	FailurePacer takeFailures_;

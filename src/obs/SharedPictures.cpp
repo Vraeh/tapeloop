@@ -20,8 +20,8 @@ using Microsoft::WRL::ComPtr;
 
 namespace {
 
-// A texture released with kFree is the decoder's to write; with kFilled, the graphics
-// thread's to show. OBS holds key 0 on a texture it has just made.
+// A texture released with kFree is the decoder's to write; with kFilled, OBS's to show.
+// OBS holds key 0 on a texture it has just made.
 constexpr uint64_t kFree = 1;
 constexpr uint64_t kFilled = 2;
 // Nobody else holds a texture the decoder writes, so this only guards against a driver
@@ -110,7 +110,8 @@ bool SharedPictures::prepare(uint32_t width, uint32_t height) noexcept
 		}
 		return false;
 	}
-	// Only this thread writes the size, so reading it here needs no lock.
+	// Only calls inside the graphics context write the size, and they do not overlap, so
+	// reading it here needs no lock.
 	if (luma_[0] && width == width_ && height == height_) {
 		copiesThroughMemory_ = false;
 		return true;
