@@ -173,6 +173,12 @@ target_link_libraries(
   tapeloop-obs-tests
   PRIVATE tapeloop-core tapeloop-obs tapeloop-decode OBS::libobs FFmpeg::avcodec Catch2::Catch2WithMain
 )
+# The display tests draw into windows of the X server the tests run on.
+if(CMAKE_SYSTEM_NAME STREQUAL "Linux")
+  find_package(X11 REQUIRED)
+  target_sources(tapeloop-obs-tests PRIVATE DisplayTests.cpp)
+  target_link_libraries(tapeloop-obs-tests PRIVATE X11::X11)
+endif()
 # On Windows obs-deps, which libobs brings in for SIMDe, also holds the headers of OBS's
 # own FFmpeg, and they must not shadow the headers of ours.
 get_target_property(_ffmpeg_include_dirs FFmpeg::avcodec INTERFACE_INCLUDE_DIRECTORIES)

@@ -8,9 +8,11 @@
 #include "core/ReplayExport.hpp"
 #include "core/ReplayPlayerState.hpp"
 #include "core/ReplayState.hpp"
+#include "ui/PictureSurface.hpp"
 
 #include <chrono>
 #include <cstdint>
+#include <memory>
 #include <string>
 #include <vector>
 
@@ -105,6 +107,32 @@ struct EncoderChoice {
 	std::string name;
 };
 
+// The controls of the replay player, as its hotkeys have them.
+enum class PlayerControl {
+	PlayPause,
+	Reverse,
+	PreviousFrame,
+	NextFrame,
+	Slower,
+	Faster,
+	NormalSpeed,
+	ScrubBackward,
+	ScrubForward,
+};
+
+// What the player the controls act on holds: the replay on air, or the replay cued before
+// it goes on air.
+struct DockPlayer {
+	bool loaded = false;
+	bool onAir = false;
+	bool playing = false;
+	// Thousandths of real time; negative plays backwards.
+	int32_t rate = 1000;
+	// From the clip's first frame.
+	Nanoseconds position{0};
+	Nanoseconds length{0};
+};
+
 // What the dock reads and changes. The plugin implements it on top of the capture
 // manager; tests replace it, so the widgets run without OBS.
 class DockBackend {
@@ -193,6 +221,16 @@ public:
 	virtual bool exportReplay(uint64_t id, ExportFormat format) = 0;
 	// Oldest first.
 	virtual std::vector<DockExport> exports() const = 0;
+
+	// A new surface that draws what the replay player shows; null when there is no
+	// player.
+	virtual std::unique_ptr<PictureSurface> pictureSurface() = 0;
+	virtual DockPlayer player() const = 0;
+	// Acts as the hotkey of the control does: a scrub runs from its press to its
+	// release, every other control acts on the press.
+	virtual void controlPlayer(PlayerControl control, bool pressed) = 0;
+	// From the clip's first frame.
+	virtual void seekPlayer(Nanoseconds position) = 0;
 };
 
 } // namespace tapeloop::ui

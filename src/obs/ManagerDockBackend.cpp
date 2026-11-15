@@ -7,13 +7,17 @@
 
 #include "obs/Composition.hpp"
 #include "obs/ObsEncoders.hpp"
+#include "obs/ReplayHotkeys.hpp"
+#include "obs/ReplayPlayer.hpp"
 #include "obs/ReplayView.hpp"
+#include "obs/SourceDisplay.hpp"
 #include "obs/SourceLookup.hpp"
 
 #include <obs.hpp>
 
 #include <algorithm>
 #include <cctype>
+#include <memory>
 #include <optional>
 #include <span>
 #include <string_view>
@@ -116,6 +120,23 @@ std::vector<ui::DockSource> ManagerDockBackend::sources() const
 	return sources;
 }
 
+uint64_t ManagerDockBackend::captureReplay()
+{
+	const uint64_t id = manager_.captureReplay();
+	if (sequence_) {
+		sequence_->cueCurrent();
+	}
+	return id;
+}
+
+void ManagerDockBackend::pickReplay(uint64_t id)
+{
+	manager_.pickReplay(id);
+	if (sequence_) {
+		sequence_->cueCurrent();
+	}
+}
+
 bool ManagerDockBackend::setShown(const std::string &uuid, bool shown)
 {
 	if (!sequence_) {
@@ -160,6 +181,77 @@ void ManagerDockBackend::setSettings(const BufferSettings &settings)
 	if (sequence_) {
 		sequence_->setAir(manager_.settings().air);
 		sequence_->setOverlays(manager_.settings().overlays);
+	}
+}
+
+std::unique_ptr<ui::PictureSurface> ManagerDockBackend::pictureSurface()
+{
+	if (!sequence_ || !sequence_->source()) {
+		return nullptr;
+	}
+	return std::make_unique<SourceDisplay>(sequence_->source());
+}
+
+ui::DockPlayer ManagerDockBackend::player() const
+{
+	ui::DockPlayer shown;
+	const ReplayPlayer *player = sequence_ ? controlledPlayer(*sequence_) : nullptr;
+	if (!player) {
+		return shown;
+	}
+	const PlayerState state = player->state();
+	shown.loaded = state.loaded;
+	shown.onAir = sequence_->state().phase() == AirPhase::Source;
+	shown.playing = state.playing;
+	shown.rate = state.rate;
+	shown.position = std::clamp(state.position, state.start, state.end) - state.start;
+	shown.length = state.end - state.start;
+	return shown;
+}
+
+void ManagerDockBackend::controlPlayer(ui::PlayerControl control, bool pressed)
+{
+	if (!sequence_) {
+		return;
+	}
+	HotkeyAction action = HotkeyAction::PlayPause;
+	switch (control) {
+	case ui::PlayerControl::PlayPause:
+		action = HotkeyAction::PlayPause;
+		break;
+	case ui::PlayerControl::Reverse:
+		action = HotkeyAction::Reverse;
+		break;
+	case ui::PlayerControl::PreviousFrame:
+		action = HotkeyAction::PreviousFrame;
+		break;
+	case ui::PlayerControl::NextFrame:
+		action = HotkeyAction::NextFrame;
+		break;
+	case ui::PlayerControl::Slower:
+		action = HotkeyAction::Slower;
+		break;
+	case ui::PlayerControl::Faster:
+		action = HotkeyAction::Faster;
+		break;
+	case ui::PlayerControl::NormalSpeed:
+		action = HotkeyAction::NormalSpeed;
+		break;
+	case ui::PlayerControl::ScrubBackward:
+		action = HotkeyAction::ScrubBackward;
+		break;
+	case ui::PlayerControl::ScrubForward:
+		action = HotkeyAction::ScrubForward;
+		break;
+	}
+	runHotkey(action, pressed, manager_, *sequence_);
+}
+
+void ManagerDockBackend::seekPlayer(Nanoseconds position)
+{
+	ReplayPlayer *player = sequence_ ? controlledPlayer(*sequence_) : nullptr;
+	if (player) {
+		player->seekFromStart(position);
 	}
 }
 

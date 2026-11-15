@@ -57,9 +57,11 @@ target_sources(
     core/EncoderPolicyTests.cpp
     core/FailurePacerTests.cpp
     core/FakeDecoder.hpp
+    core/FifoWatchdog.hpp
     core/FileIoTests.cpp
     core/GopReaderTests.cpp
     core/GopTests.cpp
+    core/LeaseHolder.hpp
     core/MediaTimeTests.cpp
     core/MomentCutterTests.cpp
     core/NalUnitWriter.hpp

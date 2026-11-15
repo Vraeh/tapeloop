@@ -84,6 +84,9 @@ TEST_CASE("buffer settings survive a save and a load")
 	settings.replayEncoder = "obs_nvenc_hevc_tex";
 	settings.allowOtherAdapters = false;
 	settings.showAdvanced = true;
+	settings.playerPlace = tapeloop::PlayerPlace::Window;
+	settings.playerShows = tapeloop::PlayerShows::Controls;
+	settings.playerGeometry = "AdnQywADAAA=";
 	settings.bufferMemoryMiB = 2048;
 	settings.sources["a"] = {true, 120s, ReplayResolution{ResolutionMode::Fixed, 2160}, std::nullopt};
 	settings.sources["b"] = {false, std::nullopt, ReplayResolution{ResolutionMode::Canvas, 1080}, std::nullopt};
@@ -94,6 +97,8 @@ TEST_CASE("buffer settings survive a save and a load")
 	CHECK(saved.lengthSeconds == 45);
 	CHECK(saved.resolution == "output");
 	CHECK(saved.showAdvanced);
+	CHECK(saved.playerPlace == "window");
+	CHECK(saved.playerShows == "controls");
 	REQUIRE(saved.sources.size() == 3);
 	CHECK(saved.sources[0].uuid == "a");
 	CHECK(saved.sources[0].resolution == "fixed");
@@ -108,6 +113,28 @@ TEST_CASE("buffer settings survive a save and a load")
 	SavedSettings negative = saved;
 	negative.bufferMemoryMiB = -1;
 	CHECK(tapeloop::loadSettings(negative, kCanvas)->bufferMemoryMiB == 0);
+}
+
+TEST_CASE("the mini player is in the dock with controls and picture unless saved otherwise")
+{
+	SavedSettings saved = tapeloop::saveSettings(BufferSettings{});
+	CHECK(saved.playerPlace == "dock");
+	CHECK(saved.playerShows == "both");
+	saved.playerShows = "picture";
+	CHECK(tapeloop::loadSettings(saved, kCanvas)->playerShows == tapeloop::PlayerShows::Picture);
+	// Settings saved before the mini player, or by a later build with a choice this one
+	// does not know.
+	saved.playerPlace.clear();
+	saved.playerShows.clear();
+	std::optional<BufferSettings> loaded = tapeloop::loadSettings(saved, kCanvas);
+	CHECK(loaded->playerPlace == tapeloop::PlayerPlace::Dock);
+	CHECK(loaded->playerShows == tapeloop::PlayerShows::Both);
+	saved.playerPlace = "floating";
+	saved.playerShows = "everything";
+	loaded = tapeloop::loadSettings(saved, kCanvas);
+	CHECK(loaded->playerPlace == tapeloop::PlayerPlace::Dock);
+	CHECK(loaded->playerShows == tapeloop::PlayerShows::Both);
+	CHECK(loaded->playerGeometry.empty());
 }
 
 TEST_CASE("settings of another version are not loaded")

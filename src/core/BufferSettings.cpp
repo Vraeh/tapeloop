@@ -146,6 +146,44 @@ EncoderPreferences BufferSettings::encoderPreferences() const
 	return preferences;
 }
 
+namespace {
+
+const char *placeName(PlayerPlace place) noexcept
+{
+	return place == PlayerPlace::Window ? "window" : "dock";
+}
+
+PlayerPlace placeFrom(const std::string &name) noexcept
+{
+	return name == "window" ? PlayerPlace::Window : PlayerPlace::Dock;
+}
+
+const char *showsName(PlayerShows shows) noexcept
+{
+	switch (shows) {
+	case PlayerShows::Controls:
+		return "controls";
+	case PlayerShows::Picture:
+		return "picture";
+	case PlayerShows::Both:
+		break;
+	}
+	return "both";
+}
+
+PlayerShows showsFrom(const std::string &name) noexcept
+{
+	if (name == "controls") {
+		return PlayerShows::Controls;
+	}
+	if (name == "picture") {
+		return PlayerShows::Picture;
+	}
+	return PlayerShows::Both;
+}
+
+} // namespace
+
 SavedSettings saveSettings(const BufferSettings &settings)
 {
 	SavedSettings saved;
@@ -158,6 +196,9 @@ SavedSettings saveSettings(const BufferSettings &settings)
 	saved.replayEncoder = settings.replayEncoder;
 	saved.allowOtherAdapters = settings.allowOtherAdapters;
 	saved.showAdvanced = settings.showAdvanced;
+	saved.playerPlace = placeName(settings.playerPlace);
+	saved.playerShows = showsName(settings.playerShows);
+	saved.playerGeometry = settings.playerGeometry;
 	saved.bufferMemoryMiB = settings.bufferMemoryMiB;
 	for (const auto &[uuid, source] : settings.sources) {
 		SavedSource entry;
@@ -197,6 +238,9 @@ std::optional<BufferSettings> loadSettings(const SavedSettings &saved, CanvasSiz
 	settings.replayEncoder = saved.replayEncoder;
 	settings.allowOtherAdapters = saved.allowOtherAdapters;
 	settings.showAdvanced = saved.showAdvanced;
+	settings.playerPlace = placeFrom(saved.playerPlace);
+	settings.playerShows = showsFrom(saved.playerShows);
+	settings.playerGeometry = saved.playerGeometry;
 	settings.bufferMemoryMiB = std::max<int64_t>(saved.bufferMemoryMiB, 0);
 	for (const SavedSource &entry : saved.sources) {
 		if (entry.uuid.empty()) {

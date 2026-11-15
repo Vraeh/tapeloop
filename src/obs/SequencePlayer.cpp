@@ -51,6 +51,19 @@ std::shared_ptr<const ReplayIndex> indexOf(const Replay &replay)
 	return std::make_shared<const ReplayIndex>(std::move(*read));
 }
 
+std::shared_ptr<const ReplayFiles> filesOf(const Replay &replay, const std::shared_ptr<const ReplayIndex> &index)
+{
+	if (replay.files) {
+		return replay.files;
+	}
+	// Found on disk, or let go of by the buffers: whatever files it has are known.
+	auto own = std::make_shared<ReplayFiles>();
+	if (!replay.manifest.empty()) {
+		own->set(replay.manifest, index);
+	}
+	return own;
+}
+
 size_t framesOf(const StoredSource &source)
 {
 	return static_cast<size_t>(
@@ -92,7 +105,9 @@ void SequencePlayer::setEntries(std::vector<SequenceEntry> entries)
 
 bool SequencePlayer::move(size_t from, size_t to)
 {
-	return state_.move(from, to);
+	const bool moved = state_.move(from, to);
+	follow();
+	return moved;
 }
 
 bool SequencePlayer::setShown(std::string_view sourceKey, bool shown)
@@ -125,15 +140,10 @@ bool SequencePlayer::putOnAir(uint64_t id)
 		     static_cast<unsigned long long>(id));
 		return false;
 	}
-	std::shared_ptr<const ReplayFiles> files = replay->files;
-	if (!files) {
-		// Found on disk, or let go of by the buffers: whatever files it has are known.
-		auto own = std::make_shared<ReplayFiles>();
-		if (!replay->manifest.empty()) {
-			own->set(replay->manifest, index);
-		}
-		files = std::move(own);
-	}
+	std::shared_ptr<const ReplayFiles> files = filesOf(*replay, index);
+	// Read before anything changes the list, whose first source the cue follows.
+	const bool carry = cued_ == id && clip_ != 0;
+	const int32_t cuedRate = carry ? std::abs(player_->rateAhead()) : 0;
 
 	std::vector<std::string> sources;
 	std::vector<const StoredSource *> joining;
@@ -162,6 +172,15 @@ bool SequencePlayer::putOnAir(uint64_t id)
 	if (!state_.start(std::move(sources))) {
 		return false;
 	}
+	if (carry) {
+		state_.setRate(cuedRate);
+		carriedClip_ = clip_;
+		carriedSource_ = std::move(cuedSource_);
+		// It goes on from here once its source is on air, after the intro if there is one.
+		player_->pause();
+	}
+	cued_ = 0;
+	cuedSource_.clear();
 	replay_ = id;
 	files_ = std::move(files);
 	index_ = std::move(index);
@@ -217,6 +236,7 @@ void SequencePlayer::close()
 	}
 	state_.setEntries({});
 	follow();
+	uncue();
 	// The last frame a way back under way kept loaded goes too.
 	if (player_) {
 		player_->load(nullptr);
@@ -240,10 +260,19 @@ void SequencePlayer::destroyAir()
 void SequencePlayer::follow()
 {
 	while (state_.token() != token_) {
-		token_ = state_.token();
+		const uint64_t token = state_.token();
+		token_ = token;
 		const AirPhase phase = state_.phase();
 		if (phase == AirPhase::Source) {
-			clip_ = play(state_.source());
+			if (carriedClip_ != 0 && state_.source() == carriedSource_) {
+				clip_ = carriedClip_;
+				player_->setRate(state_.rate());
+				player_->play();
+			} else {
+				clip_ = play(state_.source());
+			}
+			carriedClip_ = 0;
+			carriedSource_.clear();
 			if (clip_ != 0) {
 				watching_.store(true, std::memory_order_relaxed);
 				air_.show(phase);
@@ -256,6 +285,8 @@ void SequencePlayer::follow()
 		watching_.store(false, std::memory_order_relaxed);
 		clip_ = 0;
 		if (phase == AirPhase::Live) {
+			carriedClip_ = 0;
+			carriedSource_.clear();
 			// The way back fades out the last frame of the replay, which stays loaded until
 			// wentOffAir().
 			if (!air_.leave() && player_) {
@@ -268,13 +299,118 @@ void SequencePlayer::follow()
 			continue;
 		}
 		air_.show(phase);
+		// A channel another source took has show() run wentOffAir(), which followed the
+		// sequence back to live and cued the current replay, so nothing here is left to do.
+		if (token_ != token) {
+			continue;
+		}
+		if (phase == AirPhase::Intro && carriedClip_ != 0) {
+			continue;
+		}
+		carriedClip_ = 0;
+		carriedSource_.clear();
 		if (player_) {
 			player_->load(nullptr);
 		}
 	}
+	if (state_.phase() == AirPhase::Live) {
+		cueCurrent();
+	}
 }
 
-uint64_t SequencePlayer::play(std::string_view sourceKey)
+void SequencePlayer::cueCurrent()
+{
+	// During the way back the replay source still shows the last frame on air.
+	if (closed_ || !player_ || state_.phase() != AirPhase::Live || air_.leaving()) {
+		return;
+	}
+	const uint64_t id = library_.current();
+	const Replay *replay = library_.find(id);
+	if (!replay || replay->state == ReplayState::Damaged) {
+		uncue();
+		return;
+	}
+	if (id != replay_) {
+		uncue();
+		std::shared_ptr<const ReplayIndex> index = indexOf(*replay);
+		if (index) {
+			std::vector<std::vector<std::weak_ptr<const Gop>>> live = replay->live;
+			files_ = filesOf(*replay, index);
+			live_ = std::move(live);
+			index_ = std::move(index);
+		}
+		// Last, so that a replay is looked at again after a failure on the way.
+		replay_ = id;
+	}
+	if (!index_) {
+		return;
+	}
+	std::optional<std::string> first = firstShown();
+	if (!first) {
+		unloadCue();
+		return;
+	}
+	if (cued_ == id && *first == cuedSource_) {
+		return;
+	}
+	const uint64_t clip = load(*first);
+	if (clip == 0) {
+		unloadCue();
+		return;
+	}
+	// A replay plays at real time until someone changes it, whatever the one before had.
+	player_->setRate(1000);
+	cued_ = id;
+	cuedSource_ = std::move(*first);
+	clip_ = clip;
+	watching_.store(true, std::memory_order_relaxed);
+}
+
+void SequencePlayer::unloadCue() noexcept
+{
+	if (cued_ != 0 && player_) {
+		player_->load(nullptr);
+	}
+	cued_ = 0;
+	cuedSource_.clear();
+	clip_ = 0;
+	watching_.store(false, std::memory_order_relaxed);
+}
+
+void SequencePlayer::uncue() noexcept
+{
+	unloadCue();
+	replay_ = 0;
+	files_.reset();
+	index_.reset();
+	live_.clear();
+}
+
+std::optional<std::string> SequencePlayer::firstShown() const
+{
+	std::vector<std::string> available;
+	const StoredSource *joining = nullptr;
+	for (const StoredSource &source : index_->sources) {
+		if (framesOf(source) < 2) {
+			continue;
+		}
+		available.push_back(source.key);
+		if (!state_.sequence().indexOf(source.key) && (!joining || nameBefore(source.name, joining->name))) {
+			joining = &source;
+		}
+	}
+	std::sort(available.begin(), available.end());
+	if (const std::optional<size_t> first = state_.sequence().nextShown(0, available)) {
+		return state_.sequence().entries()[*first].sourceKey;
+	}
+	// Sources the list does not have join it shown, by name, once the replay goes on air.
+	if (joining) {
+		return joining->key;
+	}
+	return std::nullopt;
+}
+
+uint64_t SequencePlayer::load(std::string_view sourceKey)
 {
 	if (!player_ || !index_ || !files_) {
 		return 0;
@@ -291,16 +427,21 @@ uint64_t SequencePlayer::play(std::string_view sourceKey)
 		} catch (const std::bad_alloc &) {
 			return 0;
 		}
-		const uint64_t clip = player_->load(std::move(gops));
-		if (clip != 0) {
-			// The player keeps the speed and direction of the clip before; the sequence
-			// always plays forward.
-			player_->setRate(state_.rate());
-			player_->play();
-		}
-		return clip;
+		return player_->load(std::move(gops));
 	}
 	return 0;
+}
+
+uint64_t SequencePlayer::play(std::string_view sourceKey)
+{
+	const uint64_t clip = load(sourceKey);
+	if (clip != 0) {
+		// The player keeps the speed and direction of the clip before; the sequence
+		// always plays forward.
+		player_->setRate(state_.rate());
+		player_->play();
+	}
+	return clip;
 }
 
 void SequencePlayer::keepRate() noexcept
@@ -336,10 +477,12 @@ void SequencePlayer::partEnded()
 void SequencePlayer::wentOffAir()
 {
 	if (state_.phase() == AirPhase::Live) {
-		// The way back is over.
-		if (player_) {
+		// The way back is over, or the program went black with nothing on air and the cue
+		// stays.
+		if (cued_ == 0 && player_) {
 			player_->load(nullptr);
 		}
+		cueCurrent();
 		return;
 	}
 	// Another source took the channel: the replay is over, with nothing more to show.

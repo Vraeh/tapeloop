@@ -229,6 +229,7 @@ void runHotkey(HotkeyAction action, bool pressed, CaptureManager &manager, Seque
 		return;
 	case HotkeyAction::CaptureReplay:
 		manager.captureReplay();
+		sequence.cueCurrent();
 		return;
 	case HotkeyAction::PutOnAir:
 		sequence.putOnAir(manager.library().current());
@@ -243,14 +244,23 @@ void runHotkey(HotkeyAction action, bool pressed, CaptureManager &manager, Seque
 	case HotkeyAction::OlderReplay:
 		if (const uint64_t id = nextReplay(manager.library(), action == HotkeyAction::NewerReplay)) {
 			manager.pickReplay(id);
+			sequence.cueCurrent();
 		}
 		return;
 	default:
 		break;
 	}
-	if (sequence.state().phase() == AirPhase::Source && sequence.player()) {
-		runPlayerControl(action, *sequence.player());
+	if (ReplayPlayer *player = controlledPlayer(sequence)) {
+		runPlayerControl(action, *player);
 	}
+}
+
+ReplayPlayer *controlledPlayer(const SequencePlayer &sequence) noexcept
+{
+	if (sequence.closed() || (sequence.state().phase() != AirPhase::Source && sequence.cuedReplay() == 0)) {
+		return nullptr;
+	}
+	return sequence.player();
 }
 
 } // namespace tapeloop::obs

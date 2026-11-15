@@ -46,6 +46,8 @@ target_sources(
     SettingsData.hpp
     SourceCapture.cpp
     SourceCapture.hpp
+    SourceDisplay.cpp
+    SourceDisplay.hpp
     SourceLookup.cpp
     SourceLookup.hpp
 )

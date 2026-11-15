@@ -31,6 +31,7 @@
 #include <QMimeData>
 #include <QMouseEvent>
 #include <QScrollBar>
+#include <QSlider>
 #include <QSpinBox>
 #include <QTableWidget>
 #include <QTemporaryDir>
@@ -49,6 +50,8 @@ using tapeloop::AirMediaKind;
 using tapeloop::AirRefusal;
 using tapeloop::AirSettings;
 using tapeloop::BufferSettings;
+using tapeloop::PlayerPlace;
+using tapeloop::PlayerShows;
 using tapeloop::ExportFormat;
 using tapeloop::ReplayResolution;
 using tapeloop::ReplayState;
@@ -58,6 +61,7 @@ using tapeloop::test::FakeBackend;
 using tapeloop::test::localeText;
 using tapeloop::ui::AirSettingsDialog;
 using tapeloop::ui::DockSource;
+using tapeloop::ui::PlayerControl;
 using tapeloop::ui::SourceState;
 using tapeloop::ui::TapeloopDock;
 
@@ -1474,7 +1478,7 @@ TEST_CASE("every control of the dock can be reached with the keyboard")
 	for (QWidget *widget : dock.findChildren<QWidget *>()) {
 		const bool control = qobject_cast<QAbstractButton *>(widget) || qobject_cast<QSpinBox *>(widget) ||
 				     qobject_cast<QComboBox *>(widget) || qobject_cast<QAbstractItemView *>(widget) ||
-				     qobject_cast<QLineEdit *>(widget);
+				     qobject_cast<QLineEdit *>(widget) || qobject_cast<QSlider *>(widget);
 		// Qt's own parts, such as the table's corner button or a spin box's line edit,
 		// have no name or one of Qt's.
 		if (!control || widget->objectName().isEmpty() || widget->objectName().startsWith("qt_")) {
@@ -1484,7 +1488,7 @@ TEST_CASE("every control of the dock can be reached with the keyboard")
 		CAPTURE(widget->objectName().toStdString());
 		CHECK((widget->focusPolicy() & Qt::TabFocus) != 0);
 	}
-	CHECK(controls == 25);
+	CHECK(controls == 28);
 }
 
 TEST_CASE("every string the dock asks for is in the locale file")
@@ -1503,6 +1507,7 @@ TEST_CASE("every string the dock asks for is in the locale file")
 
 	std::set<std::string> missing;
 	TapeloopDock dock(backend, tapeloop::test::recordingLocaleText(missing));
+	dock.show();
 	auto *table = child<QTableWidget>(dock, "sources");
 	table->setCurrentCell(0, 0);
 	child<QPushButton>(dock, "sourceSettings")->click();
@@ -1525,6 +1530,11 @@ TEST_CASE("every string the dock asks for is in the locale file")
 	dock.refresh();
 	backend.exportList.front().state = tapeloop::ui::DockExport::State::Failed;
 	dock.refresh();
+	backend.playerState = {true, false, true, -500, 1s, 4s};
+	dock.refresh();
+	backend.playerState = {true, true, false, 1000, 1s, 4s};
+	dock.refresh();
+	child<QComboBox>(dock, "playerPlace")->setCurrentIndex(1);
 	CHECK(missing.empty());
 
 	// The plugin looks the dock's title up itself, when it adds the dock.
@@ -1540,10 +1550,17 @@ TEST_CASE("refreshing the dock changes nothing")
 	backend.current.resolution = {ResolutionMode::Fixed, 480};
 	backend.current.startWithOutputs = false;
 	backend.current.forceH264 = true;
+	backend.current.playerPlace = PlayerPlace::Window;
+	backend.current.playerShows = PlayerShows::Controls;
+	backend.playerState = {true, false, true, 1000, 1s, 4s};
 	TapeloopDock dock(backend, localeText());
+	dock.show();
 	dock.refresh();
 	dock.refresh();
 	CHECK(backend.settingsChanges == 0);
+	CHECK(child<QComboBox>(dock, "playerPlace")->currentIndex() == 1);
+	CHECK(child<QComboBox>(dock, "playerShows")->currentIndex() == 1);
+	CHECK(backend.seeks.empty());
 	CHECK(child<QCheckBox>(dock, "forceH264")->isChecked());
 	CHECK(child<QSpinBox>(dock, "length")->value() == 120);
 	CHECK(child<QComboBox>(dock, "resolution")->currentIndex() == 3);
@@ -1902,6 +1919,8 @@ TEST_CASE("every kind of edit in the dock writes the settings once")
 	CHECK(writesOnce([&] { child<QCheckBox>(dock, "startWithOutputs")->setChecked(false); }));
 	CHECK(writesOnce([&] { child<QCheckBox>(dock, "activateOffAir")->setChecked(true); }));
 	CHECK(writesOnce([&] { child<QCheckBox>(dock, "forceH264")->setChecked(true); }));
+	CHECK(writesOnce([&] { child<QComboBox>(dock, "playerPlace")->setCurrentIndex(1); }));
+	CHECK(writesOnce([&] { child<QComboBox>(dock, "playerShows")->setCurrentIndex(2); }));
 	child<QCheckBox>(dock, "advanced")->setChecked(true);
 	CHECK(writesOnce([&] { child<QComboBox>(dock, "replayEncoder")->setCurrentIndex(1); }));
 	CHECK(writesOnce([&] { child<QCheckBox>(dock, "otherAdapters")->setChecked(false); }));
@@ -2118,4 +2137,345 @@ TEST_CASE("the dock says which intro or outro replays go on air without")
 	dock.refresh();
 	CHECK_FALSE(status->isVisible());
 	CHECK(status->text().isEmpty());
+}
+
+namespace {
+
+const std::initializer_list<std::pair<const char *, PlayerControl>> kPlayerButtons{
+	{"scrubBackward", PlayerControl::ScrubBackward},
+	{"previousFrame", PlayerControl::PreviousFrame},
+	{"playPause", PlayerControl::PlayPause},
+	{"nextFrame", PlayerControl::NextFrame},
+	{"scrubForward", PlayerControl::ScrubForward},
+	{"reverse", PlayerControl::Reverse},
+	{"slower", PlayerControl::Slower},
+	{"normalSpeed", PlayerControl::NormalSpeed},
+	{"faster", PlayerControl::Faster},
+};
+
+void loadPlayer(FakeBackend &backend)
+{
+	backend.playerState = {true, false, false, 1000, 0s, 10s};
+}
+
+bool isHold(PlayerControl control)
+{
+	return control == PlayerControl::ScrubBackward || control == PlayerControl::ScrubForward;
+}
+
+void sendKey(QWidget *widget, QEvent::Type type, Qt::Key key)
+{
+	QKeyEvent event(type, key, Qt::NoModifier);
+	QApplication::sendEvent(widget, &event);
+}
+
+} // namespace
+
+TEST_CASE("each control of the mini player reaches the player")
+{
+	FakeBackend backend;
+	loadPlayer(backend);
+	TapeloopDock dock(backend, localeText());
+	dock.show();
+	for (const auto &[name, control] : kPlayerButtons) {
+		CAPTURE(name);
+		backend.controls.clear();
+		child<QPushButton>(dock, name)->click();
+		// A click on a scrub button is a press and its release.
+		if (isHold(control)) {
+			CHECK(backend.controls ==
+			      std::vector<std::pair<PlayerControl, bool>>{{control, true}, {control, false}});
+		} else {
+			CHECK(backend.controls == std::vector<std::pair<PlayerControl, bool>>{{control, true}});
+		}
+	}
+}
+
+TEST_CASE("a scrub button of the mini player scrubs for as long as it is held")
+{
+	FakeBackend backend;
+	loadPlayer(backend);
+	TapeloopDock dock(backend, localeText());
+	dock.show();
+	auto *forward = child<QPushButton>(dock, "scrubForward");
+	auto *backward = child<QPushButton>(dock, "scrubBackward");
+
+	sendKey(forward, QEvent::KeyPress, Qt::Key_Space);
+	CHECK(backend.controls == std::vector<std::pair<PlayerControl, bool>>{{PlayerControl::ScrubForward, true}});
+	sendKey(forward, QEvent::KeyRelease, Qt::Key_Space);
+	CHECK(backend.controls == std::vector<std::pair<PlayerControl, bool>>{{PlayerControl::ScrubForward, true},
+									      {PlayerControl::ScrubForward, false}});
+
+	SECTION("losing the focus lets go")
+	{
+		backend.controls.clear();
+		sendKey(backward, QEvent::KeyPress, Qt::Key_Space);
+		QFocusEvent focusOut(QEvent::FocusOut, Qt::ActiveWindowFocusReason);
+		QApplication::sendEvent(backward, &focusOut);
+		CHECK(!backward->isDown());
+		CHECK(backend.controls ==
+		      std::vector<std::pair<PlayerControl, bool>>{{PlayerControl::ScrubBackward, true},
+								  {PlayerControl::ScrubBackward, false}});
+	}
+	SECTION("the player losing its replay lets go")
+	{
+		backend.controls.clear();
+		sendKey(backward, QEvent::KeyPress, Qt::Key_Space);
+		backend.playerState = {};
+		dock.refresh();
+		CHECK(backend.controls ==
+		      std::vector<std::pair<PlayerControl, bool>>{{PlayerControl::ScrubBackward, true},
+								  {PlayerControl::ScrubBackward, false}});
+	}
+	SECTION("hiding the dock lets go")
+	{
+		backend.controls.clear();
+		sendKey(backward, QEvent::KeyPress, Qt::Key_Space);
+		dock.hide();
+		CHECK(backend.controls ==
+		      std::vector<std::pair<PlayerControl, bool>>{{PlayerControl::ScrubBackward, true},
+								  {PlayerControl::ScrubBackward, false}});
+	}
+}
+
+TEST_CASE("the mini player's slider seeks and follows the player")
+{
+	FakeBackend backend;
+	loadPlayer(backend);
+	backend.playerState.position = 3s;
+	TapeloopDock dock(backend, localeText());
+	dock.show();
+	auto *position = child<QSlider>(dock, "position");
+	CHECK(position->maximum() == 10000);
+	CHECK(position->value() == 3000);
+	CHECK(backend.seeks.empty());
+
+	position->setValue(2500);
+	CHECK(backend.seeks == std::vector<tapeloop::Nanoseconds>{2500ms});
+	sendKey(position, QEvent::KeyPress, Qt::Key_Right);
+	CHECK(backend.seeks.back() == 2600ms);
+
+	backend.playerState.position = 7s;
+	dock.refresh();
+	CHECK(position->value() == 7000);
+	CHECK(backend.seeks.size() == 2);
+}
+
+TEST_CASE("the mini player's controls are off while it holds no replay")
+{
+	FakeBackend backend;
+	TapeloopDock dock(backend, localeText());
+	dock.show();
+	const auto enabled = [&](bool on) {
+		bool all = child<QSlider>(dock, "position")->isEnabled() == on;
+		for (const auto &[name, control] : kPlayerButtons) {
+			all = all && child<QPushButton>(dock, name)->isEnabled() == on;
+		}
+		return all;
+	};
+	CHECK(enabled(false));
+	CHECK(child<QLabel>(dock, "playerState")->text() == "No replay to play");
+
+	backend.playerState = {true, true, true, -2000, 1500ms, 4s};
+	dock.refresh();
+	CHECK(enabled(true));
+	CHECK(child<QPushButton>(dock, "playPause")->text() == "Pause");
+	CHECK(child<QLabel>(dock, "playerState")->text() == "On air, playing at 2x reverse, 1.5 / 4.0 s");
+
+	backend.playerState = {true, false, false, 500, 0s, 4s};
+	dock.refresh();
+	CHECK(child<QPushButton>(dock, "playPause")->text() == "Play");
+	CHECK(child<QLabel>(dock, "playerState")->text() == "Cued, paused at 0.5x, 0.0 / 4.0 s");
+}
+
+TEST_CASE("the mini player is built where the settings place it, with what they show")
+{
+	FakeBackend backend;
+	loadPlayer(backend);
+	TapeloopDock dock(backend, localeText());
+	dock.show();
+	auto *slot = child<QWidget>(dock, "playerSlot");
+	for (const int place : {0, 1, 0}) {
+		for (const int shows : {0, 1, 2, 0}) {
+			CAPTURE(place, shows);
+			child<QComboBox>(dock, "playerPlace")->setCurrentIndex(place);
+			child<QComboBox>(dock, "playerShows")->setCurrentIndex(shows);
+			auto *window = dock.findChild<QWidget *>("playerWindow");
+			QWidget *holder = place == 1 ? window : slot;
+			REQUIRE(holder);
+			CHECK(holder->isVisible());
+			CHECK(child<QPushButton>(dock, "showPlayer")->isVisible() == (place == 1));
+			if (place == 0 && window) {
+				CHECK(!window->isVisible());
+			}
+			CHECK(slot->isVisible() == (place == 0));
+			CHECK(static_cast<bool>(holder->findChild<QWidget *>("pictureFrame")) == (shows != 1));
+			CHECK(static_cast<bool>(holder->findChild<QWidget *>("picture")) == (shows != 1));
+			CHECK(static_cast<bool>(holder->findChild<QWidget *>("playerControls")) == (shows != 2));
+			// One player at a time.
+			CHECK(dock.findChildren<QSlider *>("position").size() == (shows != 2 ? 1 : 0));
+		}
+	}
+	CHECK(backend.current.playerPlace == PlayerPlace::Dock);
+	CHECK(backend.current.playerShows == PlayerShows::Both);
+}
+
+TEST_CASE("the mini player's settings come back as they were saved")
+{
+	FakeBackend backend;
+	SECTION("older saves have the player in the dock with controls and picture")
+	{
+		TapeloopDock dock(backend, localeText());
+		dock.show();
+		CHECK(child<QComboBox>(dock, "playerPlace")->currentIndex() == 0);
+		CHECK(child<QComboBox>(dock, "playerShows")->currentIndex() == 0);
+		CHECK(child<QWidget>(dock, "playerSlot")->findChild<QWidget *>("pictureFrame"));
+		CHECK(child<QWidget>(dock, "playerSlot")->findChild<QWidget *>("playerControls"));
+	}
+	SECTION("a choice made in one dock is what the next one starts with")
+	{
+		{
+			TapeloopDock dock(backend, localeText());
+			child<QComboBox>(dock, "playerPlace")->setCurrentIndex(1);
+			child<QComboBox>(dock, "playerShows")->setCurrentIndex(2);
+		}
+		CHECK(backend.current.playerPlace == PlayerPlace::Window);
+		CHECK(backend.current.playerShows == PlayerShows::Picture);
+		TapeloopDock dock(backend, localeText());
+		dock.show();
+		CHECK(child<QComboBox>(dock, "playerPlace")->currentIndex() == 1);
+		CHECK(child<QComboBox>(dock, "playerShows")->currentIndex() == 2);
+		auto *window = child<QWidget>(dock, "playerWindow");
+		CHECK(window->isVisible());
+		CHECK(window->findChild<QWidget *>("picture"));
+		CHECK(!window->findChild<QWidget *>("playerControls"));
+	}
+}
+
+TEST_CASE("the mini player's window hides when closed and comes back from the dock")
+{
+	FakeBackend backend;
+	loadPlayer(backend);
+	backend.current.playerPlace = PlayerPlace::Window;
+	TapeloopDock dock(backend, localeText());
+	dock.show();
+	auto *window = child<QWidget>(dock, "playerWindow");
+	CHECK(window->isWindow());
+	CHECK(window->windowFlags().testFlag(Qt::Tool));
+	CHECK(!window->isModal());
+	CHECK(window->isVisible());
+	auto *slider = child<QSlider>(*window, "position");
+
+	window->move(40, 30);
+	window->resize(400, 300);
+	const int before = backend.settingsChanges;
+	CHECK(window->close());
+	CHECK(!window->isVisible());
+	// Closing keeps where it stood.
+	CHECK(backend.settingsChanges == before + 1);
+	CHECK(!backend.current.playerGeometry.empty());
+	dock.refresh();
+	CHECK(!window->isVisible());
+
+	child<QPushButton>(dock, "showPlayer")->click();
+	CHECK(window->isVisible());
+	CHECK(child<QSlider>(*window, "position") == slider);
+
+	SECTION("the next dock opens the window where it was")
+	{
+		const QSize size = window->size();
+		TapeloopDock next(backend, localeText());
+		next.show();
+		CHECK(child<QWidget>(next, "playerWindow")->size() == size);
+	}
+}
+
+TEST_CASE("the mini player's window takes the place each scene collection keeps")
+{
+	FakeBackend backend;
+	loadPlayer(backend);
+	backend.current.playerPlace = PlayerPlace::Window;
+	TapeloopDock dock(backend, localeText());
+	dock.show();
+	QWidget *window = dock.playerWindow();
+	REQUIRE(window);
+	window->resize(700, 500);
+	const QSize firstSize = window->size();
+	const std::string first = window->saveGeometry().toBase64().toStdString();
+	window->resize(600, 400);
+	const QSize secondSize = window->size();
+	const std::string second = window->saveGeometry().toBase64().toStdString();
+	REQUIRE(firstSize != secondSize);
+
+	// Another collection's settings put the window where that collection kept it.
+	backend.current.playerGeometry = first;
+	dock.refresh();
+	CHECK(window->size() == firstSize);
+	CHECK(backend.current.playerGeometry == first);
+
+	// Closed before the dock has seen the next collection, the window does not write the
+	// place it had over the one that collection kept.
+	backend.current.playerGeometry = second;
+	CHECK(window->close());
+	CHECK(backend.current.playerGeometry == second);
+	CHECK(window->size() == secondSize);
+
+	// A collection that shows something else does not open the window the user closed.
+	backend.current.playerShows = PlayerShows::Picture;
+	dock.refresh();
+	CHECK_FALSE(window->isVisible());
+	CHECK(window->findChild<QWidget *>("picture"));
+	CHECK_FALSE(window->findChild<QSlider *>("position"));
+	child<QPushButton>(dock, "showPlayer")->click();
+	CHECK(window->isVisible());
+}
+
+TEST_CASE("the mini player's window opens with the main window while the dock is closed")
+{
+	FakeBackend backend;
+	loadPlayer(backend);
+	backend.current.playerPlace = PlayerPlace::Window;
+	QWidget mainWindow;
+	TapeloopDock dock(backend, localeText(), &mainWindow);
+	CHECK_FALSE(dock.playerWindow());
+
+	mainWindow.show();
+	QApplication::processEvents();
+	CHECK_FALSE(dock.isVisible());
+	QWidget *window = dock.playerWindow();
+	REQUIRE(window);
+	CHECK(window->isVisible());
+	CHECK(window->parentWidget() == &mainWindow);
+	CHECK(window->findChild<QSlider *>("position"));
+
+	// Put back in the dock, it closes, and waits for the dock to show.
+	backend.current.playerPlace = PlayerPlace::Dock;
+	dock.refresh();
+	CHECK_FALSE(window->isVisible());
+	CHECK_FALSE(child<QWidget>(dock, "playerSlot")->findChild<QSlider *>("position"));
+}
+
+TEST_CASE("every control of the mini player can be reached with the keyboard in order")
+{
+	FakeBackend backend;
+	loadPlayer(backend);
+	TapeloopDock dock(backend, localeText());
+	dock.show();
+	// What Tab reaches next, past the widgets it skips.
+	const auto nextOnTab = [](QWidget *widget) {
+		do {
+			widget = widget->nextInFocusChain();
+		} while ((widget->focusPolicy() & Qt::TabFocus) == 0 || !widget->isVisible());
+		return widget;
+	};
+	QWidget *widget = child<QSlider>(dock, "position");
+	CHECK((widget->focusPolicy() & Qt::TabFocus) != 0);
+	CHECK(!widget->accessibleName().isEmpty());
+	for (const char *name : {"scrubBackward", "previousFrame", "playPause", "nextFrame", "scrubForward", "reverse",
+				 "slower", "normalSpeed", "faster"}) {
+		CAPTURE(name);
+		widget = nextOnTab(widget);
+		CHECK(widget->objectName() == name);
+		CHECK(!widget->accessibleName().isEmpty());
+	}
 }

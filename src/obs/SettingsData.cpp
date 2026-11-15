@@ -214,6 +214,9 @@ obs_data_t *createSettingsData(const SavedSettings &saved)
 	obs_data_set_string(data, "replay_encoder", saved.replayEncoder.c_str());
 	obs_data_set_bool(data, "allow_other_adapters", saved.allowOtherAdapters);
 	obs_data_set_bool(data, "show_advanced", saved.showAdvanced);
+	obs_data_set_string(data, "player_place", saved.playerPlace.c_str());
+	obs_data_set_string(data, "player_shows", saved.playerShows.c_str());
+	obs_data_set_string(data, "player_geometry", saved.playerGeometry.c_str());
 	obs_data_set_int(data, "buffer_memory_mib", saved.bufferMemoryMiB);
 
 	OBSDataArrayAutoRelease sources = obs_data_array_create();
@@ -265,6 +268,9 @@ SavedSettings readSettingsData(obs_data_t *data)
 	saved.allowOtherAdapters = !obs_data_has_user_value(data, "allow_other_adapters") ||
 				   obs_data_get_bool(data, "allow_other_adapters");
 	saved.showAdvanced = obs_data_get_bool(data, "show_advanced");
+	saved.playerPlace = obs_data_get_string(data, "player_place");
+	saved.playerShows = obs_data_get_string(data, "player_shows");
+	saved.playerGeometry = obs_data_get_string(data, "player_geometry");
 	saved.bufferMemoryMiB = obs_data_get_int(data, "buffer_memory_mib");
 
 	OBSDataArrayAutoRelease sources = obs_data_get_array(data, "sources");

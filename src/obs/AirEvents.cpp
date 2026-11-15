@@ -49,6 +49,7 @@ void handleAirEvent(AirEvent event, SequencePlayer &sequence, CaptureManager &ma
 		// OBS sends it after every collection it loads, the first one included;
 		// FINISHED_LOADING comes only once.
 		sequence.open();
+		sequence.cueCurrent();
 		break;
 	case AirEvent::Exit:
 		// OBS unloads its modules before it destroys the sources still held, so those

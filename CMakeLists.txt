@@ -93,11 +93,16 @@ target_sources(
     src/ui/DockText.cpp
     src/ui/DockText.hpp
     src/ui/Guarded.hpp
+    src/ui/MiniPlayer.cpp
+    src/ui/MiniPlayer.hpp
     src/ui/OverlayDialog.cpp
     src/ui/OverlayDialog.hpp
     src/ui/OverlayPreview.cpp
     src/ui/OverlayPreview.hpp
     src/ui/OverlayView.hpp
+    src/ui/PictureSurface.hpp
+    src/ui/PlayerPicture.cpp
+    src/ui/PlayerPicture.hpp
     src/ui/SourceSettingsDialog.cpp
     src/ui/SourceSettingsDialog.hpp
     src/ui/TapeloopDock.cpp
