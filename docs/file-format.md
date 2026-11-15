@@ -40,10 +40,10 @@ Tapeloop/
 - Every name is made safe for Windows, macOS and Linux before it is used: characters
   one of them refuses, control characters and bytes that are not UTF-8 become `_`, as
   does a leading dot; trailing spaces and dots are dropped; and the name is cut to 120
-  bytes at a character boundary before the extension is added, for every kind of name
-  (for a segment, the key part, with the sequence and extension after it; for an
-  export, before ` (2)` and so on). A segment's path is built from the safe form of the
-  key, so a key cannot name a file outside `data`.
+  bytes at a character boundary before the extension is added (for a segment, the key
+  part, with the sequence and extension after it; for an MP4 export, before ` (2)`
+  and so on). A segment's path is built from the safe form of the key, so a key
+  cannot name a file outside `data`.
 
 ### Temporary names and the scan
 
@@ -500,8 +500,8 @@ Each GOP, when it is read:
   CRCs say.
 
 The bitstreams go to FFmpeg's decoder with the picture size limit above. Before an MP4
-export, each sequence parameter set is checked to hold the fields FFmpeg's muxer
-reads as it writes the file.
+export, each sequence parameter set is checked to hold every field up to the last
+count FFmpeg's muxer steps through as it writes the file.
 
 ### What another reader must check
 
