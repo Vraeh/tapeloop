@@ -143,6 +143,10 @@ public:
 	void loadLibrary();
 	// Waits for the replays being written and takes in what became of them.
 	void finishWrites();
+	// Whether the disk fell so far behind since OBS started that captures waiting to be
+	// written were dropped: past a quarter of the memory budget, what they keep beyond
+	// the buffers costs the oldest of them, the one being written and the newest aside.
+	bool writesDropped() const noexcept { return writesDropped_; }
 	const ReplayLibrary &library() const noexcept { return library_; }
 	// The memory every buffer may hold together, from the settings and the computer's
 	// memory, which is zero when it cannot be read.
@@ -217,8 +221,16 @@ private:
 	enum class StartOutcome { Started, Failed, SourceRemoved };
 
 	void reconcile();
-	// Shares the memory budget among the buffers that run, by what each needs.
+	// Shares the memory budget among the buffers that run, by what each needs, less what
+	// the captures waiting to be written keep beyond the buffers, up to their part.
 	void applyBudget();
+	// Each source's buffer, for the store to tell what a capture keeps beyond it.
+	std::vector<KeyedBuffer> keyedBuffers() const;
+	// The part of the memory budget the captures waiting to be written may keep beyond
+	// the buffers.
+	size_t writesBound() const;
+	// Drops the oldest captures waiting to be written while they keep more than that.
+	void boundWrites();
 	// candidates is filled on first use, so a batch of starts reads the encoders and the
 	// render adapter once. A quiet start does not try a source without a size: it only
 	// shows it on the capture's view, without logging.
@@ -277,6 +289,7 @@ private:
 	bool priorityLogged_ = false;
 	// Whether the log says the store falls behind, until a capture finds it caught up.
 	bool backlogLogged_ = false;
+	bool writesDropped_ = false;
 	ReplayStore store_;
 };
 

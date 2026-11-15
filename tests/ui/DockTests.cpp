@@ -274,6 +274,21 @@ TEST_CASE("the advanced settings set the memory the buffers may use")
 	CHECK_FALSE(warning->isVisible());
 }
 
+TEST_CASE("the dock says when replays waiting to be written were dropped")
+{
+	FakeBackend backend;
+	addSources(backend);
+	TapeloopDock dock(backend, localeText());
+	dock.show();
+	auto *dropped = child<QLabel>(dock, "writesDropped");
+	CHECK_FALSE(dropped->isVisible());
+	CHECK(dropped->text() == localeText()("Dock.WritesDropped"));
+	// With the advanced settings hidden too, since it is not about a setting.
+	backend.dropped = true;
+	dock.refresh();
+	CHECK(dropped->isVisible());
+}
+
 TEST_CASE("the memory for buffers steps in large amounts and never to almost nothing")
 {
 	FakeBackend backend;

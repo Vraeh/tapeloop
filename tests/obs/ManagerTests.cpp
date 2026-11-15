@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: GPL-2.0-or-later
 // Copyright (C) 2026 Vicente Aedo <ryde1337@gmail.com>
 
+#include "../core/LeaseHolder.hpp"
 #include "../core/StoredReplays.hpp"
 #include "../core/TempDirectory.hpp"
 #include "AllocationCounter.hpp"
@@ -2192,16 +2193,30 @@ TEST_CASE_METHOD(ObsFixture, "captures the store keeps up with say nothing of th
 	CaptureManager manager(host);
 	BufferSettings settings = selecting(uuid);
 	settings.startWithOutputs = false;
+	settings.length = 60s;
+	// The smallest budget, so that a part of it kept for writes would show.
+	settings.bufferMemoryMiB = 1;
 	manager.setSettings(settings);
 	REQUIRE(manager.manualStart());
 	REQUIRE(waitFor([&] { return hasGops(manager, uuid, 2); }, 60s));
+	REQUIRE(manager.buffer(uuid)->byteBudget() == manager.memoryBudget());
 
 	LogCounter behind("The disk falls behind");
+	LogCounter notSaved("[tapeloop] Replay %llu could not be saved: %s");
+	std::vector<uint64_t> ids;
 	for (int capture = 0; capture < 4; ++capture) {
-		CHECK(manager.captureReplay() != 0);
+		ids.push_back(manager.captureReplay());
+		CHECK(ids.back() != 0);
 		manager.finishWrites();
 	}
 	CHECK(behind.lines == 0);
+	CHECK(notSaved.lines == 0);
+	CHECK_FALSE(manager.writesDropped());
+	for (const uint64_t id : ids) {
+		CHECK(manager.library().find(id)->state == ReplayState::Stored);
+	}
+	manager.poll();
+	CHECK(manager.buffer(uuid)->byteBudget() == manager.memoryBudget());
 	manager.manualStop();
 }
 
@@ -2235,6 +2250,69 @@ TEST_CASE_METHOD(ObsFixture, "captures that pile up on a slow disk say so once",
 	manager.finishWrites();
 	manager.manualStop();
 }
+
+#ifdef __linux__
+TEST_CASE_METHOD(ObsFixture, "captures waiting on a slow disk drop the oldest past a quarter of the budget",
+		 "[obs][manager][replay]")
+{
+	OBSSourceAutoRelease kept = createTestPattern(320, 180, "Kept");
+	OBSSourceAutoRelease freed = createTestPattern(320, 180, "Freed");
+	const std::string keptUuid = uuidOf(kept);
+	const std::string freedUuid = uuidOf(freed);
+	FakeHost host;
+	CaptureManager manager(host);
+	BufferSettings settings = selecting(keptUuid);
+	settings.sources[freedUuid].selected = true;
+	settings.startWithOutputs = false;
+	settings.length = 60s;
+	settings.bufferMemoryMiB = 1;
+	manager.setSettings(settings);
+	REQUIRE(manager.manualStart());
+	const uint64_t bound = manager.memoryBudget() / 4;
+	REQUIRE(waitFor([&] { return manager.buffer(freedUuid)->stats().bytes > bound + bound / 4; }, 60s));
+
+	// A tag edit on a stored replay whose manifest has a lease on it waits for the lease
+	// each time, which holds up the captures behind it as a slow disk would.
+	const uint64_t stored = manager.captureReplay();
+	manager.finishWrites();
+	REQUIRE(manager.library().find(stored)->state == ReplayState::Stored);
+	tapeloop::test::LeaseHolder lease(manager.library().find(stored)->manifest,
+					  tapeloop::test::LeaseHolder::Kind::Write, 30s);
+	if (!lease.held()) {
+		SKIP("no lease can be taken here");
+	}
+	for (int edit = 0; edit < 4; ++edit) {
+		CHECK(manager.tagReplay(stored, "Edit " + std::to_string(edit)));
+	}
+	LogCounter dropped("[tapeloop] Replay %llu could not be saved: %s");
+	const uint64_t oldest = manager.captureReplay();
+	const uint64_t newest = manager.captureReplay();
+	REQUIRE(oldest != 0);
+	REQUIRE(newest != 0);
+	// While the buffers hold what the captures do, they keep nothing beyond them.
+	CHECK(manager.library().find(oldest)->state == ReplayState::Writing);
+	CHECK_FALSE(manager.writesDropped());
+
+	// The freed source's GOPs, its buffer gone, are kept by the captures alone.
+	settings.sources[freedUuid].selected = false;
+	manager.setSettings(settings);
+	manager.poll();
+	const Replay *lost = manager.library().find(oldest);
+	CHECK(lost->state == ReplayState::NotSaved);
+	CHECK(lost->error == tapeloop::ReplayStore::kDropped);
+	CHECK(dropped.lines == 1);
+	CHECK(manager.writesDropped());
+	CHECK(manager.library().find(newest)->state == ReplayState::Writing);
+	// What the newest keeps beyond the buffers comes out of the budget, up to the bound.
+	CHECK(manager.buffer(keptUuid)->byteBudget() <= manager.memoryBudget() - bound);
+
+	lease.letGo();
+	manager.finishWrites();
+	CHECK(manager.library().find(newest)->state == ReplayState::Stored);
+	CHECK(dropped.lines == 1);
+	manager.manualStop();
+}
+#endif
 
 TEST_CASE("the advanced switch is saved with the settings", "[obs][manager]")
 {

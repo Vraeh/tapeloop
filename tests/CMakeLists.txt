@@ -78,6 +78,7 @@ target_sources(
     core/ReplayWriterTests.cpp
     core/SourceBufferTests.cpp
     core/StoredReplays.hpp
+    core/StoreStall.hpp
     core/SyntheticEncoder.hpp
     core/TempDirectory.hpp
 )

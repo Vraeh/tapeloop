@@ -152,6 +152,20 @@ void SourceBuffer::clear()
 	}
 }
 
+bool SourceBuffer::holds(const Gop &gop) const
+{
+	std::lock_guard lock(mutex_);
+	const Nanoseconds start = gop.startTime();
+	auto it = std::partition_point(gops_.begin(), gops_.end(),
+				       [start](const auto &held) { return held->startTime() < start; });
+	for (; it != gops_.end() && (*it)->startTime() == start; ++it) {
+		if (it->get() == &gop) {
+			return true;
+		}
+	}
+	return false;
+}
+
 void SourceBuffer::setByteBudget(size_t maxBytes)
 {
 	std::lock_guard lock(mutex_);

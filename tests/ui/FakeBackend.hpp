@@ -33,6 +33,7 @@ public:
 	uint64_t memory = uint64_t{16} << 30;
 	uint64_t needed = 0;
 	uint64_t budget = uint64_t{4} << 30;
+	bool dropped = false;
 	std::vector<tapeloop::ui::EncoderChoice> choices = {{"obs_nvenc_hevc_tex", "NVIDIA NVENC HEVC"},
 							    {"obs_x264", "x264"}};
 	bool mp4 = true;
@@ -132,6 +133,7 @@ public:
 	uint64_t physicalMemory() const override { return memory; }
 	uint64_t memoryNeeded() const override { return needed; }
 	uint64_t memoryBudget() const override { return budget; }
+	bool writesDropped() const override { return dropped; }
 	bool tagReplay(uint64_t id, const std::string &tag) override
 	{
 		for (auto &replay : captured) {

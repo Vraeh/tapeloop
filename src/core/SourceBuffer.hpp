@@ -70,6 +70,9 @@ public:
 	Clip clip(Nanoseconds from, Nanoseconds to) const;
 
 	SourceBufferStats stats() const;
+	// Whether the GOP is one the buffer holds: one it sealed and has not let go of. A copy
+	// of the GOP being built is not.
+	bool holds(const Gop &gop) const;
 
 	// Drops every packet and the counters, keeps the codec configuration, and waits for a
 	// keyframe again.

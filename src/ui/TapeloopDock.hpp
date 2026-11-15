@@ -76,6 +76,7 @@ private:
 	QSpinBox *bufferMemory_;
 	QLabel *memoryWarning_;
 	QLabel *memoryShort_;
+	QLabel *writesDropped_;
 	QPushButton *airSettings_;
 	QLabel *note_;
 	QPushButton *startStop_;

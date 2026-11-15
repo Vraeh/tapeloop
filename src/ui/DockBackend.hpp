@@ -118,6 +118,9 @@ public:
 	// the buffers may use together.
 	virtual uint64_t memoryNeeded() const = 0;
 	virtual uint64_t memoryBudget() const = 0;
+	// Whether replays waiting to be written were dropped since OBS started, as the disk
+	// fell behind.
+	virtual bool writesDropped() const = 0;
 
 	virtual bool running() const = 0;
 	virtual bool manualControlEnabled() const = 0;

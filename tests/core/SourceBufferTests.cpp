@@ -557,6 +557,33 @@ TEST_CASE("SourceBuffer clips stay readable after their GOPs are evicted")
 	}
 }
 
+TEST_CASE("SourceBuffer holds the GOPs it sealed until it lets go of them")
+{
+	SyntheticEncoder encoder({});
+	SourceBuffer buffer(makeConfig(encoder, 1h, kUnlimited));
+	pushFrames(buffer, encoder, 75);
+	const std::vector<std::shared_ptr<const Gop>> first = heldGops(buffer);
+	REQUIRE(first.size() == 3);
+	CHECK(buffer.holds(*first[0]));
+	CHECK(buffer.holds(*first[1]));
+	// A copy of the GOP being built.
+	CHECK_FALSE(buffer.holds(*first[2]));
+
+	buffer.setByteBudget(0);
+	pushFrames(buffer, encoder, 30);
+	const std::vector<std::shared_ptr<const Gop>> later = heldGops(buffer);
+	REQUIRE(later.size() == 2);
+	CHECK_FALSE(buffer.holds(*first[0]));
+	CHECK_FALSE(buffer.holds(*first[1]));
+	// The GOP sealed where the copy started is not the copy.
+	REQUIRE(later[0]->startTime() == first[2]->startTime());
+	CHECK(buffer.holds(*later[0]));
+	CHECK_FALSE(buffer.holds(*first[2]));
+
+	buffer.clear();
+	CHECK_FALSE(buffer.holds(*later[0]));
+}
+
 TEST_CASE("SourceBuffer does not allocate per packet in steady state")
 {
 	if (!tapeloop::test::kAllocationHooks) {

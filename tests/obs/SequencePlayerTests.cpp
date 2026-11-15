@@ -5,6 +5,7 @@
 #include "../core/FakeDecoder.hpp"
 #include "../core/FifoWatchdog.hpp"
 #include "../core/StoredReplays.hpp"
+#include "../core/StoreStall.hpp"
 #include "../core/TempDirectory.hpp"
 #include "LogCounter.hpp"
 #include "ObsFixture.hpp"
@@ -1359,6 +1360,54 @@ TEST_CASE_METHOD(ObsFixture, "a source on air reads its files as soon as the sto
 	sequence->player()->seek(late);
 	CHECK(waitFor([&] { return newest.load() >= 110 * tapeloop::test::kGopLength; }, 10s));
 
+	sequence.reset();
+	obs_wait_for_destroy_queue();
+}
+
+TEST_CASE_METHOD(ObsFixture, "a source on air whose write is dropped plays on from the buffer", "[obs][sequence]")
+{
+	// Declared before the source, whose decoding thread writes it until it is destroyed.
+	std::atomic<int64_t> newest{-1};
+	registerReplaySource(
+		[&newest](bool) -> std::unique_ptr<PictureDecoder> { return std::make_unique<NewestDecoder>(newest); });
+	const UiTasks ui;
+	const TempDirectory folder;
+	ReplayLibrary library;
+	std::optional<SequencePlayer> sequence(std::in_place, library);
+	REQUIRE(sequence->player());
+
+	// The store's thread held up by a capture before it, as a disk that falls behind.
+	tapeloop::ReplayStore store;
+	tapeloop::test::StoreStall stall;
+	{
+		Gops held = makeGops(2, 5000);
+		held.back() = stall.hold(held.back());
+		store.write(captureOf(folder.path(), {sourceOf("b", held)}, "held"));
+	}
+	stall.waitReached();
+
+	// The buffer, which still holds the GOPs.
+	const Gops gops = makeGops(120);
+	const Nanoseconds late = gops[110]->startTime();
+	tapeloop::ReplayCapture capture = captureOf(folder.path(), {sourceOf("a", gops)});
+	const uint64_t id = library.addCaptured(capture, "Broadcast");
+	REQUIRE(sequence->putOnAir(id));
+	CHECK(playing(*sequence) == "a");
+	const uint64_t ticket = store.write(std::move(capture), library.find(id)->files);
+	store.write(captureOf(folder.path(), {sourceOf("c", makeGops(2, 9000))}, "newer"));
+	REQUIRE(store.dropWaiting(0, {}) == 1);
+	const std::vector<tapeloop::StoreResult> dropped = store.poll();
+	REQUIRE(dropped.size() == 1);
+	CHECK(dropped[0].ticket == ticket);
+	REQUIRE(library.notSaved(id, dropped[0].error));
+
+	sequence->player()->seek(late);
+	CHECK(waitFor([&] { return newest.load() >= 110 * tapeloop::test::kGopLength; }, 10s));
+	CHECK(playing(*sequence) == "a");
+	CHECK_FALSE(library.find(id)->files->get());
+
+	stall.release();
+	store.waitUntilIdle();
 	sequence.reset();
 	obs_wait_for_destroy_queue();
 }

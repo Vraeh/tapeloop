@@ -164,7 +164,8 @@ std::shared_ptr<const Gop> StoredGops::read(size_t gop)
 	const std::weak_ptr<const Gop> live = gop < live_.size() ? live_[gop] : std::weak_ptr<const Gop>();
 	// Held until the reader has it, so the GOP cannot go between the look at the files and
 	// the read. The store holds the capture's GOPs until it has set the files, so a GOP
-	// already gone finds them set, unless the store ran out of memory setting them.
+	// already gone finds them set, unless the store ran out of memory setting them or
+	// dropped the capture.
 	const std::shared_ptr<const Gop> held = live.lock();
 	if (files_ && !held) {
 		takeFiles();

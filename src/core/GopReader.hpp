@@ -74,8 +74,9 @@ public:
 		   size_t cacheBytes = kDefaultGopCacheBytes);
 	// For a replay that may not be stored yet. The store holds the capture's GOPs until it
 	// has set the files, so each is in the buffer or in the files; should it run out of
-	// memory setting them, the library sets them at its next poll. source may be the
-	// capture's, which lists the GOPs the files list.
+	// memory setting them, the library sets them at its next poll. A capture the store
+	// drops never gets its files, and plays only what the buffers still hold. source may
+	// be the capture's, which lists the GOPs the files list.
 	StoredGops(std::shared_ptr<const ReplayFiles> files, StoredSource source,
 		   std::vector<std::weak_ptr<const Gop>> live, size_t cacheBytes = kDefaultGopCacheBytes);
 

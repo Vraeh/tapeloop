@@ -5,12 +5,17 @@
 
 #include "core/FileIo.hpp"
 
+#include <algorithm>
 #include <exception>
+#include <functional>
 #include <iterator>
 #include <memory>
 #include <utility>
 
 namespace tapeloop {
+
+// Within a string's own buffer in every standard library.
+static_assert(ReplayStore::kDropped.size() <= 15);
 
 ReplayStore::ReplayStore(ReplayWriterConfig config) : writer_(config), worker_([this] { run(); }) {}
 
@@ -63,13 +68,57 @@ std::vector<StoreResult> ReplayStore::poll()
 void ReplayStore::waitUntilIdle()
 {
 	std::unique_lock lock(mutex_);
-	idle_.wait(lock, [this] { return jobs_.empty(); });
+	idle_.wait(lock, [this] { return jobs_.size() == dropped_; });
 }
 
 size_t ReplayStore::pending() const
 {
 	const std::lock_guard lock(mutex_);
-	return jobs_.size();
+	return jobs_.size() - dropped_;
+}
+
+size_t ReplayStore::heldBytes(std::span<const KeyedBuffer> buffers)
+{
+	const std::lock_guard lock(mutex_);
+	return heldBytesLocked(buffers);
+}
+
+size_t ReplayStore::dropWaiting(size_t bound, std::span<const KeyedBuffer> buffers)
+{
+	size_t dropped = 0;
+	while (true) {
+		// Before the lock, so that the GOPs of a capture dropped go once it is released.
+		std::vector<CaptureSource> released;
+		const std::lock_guard lock(mutex_);
+		if (heldBytesLocked(buffers) <= bound) {
+			return dropped;
+		}
+		size_t newest = jobs_.size();
+		for (size_t i = jobs_.size(); i-- > 1;) {
+			if (jobs_[i].kind == StoreResult::Kind::Capture && !jobs_[i].dropped) {
+				newest = i;
+				break;
+			}
+		}
+		// The first job is the one running, or the next to.
+		size_t oldest = 1;
+		while (oldest < newest && (jobs_[oldest].kind != StoreResult::Kind::Capture || jobs_[oldest].dropped)) {
+			++oldest;
+		}
+		if (oldest >= newest) {
+			return dropped;
+		}
+		Job &job = jobs_[oldest];
+		StoreResult &result = job.slot.front();
+		result.ticket = job.ticket;
+		result.kind = job.kind;
+		result.error = kDropped;
+		released.swap(job.capture.sources);
+		job.dropped = true;
+		++dropped_;
+		results_.splice(results_.end(), job.slot);
+		++dropped;
+	}
 }
 
 std::optional<bool> ReplayStore::lowPriority() const noexcept
@@ -104,6 +153,11 @@ void ReplayStore::run() noexcept
 		if (jobs_.empty()) {
 			return;
 		}
+		if (jobs_.front().dropped) {
+			jobs_.pop_front();
+			--dropped_;
+			continue;
+		}
 		// The job stays at the front while it runs, since moving it out would allocate
 		// with some standard libraries; a deque keeps an element in place while others
 		// are added behind it.
@@ -111,14 +165,48 @@ void ReplayStore::run() noexcept
 		const bool stopping = stopping_;
 		lock.unlock();
 		job.slot.front() = execute(job, stopping);
-		// The capture's GOPs go outside the lock, after execute() has set its files, and
-		// before its result is seen.
-		job.capture.sources.clear();
+		// The capture's GOPs go after execute() has set its files, and before its result
+		// is seen. They leave the job under the lock, where heldBytes() reads them, and
+		// are let go of outside it.
+		{
+			std::vector<CaptureSource> written;
+			lock.lock();
+			written.swap(job.capture.sources);
+			lock.unlock();
+		}
 		lock.lock();
 		results_.splice(results_.end(), job.slot);
 		jobs_.pop_front();
 		idle_.notify_all();
 	}
+}
+
+size_t ReplayStore::heldBytesLocked(std::span<const KeyedBuffer> buffers)
+{
+	counted_.clear();
+	for (const Job &job : jobs_) {
+		for (const CaptureSource &source : job.capture.sources) {
+			const auto found =
+				std::find_if(buffers.begin(), buffers.end(),
+					     [&source](const KeyedBuffer &held) { return held.key == source.key; });
+			const SourceBuffer *buffer = found != buffers.end() ? found->buffer : nullptr;
+			for (const std::shared_ptr<const Gop> &gop : source.clip.gops()) {
+				counted_.emplace_back(gop.get(), buffer);
+			}
+		}
+	}
+	// Captures after one another share most of their GOPs.
+	std::sort(counted_.begin(), counted_.end(),
+		  [](const auto &a, const auto &b) { return std::less<const Gop *>()(a.first, b.first); });
+	size_t bytes = 0;
+	const Gop *previous = nullptr;
+	for (const auto &[gop, buffer] : counted_) {
+		if (gop != previous && (!buffer || !buffer->holds(*gop))) {
+			bytes += gop->byteSize();
+		}
+		previous = gop;
+	}
+	return bytes;
 }
 
 StoreResult ReplayStore::execute(const Job &job, bool stopping) noexcept

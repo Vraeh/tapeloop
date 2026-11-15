@@ -42,6 +42,10 @@ constexpr size_t kStoreBacklogWarning = 3;
 // so the reason fits a string's own buffer in every standard library.
 constexpr std::string_view kNotHandedOver = "not handed over";
 static_assert(kNotHandedOver.size() <= 15);
+// The captures waiting to be written may keep this part of the memory budget beyond the
+// buffers. A capture keeps the GOPs its buffer lets go of while it waits, so on a disk that
+// falls behind they would grow without limit.
+constexpr uint64_t kWritesShare = 4;
 
 bool addInput(void *param, obs_source_t *source) noexcept
 {
@@ -198,6 +202,8 @@ void CaptureManager::poll()
 	if (exiting_) {
 		return;
 	}
+	// Before the results are taken, so a capture dropped shows at once.
+	boundWrites();
 	takeStoreResults();
 	takeExportResults();
 	library_.releaseExpired();
@@ -419,6 +425,7 @@ uint64_t CaptureManager::captureReplay()
 		     backlog);
 		backlogLogged_ = true;
 	}
+	boundWrites();
 	return id;
 }
 
@@ -719,12 +726,38 @@ void CaptureManager::applyBudget()
 			needs.push_back(need);
 		}
 	}
-	const std::vector<size_t> shares = shareBudget(needs, memoryBudget());
+	// What stays above the bound is what the capture being written and the newest keep,
+	// which the buffers would make room for only by losing footage.
+	const uint64_t held = std::min<uint64_t>(store_.heldBytes(keyedBuffers()), writesBound());
+	const std::vector<size_t> shares = shareBudget(needs, memoryBudget() - held);
 	for (size_t i = 0; i < running.size(); ++i) {
 		running[i]->capture.limitBytes(shares[i]);
 		// The margin of a need is for a bitrate that runs over; a share without it still
 		// holds the length.
 		running[i]->budgetLimited = shares[i] < nominalReplayBytes(needs[i]);
+	}
+}
+
+std::vector<KeyedBuffer> CaptureManager::keyedBuffers() const
+{
+	std::vector<KeyedBuffer> buffers;
+	buffers.reserve(entries_.size());
+	for (const auto &[uuid, entry] : entries_) {
+		buffers.push_back({uuid, entry->capture.buffer()});
+	}
+	return buffers;
+}
+
+size_t CaptureManager::writesBound() const
+{
+	return static_cast<size_t>(
+		std::min<uint64_t>(memoryBudget() / kWritesShare, std::numeric_limits<size_t>::max()));
+}
+
+void CaptureManager::boundWrites()
+{
+	if (store_.dropWaiting(writesBound(), keyedBuffers()) != 0) {
+		writesDropped_ = true;
 	}
 }
 

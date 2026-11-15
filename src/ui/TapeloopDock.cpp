@@ -169,6 +169,7 @@ TapeloopDock::TapeloopDock(DockBackend &backend, TextLookup text, QWidget *paren
 	  bufferMemory_(new QSpinBox(this)),
 	  memoryWarning_(new QLabel(text_("Dock.BufferMemory.Unsafe"), this)),
 	  memoryShort_(new QLabel(this)),
+	  writesDropped_(new QLabel(text_("Dock.WritesDropped"), this)),
 	  airSettings_(new QPushButton(text_("Dock.AirSettings"), this)),
 	  note_(new QLabel(text_("Dock.ApplyNote"), this)),
 	  startStop_(new QPushButton(this)),
@@ -237,6 +238,9 @@ TapeloopDock::TapeloopDock(DockBackend &backend, TextLookup text, QWidget *paren
 	memoryShort_->setObjectName("memoryShort");
 	memoryShort_->setWordWrap(true);
 	memoryShort_->hide();
+	writesDropped_->setObjectName("writesDropped");
+	writesDropped_->setWordWrap(true);
+	writesDropped_->hide();
 	otherAdapters_->setToolTip(text_("Dock.OtherAdapters.Tooltip"));
 	note_->setObjectName("note");
 	note_->setWordWrap(true);
@@ -299,6 +303,7 @@ TapeloopDock::TapeloopDock(DockBackend &backend, TextLookup text, QWidget *paren
 	layout->addWidget(airSettings_);
 	layout->addWidget(note_);
 	layout->addWidget(memoryShort_);
+	layout->addWidget(writesDropped_);
 	layout->addWidget(startStop_);
 	layout->addWidget(followsOutputs_);
 	layout->addWidget(captureReplay_);
@@ -899,6 +904,7 @@ void TapeloopDock::updateMemory(int64_t settingMiB)
 					      .arg(QString::number((needed + (uint64_t{1} << 20) - 1) >> 20))
 					      .arg(QString::number(budget >> 20)));
 	}
+	writesDropped_->setVisible(backend_.writesDropped());
 }
 
 void TapeloopDock::updateExports()

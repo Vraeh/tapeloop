@@ -38,6 +38,7 @@ public:
 	uint64_t physicalMemory() const override { return manager_.physicalMemory(); }
 	uint64_t memoryNeeded() const override { return manager_.memoryNeeded(); }
 	uint64_t memoryBudget() const override { return manager_.memoryBudget(); }
+	bool writesDropped() const override { return manager_.writesDropped(); }
 	bool tagReplay(uint64_t id, const std::string &tag) override { return manager_.tagReplay(id, tag); }
 	bool untagReplay(uint64_t id, const std::string &tag) override { return manager_.untagReplay(id, tag); }
 	bool deleteTag(const std::string &tag) override { return manager_.deleteReplayTag(tag); }

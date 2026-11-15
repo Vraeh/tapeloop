@@ -4,21 +4,30 @@
 #include "core/ReplayStore.hpp"
 
 #include "StoredReplays.hpp"
+#include "StoreStall.hpp"
+#include "SyntheticEncoder.hpp"
 #include "TempDirectory.hpp"
 
 #include <catch2/catch_test_macros.hpp>
 
 #include <atomic>
+#include <chrono>
+#include <cstddef>
 #include <filesystem>
+#include <limits>
 #include <memory>
 #include <optional>
 #include <string>
 #include <thread>
 #include <vector>
 
+using namespace std::chrono_literals;
 using tapeloop::Clip;
 using tapeloop::Gop;
+using tapeloop::KeyedBuffer;
+using tapeloop::Nanoseconds;
 using tapeloop::ReplayStore;
+using tapeloop::SourceBuffer;
 using tapeloop::StoreResult;
 using tapeloop::test::captureOf;
 using tapeloop::test::fileBytes;
@@ -28,9 +37,36 @@ using tapeloop::test::readManifest;
 using tapeloop::test::requireReadsBack;
 using tapeloop::test::slice;
 using tapeloop::test::sourceOf;
+using tapeloop::test::StoreStall;
+using tapeloop::test::SyntheticEncoder;
 using tapeloop::test::TempDirectory;
 
 namespace fs = std::filesystem;
+
+namespace {
+
+size_t bytesOf(const Gops &gops)
+{
+	size_t bytes = 0;
+	for (const std::shared_ptr<const Gop> &gop : gops) {
+		bytes += gop->byteSize();
+	}
+	return bytes;
+}
+
+// Asks for a capture that holds the store's thread once it is written, and returns when
+// it does: what is asked for next waits.
+void stallStore(ReplayStore &store, const StoreStall &stall, const fs::path &folder)
+{
+	{
+		Gops gops = makeGops(2);
+		gops.back() = stall.hold(gops.back());
+		store.write(captureOf(folder, {sourceOf("a", gops)}, "stalled"));
+	}
+	stall.waitReached();
+}
+
+} // namespace
 
 TEST_CASE("a capture is written in the background and reported once")
 {
@@ -153,6 +189,99 @@ TEST_CASE("a capture's files are set before it lets go of its GOPs")
 	REQUIRE(set->index);
 	REQUIRE(set->index->sources.size() == 1);
 	requireReadsBack(set->manifest, set->index->sources[0], gops);
+}
+
+TEST_CASE("the oldest captures waiting to be written are dropped first")
+{
+	TempDirectory dir;
+	ReplayStore store;
+	StoreStall stall;
+	stallStore(store, stall, dir.path());
+
+	std::vector<std::weak_ptr<const Gop>> held;
+	size_t newest = 0;
+	const auto capture = [&](int64_t firstFrame, const std::string &stem) {
+		const Gops gops = makeGops(3, firstFrame);
+		held.push_back(gops.front());
+		newest = bytesOf(gops);
+		return store.write(captureOf(dir.path(), {sourceOf("a", gops)}, stem));
+	};
+	const uint64_t one = capture(100, "one");
+	const uint64_t tags = store.writeTags(dir.path() / "stalled.tplp", {"Goal"});
+	const uint64_t two = capture(200, "two");
+	const uint64_t three = capture(300, "three");
+	CHECK(store.pending() == 5);
+	CHECK(store.heldBytes({}) == 3 * newest);
+
+	// Room for one capture: the two oldest go, and the tag edit between them stays.
+	CHECK(store.dropWaiting(newest, {}) == 2);
+	CHECK(store.pending() == 3);
+	CHECK(store.heldBytes({}) == newest);
+	CHECK(held[0].expired());
+	CHECK(held[1].expired());
+	CHECK_FALSE(held[2].expired());
+	const std::vector<StoreResult> dropped = store.poll();
+	REQUIRE(dropped.size() == 2);
+	CHECK(dropped[0].ticket == one);
+	CHECK(dropped[1].ticket == two);
+	for (const StoreResult &result : dropped) {
+		CHECK(result.kind == StoreResult::Kind::Capture);
+		CHECK(result.error == ReplayStore::kDropped);
+		CHECK_FALSE(result.written);
+	}
+
+	// The capture being written and the newest one stay, however little room is left.
+	CHECK(store.dropWaiting(0, {}) == 0);
+	CHECK(store.poll().empty());
+
+	stall.release();
+	store.waitUntilIdle();
+	CHECK(store.pending() == 0);
+	CHECK(held[2].expired());
+	const std::vector<StoreResult> results = store.poll();
+	REQUIRE(results.size() == 3);
+	CHECK(results[0].ticket == 1);
+	CHECK(results[0].written);
+	CHECK(results[1].ticket == tags);
+	CHECK(results[1].error.empty());
+	CHECK(results[2].ticket == three);
+	CHECK(results[2].written);
+	CHECK(fs::exists(dir.path() / "stalled.tplp"));
+	CHECK_FALSE(fs::exists(dir.path() / "one.tplp"));
+	CHECK_FALSE(fs::exists(dir.path() / "two.tplp"));
+	CHECK(fs::exists(dir.path() / "three.tplp"));
+}
+
+TEST_CASE("captures waiting to be written count what their buffers no longer hold")
+{
+	TempDirectory dir;
+	SyntheticEncoder encoder({});
+	tapeloop::SourceBufferConfig config;
+	config.window = 1h;
+	config.maxBytes = std::numeric_limits<size_t>::max();
+	config.frameDuration = encoder.frameDuration();
+	SourceBuffer buffer(config);
+	for (int i = 0; i < 75; ++i) {
+		buffer.push(encoder.next());
+	}
+	ReplayStore store;
+	StoreStall stall;
+	stallStore(store, stall, dir.path());
+
+	// Two sealed GOPs and a copy of the one being built, shared by both captures.
+	const Clip clip = buffer.clip(Nanoseconds::min(), Nanoseconds::max());
+	REQUIRE(clip.gops().size() == 3);
+	const Gops gops(clip.gops().begin(), clip.gops().end());
+	store.write(captureOf(dir.path(), {{"a", "Camera a", clip}}, "one"));
+	store.write(captureOf(dir.path(), {{"a", "Camera a", clip}}, "two"));
+
+	const std::vector<KeyedBuffer> buffers{{"a", &buffer}};
+	const std::vector<KeyedBuffer> others{{"b", &buffer}};
+	CHECK(store.heldBytes(buffers) == gops.back()->byteSize());
+	CHECK(store.heldBytes(others) == bytesOf(gops));
+	CHECK(store.heldBytes({}) == bytesOf(gops));
+	buffer.clear();
+	CHECK(store.heldBytes(buffers) == bytesOf(gops));
 }
 
 TEST_CASE("closing the store finishes the captures still asked for")
