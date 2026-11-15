@@ -228,8 +228,7 @@ void FrontendBridge::handleSave(obs_data_t *collection, bool saving, void *data)
 		if (saving) {
 			manager.save(collection);
 		} else {
-			manager.load(collection);
-			bridge.sequence_->setAir(manager.settings().air);
+			loadCollection(collection, *bridge.sequence_, manager);
 		}
 	} catch (...) {
 		blog(LOG_ERROR, "[tapeloop] Saving or loading the settings failed");

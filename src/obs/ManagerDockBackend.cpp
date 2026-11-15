@@ -121,7 +121,11 @@ bool ManagerDockBackend::setShown(const std::string &uuid, bool shown)
 		return false;
 	}
 	enlist(sources());
-	return sequence_->setShown(uuid, shown);
+	if (!sequence_->setShown(uuid, shown)) {
+		return false;
+	}
+	keepSequence();
+	return true;
 }
 
 bool ManagerDockBackend::moveSource(const std::string &uuid, const std::string &target)
@@ -135,7 +139,17 @@ bool ManagerDockBackend::moveSource(const std::string &uuid, const std::string &
 	const ReplaySequence &order = sequence_->state().sequence();
 	const std::optional<size_t> moving = order.indexOf(uuid);
 	const std::optional<size_t> place = order.indexOf(target);
-	return moving && place && sequence_->move(*moving, *place);
+	if (!moving || !place || !sequence_->move(*moving, *place)) {
+		return false;
+	}
+	keepSequence();
+	return true;
+}
+
+void ManagerDockBackend::keepSequence()
+{
+	const std::span<const SequenceEntry> entries = sequence_->state().sequence().entries();
+	manager_.setSequence({entries.begin(), entries.end()});
 }
 
 void ManagerDockBackend::enlist(const std::vector<ui::DockSource> &listed)

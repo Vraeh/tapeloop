@@ -98,6 +98,8 @@ public:
 	// activation off air reaches running captures at once; any other change reaches a
 	// capture at its next start.
 	void setSettings(BufferSettings settings);
+	// An edit of the dock's list alone, saved as setSettings() saves.
+	void setSequence(std::vector<SequenceEntry> sequence);
 
 	bool running() const noexcept { return lifecycle_.running(); }
 	bool manualControlEnabled() const noexcept { return lifecycle_.manualControlEnabled(); }
@@ -124,7 +126,8 @@ public:
 	// sources the collection no longer has. Loading finds a source whose UUID changed,
 	// as every UUID does in a duplicated collection, by its saved name (see
 	// matchSourcesByName), and starts the lifecycle over with the collection's own
-	// settings.
+	// settings. The dock's list keeps only sources the collection has, found the same
+	// way.
 	void save(obs_data_t *collection) const;
 	void load(obs_data_t *collection);
 
@@ -246,6 +249,7 @@ private:
 	// Has the store write the replay's tags when it is stored on disk.
 	void saveTags(uint64_t id);
 	static void handleRemove(void *data, calldata_t *) noexcept;
+	void saveEdit();
 
 	CaptureHost &host_;
 	ReplayExporter exporter_;

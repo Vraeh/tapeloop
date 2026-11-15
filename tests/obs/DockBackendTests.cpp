@@ -10,6 +10,7 @@
 
 #include "core/FileIo.hpp"
 #include "core/ReplayWriter.hpp"
+#include "obs/AirEvents.hpp"
 #include "obs/CaptureManager.hpp"
 #include "obs/ManagerDockBackend.hpp"
 #include "obs/ReplaySource.hpp"
@@ -496,6 +497,10 @@ TEST_CASE_METHOD(ObsFixture, "the dock lists the sources in the order of the rep
 		// The sources it did not have yet join the sequence where the dock lists them.
 		REQUIRE(backend.setShown(uuidB, false));
 		CHECK(keysOf(sequence) == std::vector<std::string>{"gone", uuidC + "-", uuidA, uuidB + "-"});
+		CHECK(host.saves == 1);
+		CHECK(manager.settings().sequence ==
+		      std::vector<SequenceEntry>(sequence.state().sequence().entries().begin(),
+						 sequence.state().sequence().entries().end()));
 		CHECK(namesOf(backend.sources()) == std::vector<std::string>{"C camera-", "A camera", "B camera-"});
 
 		REQUIRE(backend.moveSource(uuidB, uuidC));
@@ -504,14 +509,54 @@ TEST_CASE_METHOD(ObsFixture, "the dock lists the sources in the order of the rep
 		REQUIRE(backend.moveSource(uuidB, uuidA));
 		CHECK(keysOf(sequence) == std::vector<std::string>{"gone", uuidC + "-", uuidA, uuidB + "-"});
 
+		CHECK(host.saves == 3);
+		CHECK(manager.settings().sequence.size() == 4);
+		CHECK(manager.settings().sequence[1] == SequenceEntry{uuidC, false});
+
 		CHECK_FALSE(backend.moveSource(uuidA, "unknown"));
 		CHECK_FALSE(backend.setShown("unknown", true));
+		CHECK(host.saves == 3);
 	}
 
 	ManagerDockBackend alone(manager);
 	CHECK(namesOf(alone.sources()) == std::vector<std::string>{"A camera", "B camera", "C camera"});
 	CHECK_FALSE(alone.setShown(uuidA, false));
 	CHECK_FALSE(alone.moveSource(uuidA, uuidB));
+}
+
+TEST_CASE_METHOD(ObsFixture, "the dock's list comes back with the scene collection", "[obs][dock]")
+{
+	tapeloop::obs::registerReplaySource({});
+	OBSDataAutoRelease settings = obs_data_create();
+	obs_data_set_int(settings, "width", 320);
+	obs_data_set_int(settings, "height", 180);
+	OBSSourceAutoRelease a = obs_source_create(tapeloop::test::kTestPatternId, "A camera", settings, nullptr);
+	OBSSourceAutoRelease c = obs_source_create(tapeloop::test::kTestPatternId, "C camera", settings, nullptr);
+	const std::string uuidA = obs_source_get_uuid(a);
+	const std::string uuidC = obs_source_get_uuid(c);
+	OfflineHost host;
+	OBSDataAutoRelease collection = obs_data_create();
+	{
+		OBSSourceAutoRelease b =
+			obs_source_create(tapeloop::test::kTestPatternId, "B camera", settings, nullptr);
+		CaptureManager manager(host);
+		SequencePlayer sequence(manager.library());
+		ManagerDockBackend backend(manager, &sequence);
+		REQUIRE(backend.moveSource(obs_source_get_uuid(b), uuidA));
+		REQUIRE(backend.moveSource(uuidC, uuidA));
+		REQUIRE(backend.setShown(uuidA, false));
+		CHECK(namesOf(backend.sources()) == std::vector<std::string>{"B camera", "C camera", "A camera-"});
+		manager.save(collection);
+	}
+
+	// B camera is deleted since the save, and a source that sorts first is added.
+	OBSSourceAutoRelease added = obs_source_create(tapeloop::test::kTestPatternId, "0 camera", settings, nullptr);
+	CaptureManager manager(host);
+	SequencePlayer sequence(manager.library());
+	tapeloop::obs::loadCollection(collection, sequence, manager);
+	CHECK(keysOf(sequence) == std::vector<std::string>{uuidC, uuidA + "-"});
+	ManagerDockBackend backend(manager, &sequence);
+	CHECK(namesOf(backend.sources()) == std::vector<std::string>{"C camera", "A camera-", "0 camera"});
 }
 
 TEST_CASE_METHOD(ObsFixture, "a drag moves the source the dock showed, though the list changed since", "[obs][dock]")

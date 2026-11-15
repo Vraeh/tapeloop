@@ -121,16 +121,26 @@ CaptureManager::~CaptureManager()
 
 void CaptureManager::setSettings(BufferSettings settings)
 {
-	if (foreignSettings_) {
-		blog(LOG_WARNING, "[tapeloop] This scene collection holds settings of another version; "
-				  "changes made here are not saved");
-	}
 	settings_ = std::move(settings);
 	lifecycle_.setStartWithOutputs(settings_.startWithOutputs);
 	reconcile();
-	if (!foreignSettings_) {
-		host_.requestSave();
+	saveEdit();
+}
+
+void CaptureManager::setSequence(std::vector<SequenceEntry> sequence)
+{
+	settings_.sequence = std::move(sequence);
+	saveEdit();
+}
+
+void CaptureManager::saveEdit()
+{
+	if (foreignSettings_) {
+		blog(LOG_WARNING, "[tapeloop] This scene collection holds settings of another version; "
+				  "changes made here are not saved");
+		return;
 	}
+	host_.requestSave();
 }
 
 bool CaptureManager::manualStart()
@@ -276,6 +286,15 @@ void CaptureManager::save(obs_data_t *collection) const
 		}
 	}
 	saved.sources = std::move(kept);
+	std::vector<SavedSequenceEntry> listed;
+	for (SavedSequenceEntry &entry : saved.sequence) {
+		OBSSourceAutoRelease found = sourceByUuid(entry.uuid);
+		if (found) {
+			entry.name = obs_source_get_name(found);
+			listed.push_back(std::move(entry));
+		}
+	}
+	saved.sequence = std::move(listed);
 	OBSDataAutoRelease data = createSettingsData(saved);
 	obs_data_set_obj(collection, kSettingsKey, data);
 }
@@ -285,6 +304,7 @@ void CaptureManager::load(obs_data_t *collection)
 	foreignSettings_ = nullptr;
 	savedNames_.clear();
 	BufferSettings settings;
+	std::map<std::string, std::string> listedNames;
 	OBSDataAutoRelease data = obs_data_get_obj(collection, kSettingsKey);
 	if (data) {
 		const SavedSettings saved = readSettingsData(data);
@@ -292,6 +312,9 @@ void CaptureManager::load(obs_data_t *collection)
 			settings = std::move(*loaded);
 			for (const SavedSource &source : saved.sources) {
 				savedNames_[source.uuid] = source.name;
+			}
+			for (const SavedSequenceEntry &entry : saved.sequence) {
+				listedNames.emplace(entry.uuid, entry.name);
 			}
 		} else {
 			blog(LOG_WARNING,
@@ -308,6 +331,7 @@ void CaptureManager::load(obs_data_t *collection)
 		blog(LOG_INFO, "[tapeloop] Found the saved source '%s' again by its name",
 		     savedNames_.at(move.first).c_str());
 	}
+	matchSequenceByName(settings.sequence, listedNames, inputs);
 
 	settings_ = std::move(settings);
 	lifecycle_.reset(settings_.startWithOutputs, host_.streamingActive(), host_.recordingActive());

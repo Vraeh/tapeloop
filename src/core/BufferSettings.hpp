@@ -5,6 +5,7 @@
 
 #include "core/EncoderPolicy.hpp"
 #include "core/MediaTime.hpp"
+#include "core/ReplaySequence.hpp"
 #include "core/ReplaySize.hpp"
 
 #include <chrono>
@@ -105,6 +106,9 @@ struct BufferSettings {
 	// The memory every buffer may hold together, in MiB; zero for the automatic budget.
 	int64_t bufferMemoryMiB = 0;
 	std::map<std::string, SourceSettings> sources;
+	// The order the dock lists sources in and whether a replay shows each, by UUID.
+	// Sources it leaves out come after them, shown, by name.
+	std::vector<SequenceEntry> sequence;
 	AirSettings air;
 
 	Nanoseconds lengthFor(const std::string &uuid) const;
@@ -131,6 +135,14 @@ struct SavedSource {
 	std::optional<std::string> resolution;
 	std::optional<int64_t> height;
 	std::optional<bool> activateOffAir;
+};
+
+// A place in the dock's list.
+struct SavedSequenceEntry {
+	std::string uuid;
+	// As SavedSource's.
+	std::string name;
+	bool shown = true;
 };
 
 // The intro or outro kinds are "none", "video" or "image", and times are milliseconds.
@@ -163,6 +175,7 @@ struct SavedSettings {
 	std::string playerGeometry;
 	int64_t bufferMemoryMiB = 0;
 	std::vector<SavedSource> sources;
+	std::vector<SavedSequenceEntry> sequence;
 	SavedMedia intro;
 	SavedTransition into;
 	SavedMedia outro;
@@ -174,7 +187,8 @@ SavedSettings saveSettings(const BufferSettings &settings);
 // Empty when the version is not kSettingsVersion. Values out of range are brought
 // back into it, a resolution this build does not know becomes the canvas, and an intro
 // or outro of a kind it does not know becomes none, and a player place or view it does
-// not know becomes the default.
+// not know becomes the default. A list entry without a UUID, or with one listed before,
+// is left out.
 std::optional<BufferSettings> loadSettings(const SavedSettings &saved);
 
 struct SourceIdentity {
@@ -191,5 +205,12 @@ struct SourceIdentity {
 std::map<std::string, std::string> matchSourcesByName(BufferSettings &settings,
 						      const std::map<std::string, std::string> &savedNames,
 						      const std::vector<SourceIdentity> &sources);
+
+// The same for the dock's list, whose entries keep their places: an entry for a UUID that
+// `sources` does not have moves to the source its saved name finds, by the rules above
+// with "the list does not have it" for "it has no settings of its own", and is dropped
+// when it finds none.
+void matchSequenceByName(std::vector<SequenceEntry> &sequence, const std::map<std::string, std::string> &savedNames,
+			 const std::vector<SourceIdentity> &sources);
 
 } // namespace tapeloop
