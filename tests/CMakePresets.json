@@ -30,6 +30,7 @@
       "displayName": "Linux GCC",
       "inherits": ["linux"],
       "cacheVariables": {
+        "CMAKE_C_COMPILER": "gcc",
         "CMAKE_CXX_COMPILER": "g++",
         "CMAKE_BUILD_TYPE": "RelWithDebInfo"
       }
@@ -39,8 +40,10 @@
       "displayName": "Linux Clang with ASan and UBSan",
       "inherits": ["linux"],
       "cacheVariables": {
+        "CMAKE_C_COMPILER": "clang",
         "CMAKE_CXX_COMPILER": "clang++",
         "CMAKE_BUILD_TYPE": "Debug",
+        "CMAKE_C_FLAGS": "-fsanitize=address,undefined -fno-sanitize-recover=undefined -fno-omit-frame-pointer",
         "CMAKE_CXX_FLAGS": "-fsanitize=address,undefined -fno-sanitize-recover=undefined -fno-omit-frame-pointer"
       }
     },
@@ -49,8 +52,10 @@
       "displayName": "Linux Clang with TSan",
       "inherits": ["linux"],
       "cacheVariables": {
+        "CMAKE_C_COMPILER": "clang",
         "CMAKE_CXX_COMPILER": "clang++",
         "CMAKE_BUILD_TYPE": "Debug",
+        "CMAKE_C_FLAGS": "-fsanitize=thread",
         "CMAKE_CXX_FLAGS": "-fsanitize=thread"
       }
     },
@@ -59,6 +64,7 @@
       "displayName": "Linux Clang compile database for clang-tidy",
       "inherits": ["linux"],
       "cacheVariables": {
+        "CMAKE_C_COMPILER": "clang",
         "CMAKE_CXX_COMPILER": "clang++",
         "CMAKE_BUILD_TYPE": "Debug",
         "CMAKE_EXPORT_COMPILE_COMMANDS": true,
@@ -80,8 +86,10 @@
       "displayName": "Linux Clang with source-based coverage",
       "inherits": ["linux"],
       "cacheVariables": {
+        "CMAKE_C_COMPILER": "clang",
         "CMAKE_CXX_COMPILER": "clang++",
         "CMAKE_BUILD_TYPE": "Debug",
+        "CMAKE_C_FLAGS": "-fprofile-instr-generate -fcoverage-mapping",
         "CMAKE_CXX_FLAGS": "-fprofile-instr-generate -fcoverage-mapping"
       }
     },

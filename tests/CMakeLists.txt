@@ -99,6 +99,13 @@ list(APPEND CMAKE_MODULE_PATH "${catch2_SOURCE_DIR}/extras")
 include(Catch)
 catch_discover_tests(tapeloop-core-tests)
 
+# The plugin's obs_log, which is C. The fuzz build leaves it out: its instrumentation
+# flags are for Clang, and its C compiler is the system's, for FFmpeg.
+if(NOT TAPELOOP_FUZZ)
+  enable_language(C)
+  add_subdirectory(plugin)
+endif()
+
 if(TAPELOOP_FUZZ)
   # The replay readers are fuzzed through to the FFmpeg the plugin links. FFmpeg's own
   # configure builds it with the system's compiler, whatever compiles the harnesses, and
