@@ -5,6 +5,7 @@
 
 #include "core/MediaTime.hpp"
 
+#include <array>
 #include <chrono>
 #include <cstddef>
 #include <cstdint>
@@ -29,6 +30,14 @@ struct PlayheadConfig {
 };
 
 enum class ScrubDirection { Forward, Backward };
+inline constexpr size_t kScrubDirections = 2;
+static_assert(static_cast<size_t>(ScrubDirection::Backward) + 1 == kScrubDirections);
+
+// The inputs that can hold a scrub at the same time, each one way or the other: the scrub
+// hotkeys, and the scrub buttons of the dock.
+enum class ScrubHolder { Hotkeys, Dock };
+inline constexpr size_t kScrubHolders = 2;
+static_assert(static_cast<size_t>(ScrubHolder::Dock) + 1 == kScrubHolders);
 
 // Moves through the frames of one clip. It never reads a clock: the caller passes the
 // wall time elapsed since the previous call, so the same calls always give the same
@@ -68,9 +77,17 @@ public:
 
 	// While scrubbing the position follows the scrub curve instead of the rate. Play
 	// state and rate are left alone, so endScrub() resumes exactly what was going on.
-	// Beginning again, in either direction, restarts the curve.
+	// Beginning again, in either direction, restarts the curve. Both forget the holds.
 	void beginScrub(ScrubDirection direction) noexcept;
-	void endScrub() noexcept { scrubbing_ = false; }
+	void endScrub() noexcept;
+	// A scrub held by several inputs at once runs while any of them holds it, the way the
+	// latest one still held goes. A hold begins the scrub again its way. Letting go of
+	// the latest goes on the way of the one held before it, restarting the curve if that
+	// way is the other, and letting go of the last ends the scrub. Letting go of a hold
+	// that is not there does nothing, so an input never ends a scrub it did not begin.
+	// A holder or direction outside its enum holds nothing. load() forgets every hold.
+	void holdScrub(ScrubHolder holder, ScrubDirection direction) noexcept;
+	void releaseScrub(ScrubHolder holder, ScrubDirection direction) noexcept;
 
 	Nanoseconds position() const noexcept { return position_; }
 	int32_t rate() const noexcept { return rate_; }
@@ -86,6 +103,14 @@ public:
 	size_t displayedFrame() const noexcept;
 
 private:
+	struct ScrubHold {
+		ScrubHolder holder = ScrubHolder::Hotkeys;
+		ScrubDirection direction = ScrubDirection::Forward;
+	};
+	// Every holder each way, each held once at most.
+	static constexpr size_t kScrubHolds = kScrubHolders * kScrubDirections;
+
+	void startScrub(ScrubDirection direction) noexcept;
 	int32_t scrubRate(Nanoseconds held) const noexcept;
 	void advanceScrub(int64_t elapsed) noexcept;
 	void move(int64_t elapsed, int64_t doubledRate) noexcept;
@@ -102,6 +127,9 @@ private:
 	bool scrubbing_ = false;
 	ScrubDirection scrubDirection_ = ScrubDirection::Forward;
 	Nanoseconds scrubHeld_{0};
+	// Oldest first.
+	std::array<ScrubHold, kScrubHolds> holds_{};
+	size_t holdCount_ = 0;
 };
 
 } // namespace tapeloop

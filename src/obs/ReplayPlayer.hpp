@@ -129,8 +129,12 @@ public:
 	// Measured from the first frame of the clip the seek applies to, so that one given
 	// right after load() lands in the new clip, which state() reports only after a tick.
 	void seekFromStart(Nanoseconds offset) noexcept;
+	// As the Playhead's: a scrub nothing holds, and the holds of the inputs that can
+	// scrub at the same time.
 	void beginScrub(ScrubDirection direction) noexcept;
 	void endScrub() noexcept;
+	void holdScrub(ScrubHolder holder, ScrubDirection direction) noexcept;
+	void releaseScrub(ScrubHolder holder, ScrubDirection direction) noexcept;
 
 	void tick(Nanoseconds elapsed) noexcept;
 	// Inside the graphics context. Draws at the origin of the current matrix, scaled to
@@ -159,7 +163,9 @@ private:
 		Seek,
 		SeekFromStart,
 		BeginScrub,
-		EndScrub
+		EndScrub,
+		HoldScrub,
+		ReleaseScrub
 	};
 	struct Command {
 		Control control = Control::Play;

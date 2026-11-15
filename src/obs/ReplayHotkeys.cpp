@@ -104,12 +104,6 @@ void runPlayerControl(HotkeyAction action, ReplayPlayer &player)
 	case HotkeyAction::NormalSpeed:
 		player.normalSpeed();
 		break;
-	case HotkeyAction::ScrubForward:
-		player.beginScrub(ScrubDirection::Forward);
-		break;
-	case HotkeyAction::ScrubBackward:
-		player.beginScrub(ScrubDirection::Backward);
-		break;
 	default:
 		break;
 	}
@@ -212,11 +206,13 @@ void runHotkey(HotkeyAction action, bool pressed, CaptureManager &manager, Seque
 	if (sequence.closed()) {
 		return;
 	}
+	if (action == HotkeyAction::ScrubForward || action == HotkeyAction::ScrubBackward) {
+		runScrub(ScrubHolder::Hotkeys,
+			 action == HotkeyAction::ScrubForward ? ScrubDirection::Forward : ScrubDirection::Backward,
+			 pressed, sequence);
+		return;
+	}
 	if (!pressed) {
-		// Only a scrub hears of its release, and ends whatever it began.
-		if (ReplayPlayer *player = sequence.player()) {
-			player->endScrub();
-		}
 		return;
 	}
 	switch (action) {
@@ -252,6 +248,21 @@ void runHotkey(HotkeyAction action, bool pressed, CaptureManager &manager, Seque
 	}
 	if (ReplayPlayer *player = controlledPlayer(sequence)) {
 		runPlayerControl(action, *player);
+	}
+}
+
+void runScrub(ScrubHolder holder, ScrubDirection direction, bool pressed, SequencePlayer &sequence) noexcept
+{
+	if (sequence.closed()) {
+		return;
+	}
+	if (pressed) {
+		if (ReplayPlayer *player = controlledPlayer(sequence)) {
+			player->holdScrub(holder, direction);
+		}
+	} else if (ReplayPlayer *player = sequence.player()) {
+		// Whatever the controls act on now, the hold is let go of where it was taken.
+		player->releaseScrub(holder, direction);
 	}
 }
 

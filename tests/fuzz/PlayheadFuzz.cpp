@@ -9,12 +9,14 @@
 #include <cstddef>
 #include <cstdint>
 #include <optional>
+#include <utility>
 #include <vector>
 
 using tapeloop::Nanoseconds;
 using tapeloop::Playhead;
 using tapeloop::PlayheadConfig;
 using tapeloop::ScrubDirection;
+using tapeloop::ScrubHolder;
 using tapeloop::fuzz::FuzzInput;
 using tapeloop::fuzz::require;
 
@@ -214,12 +216,16 @@ extern "C" int LLVMFuzzerTestOneInput(const uint8_t *data, size_t size)
 	// The frames as the playhead keeps them: sorted, without duplicates.
 	std::vector<Nanoseconds> frames;
 	std::optional<Int128> exact;
+	// The scrub holds, oldest first.
+	std::vector<std::pair<ScrubHolder, bool>> holds;
 	while (!input.empty()) {
 		const State before(playhead);
-		switch (input.byte() % 12) {
+		const unsigned op = input.byte() % 14U;
+		switch (op) {
 		case 0: {
 			frames = readFrames(input);
 			playhead.load(frames);
+			holds.clear();
 			std::sort(frames.begin(), frames.end());
 			frames.erase(std::unique(frames.begin(), frames.end()), frames.end());
 			require(!playhead.playing() && !playhead.scrubbing());
@@ -292,14 +298,64 @@ extern "C" int LLVMFuzzerTestOneInput(const uint8_t *data, size_t size)
 		case 10: {
 			const bool forward = input.flag();
 			playhead.beginScrub(forward ? ScrubDirection::Forward : ScrubDirection::Backward);
+			holds.clear();
 			require(playhead.scrubbing() && playhead.playing() == before.playing);
 			require(playhead.effectiveRate() == (forward ? limits.scrubStartRate : -limits.scrubStartRate));
 			break;
 		}
+		case 12:
+		case 13: {
+			// Two bits, so that a holder outside the enum comes too.
+			const std::pair hold{static_cast<ScrubHolder>(input.byte() % 4U), input.flag()};
+			const ScrubDirection direction = hold.second ? ScrubDirection::Forward
+								     : ScrubDirection::Backward;
+			const int32_t startRate = hold.second ? limits.scrubStartRate : -limits.scrubStartRate;
+			const int32_t rateBefore = playhead.effectiveRate();
+			if (static_cast<size_t>(hold.first) >= tapeloop::kScrubHolders) {
+				if (op == 12) {
+					playhead.holdScrub(hold.first, direction);
+				} else {
+					playhead.releaseScrub(hold.first, direction);
+				}
+				require(playhead.scrubbing() == before.scrubbing &&
+					playhead.effectiveRate() == rateBefore && playhead.playing() == before.playing);
+				break;
+			}
+			const auto held = std::find(holds.begin(), holds.end(), hold);
+			const bool latest = held != holds.end() && held + 1 == holds.end();
+			if (held != holds.end()) {
+				holds.erase(held);
+			}
+			if (op == 12) {
+				playhead.holdScrub(hold.first, direction);
+				holds.push_back(hold);
+				require(playhead.effectiveRate() == startRate);
+			} else {
+				playhead.releaseScrub(hold.first, direction);
+				if (!latest) {
+					require(playhead.scrubbing() == before.scrubbing &&
+						playhead.effectiveRate() == rateBefore);
+				} else if (holds.empty()) {
+					require(!playhead.scrubbing());
+				} else if ((rateBefore > 0) == holds.back().second) {
+					require(playhead.effectiveRate() == rateBefore);
+				} else {
+					require(playhead.effectiveRate() == -startRate);
+				}
+			}
+			require(playhead.playing() == before.playing);
+			break;
+		}
 		default:
 			playhead.endScrub();
+			holds.clear();
 			require(!playhead.scrubbing() && playhead.playing() == before.playing);
 			break;
+		}
+		// A scrub runs while anything holds it, the way of the latest hold.
+		if (!holds.empty()) {
+			require(playhead.scrubbing());
+			require((playhead.effectiveRate() > 0) == holds.back().second);
 		}
 		checkAlways(playhead, frames, limits);
 	}

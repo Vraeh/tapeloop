@@ -44,6 +44,7 @@ using tapeloop::DecodedFrame;
 using tapeloop::DecodeStatus;
 using tapeloop::Nanoseconds;
 using tapeloop::ScrubDirection;
+using tapeloop::ScrubHolder;
 using tapeloop::VideoCodec;
 using tapeloop::decode::FFmpegDecoder;
 using tapeloop::decode::Picture;
@@ -594,6 +595,54 @@ TEST_CASE_METHOD(ObsFixture, "the replay player steps, seeks, scrubs, reverses a
 			CHECK(state.frame >= previous);
 			previous = state.frame;
 		}
+	}
+
+	SECTION("a scrub goes on while any input holds it, the way of the latest")
+	{
+		player.seek(expected[starts[1]].time);
+		PlayerState state = checkTick(screen, player, expected);
+		size_t previous = state.frame;
+		player.holdScrub(ScrubHolder::Hotkeys, ScrubDirection::Forward);
+		player.holdScrub(ScrubHolder::Hotkeys, ScrubDirection::Backward);
+		for (int tick = 0; tick < 10; ++tick) {
+			state = checkTick(screen, player, expected);
+			CHECK(state.frame <= previous);
+			previous = state.frame;
+		}
+		CHECK(state.frame < starts[1]);
+
+		// Letting go of the latest key goes on with the one still held.
+		player.releaseScrub(ScrubHolder::Hotkeys, ScrubDirection::Backward);
+		const size_t turned = previous;
+		for (int tick = 0; tick < 30; ++tick) {
+			state = checkTick(screen, player, expected);
+			CHECK(state.scrubbing);
+			CHECK(state.frame >= previous);
+			previous = state.frame;
+		}
+		CHECK(state.frame > turned);
+
+		// Neither the dock nor the keys let go of a hold the other took.
+		player.holdScrub(ScrubHolder::Dock, ScrubDirection::Forward);
+		player.releaseScrub(ScrubHolder::Hotkeys, ScrubDirection::Backward);
+		player.releaseScrub(ScrubHolder::Hotkeys, ScrubDirection::Forward);
+		CHECK(checkTick(screen, player, expected).scrubbing);
+		player.holdScrub(ScrubHolder::Hotkeys, ScrubDirection::Forward);
+		player.releaseScrub(ScrubHolder::Dock, ScrubDirection::Forward);
+		CHECK(checkTick(screen, player, expected).scrubbing);
+		player.releaseScrub(ScrubHolder::Hotkeys, ScrubDirection::Forward);
+		state = checkTick(screen, player, expected);
+		CHECK_FALSE(state.scrubbing);
+		CHECK_FALSE(state.playing);
+
+		// A new clip forgets every hold, so a release after it starts nothing.
+		player.holdScrub(ScrubHolder::Dock, ScrubDirection::Backward);
+		player.holdScrub(ScrubHolder::Hotkeys, ScrubDirection::Forward);
+		CHECK(checkTick(screen, player, expected).scrubbing);
+		REQUIRE(player.load(gopsOf(clip)));
+		player.releaseScrub(ScrubHolder::Hotkeys, ScrubDirection::Forward);
+		player.tick(kTick);
+		CHECK_FALSE(player.state().scrubbing);
 	}
 
 	SECTION("reversing turns play around where it is")

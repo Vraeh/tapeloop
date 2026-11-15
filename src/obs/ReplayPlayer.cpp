@@ -47,6 +47,24 @@ int32_t nextPreset(int32_t rate, bool up) noexcept
 	return rate < 0 ? -next : next;
 }
 
+// A scrub hold as the value of a command: the holder in the second bit, the direction in
+// the first.
+static_assert(kScrubHolders == 2 && kScrubDirections == 2);
+int64_t scrubHoldValue(ScrubHolder holder, ScrubDirection direction) noexcept
+{
+	return (holder == ScrubHolder::Dock ? 2 : 0) + (direction == ScrubDirection::Forward ? 1 : 0);
+}
+
+ScrubHolder scrubHolderOf(int64_t value) noexcept
+{
+	return (value & 2) != 0 ? ScrubHolder::Dock : ScrubHolder::Hotkeys;
+}
+
+ScrubDirection scrubDirectionOf(int64_t value) noexcept
+{
+	return (value & 1) != 0 ? ScrubDirection::Forward : ScrubDirection::Backward;
+}
+
 } // namespace
 
 ReplayPlayer::ReplayPlayer(DecoderFactory decoders, DecodePlannerConfig planner, GpuPictures *gpu)
@@ -189,6 +207,16 @@ void ReplayPlayer::endScrub() noexcept
 	command(Control::EndScrub, 0);
 }
 
+void ReplayPlayer::holdScrub(ScrubHolder holder, ScrubDirection direction) noexcept
+{
+	command(Control::HoldScrub, scrubHoldValue(holder, direction));
+}
+
+void ReplayPlayer::releaseScrub(ScrubHolder holder, ScrubDirection direction) noexcept
+{
+	command(Control::ReleaseScrub, scrubHoldValue(holder, direction));
+}
+
 void ReplayPlayer::command(Control control, int64_t value) noexcept
 {
 	const std::lock_guard lock(mutex_);
@@ -239,6 +267,12 @@ void ReplayPlayer::apply(Playhead &playhead, const Command &command) noexcept
 		break;
 	case Control::EndScrub:
 		playhead.endScrub();
+		break;
+	case Control::HoldScrub:
+		playhead.holdScrub(scrubHolderOf(command.value), scrubDirectionOf(command.value));
+		break;
+	case Control::ReleaseScrub:
+		playhead.releaseScrub(scrubHolderOf(command.value), scrubDirectionOf(command.value));
 		break;
 	}
 }

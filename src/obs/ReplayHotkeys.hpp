@@ -3,6 +3,8 @@
 
 #pragma once
 
+#include "core/Playhead.hpp"
+
 #include <obs.h>
 #include <util/config-file.h>
 
@@ -82,8 +84,14 @@ private:
 // on air through the sequence. The controls of the player act while a source is on air,
 // and off air on the replay cued. Newer and older move the replay that goes on air next
 // through every replay that is not damaged, newest first, and the cue with it, as does a
-// capture. None of them does anything while the sequence is closed. UI thread.
+// capture. The scrub keys hold a scrub as runScrub() does. None of them does anything
+// while the sequence is closed. UI thread.
 void runHotkey(HotkeyAction action, bool pressed, CaptureManager &manager, SequencePlayer &sequence);
+
+// A press holds a scrub one way for the holder, on the player the controls act on, and
+// its release lets go of that hold only: the scrub goes on while another input holds it,
+// as the Playhead's holdScrub() says. Nothing while the sequence is closed. UI thread.
+void runScrub(ScrubHolder holder, ScrubDirection direction, bool pressed, SequencePlayer &sequence) noexcept;
 
 // The player the controls act on: the one on air, or the one holding the cued replay.
 // Null when there is neither.

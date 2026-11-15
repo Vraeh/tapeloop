@@ -20,6 +20,7 @@ using namespace std::chrono_literals;
 using tapeloop::Nanoseconds;
 using tapeloop::Playhead;
 using tapeloop::ScrubDirection;
+using tapeloop::ScrubHolder;
 
 namespace {
 
@@ -296,6 +297,137 @@ TEST_CASE("Playhead resumes what it was doing after a scrub")
 		CHECK(playhead.position() == kOrigin + 100ms);
 		playhead.advance(1s);
 		CHECK(playhead.position() == kOrigin + 100ms);
+	}
+}
+
+TEST_CASE("Playhead scrubs while any input holds it, the way of the latest")
+{
+	Playhead playhead = loaded(600);
+	playhead.seek(frameTime(300));
+
+	SECTION("letting go of the latest goes back to the way still held")
+	{
+		playhead.holdScrub(ScrubHolder::Hotkeys, ScrubDirection::Forward);
+		playhead.advance(1s);
+		const int32_t ramped = playhead.effectiveRate();
+		CHECK(ramped > 500);
+		playhead.holdScrub(ScrubHolder::Hotkeys, ScrubDirection::Backward);
+		CHECK(playhead.effectiveRate() == -500);
+		playhead.advance(100ms);
+		playhead.releaseScrub(ScrubHolder::Hotkeys, ScrubDirection::Backward);
+		CHECK(playhead.scrubbing());
+		// The other way, so the curve starts over.
+		CHECK(playhead.effectiveRate() == 500);
+		const Nanoseconds before = playhead.position();
+		playhead.advance(100ms);
+		CHECK(playhead.position() == before + 50ms);
+		playhead.releaseScrub(ScrubHolder::Hotkeys, ScrubDirection::Forward);
+		CHECK_FALSE(playhead.scrubbing());
+	}
+
+	SECTION("letting go of one held before the latest changes nothing")
+	{
+		playhead.holdScrub(ScrubHolder::Hotkeys, ScrubDirection::Forward);
+		playhead.holdScrub(ScrubHolder::Dock, ScrubDirection::Backward);
+		playhead.advance(1s);
+		const int32_t ramped = playhead.effectiveRate();
+		playhead.releaseScrub(ScrubHolder::Hotkeys, ScrubDirection::Forward);
+		CHECK(playhead.effectiveRate() == ramped);
+		playhead.releaseScrub(ScrubHolder::Dock, ScrubDirection::Backward);
+		CHECK_FALSE(playhead.scrubbing());
+	}
+
+	SECTION("the same way still held keeps the curve where it is")
+	{
+		playhead.holdScrub(ScrubHolder::Dock, ScrubDirection::Forward);
+		playhead.holdScrub(ScrubHolder::Hotkeys, ScrubDirection::Forward);
+		playhead.advance(1s);
+		const int32_t ramped = playhead.effectiveRate();
+		playhead.releaseScrub(ScrubHolder::Hotkeys, ScrubDirection::Forward);
+		CHECK(playhead.effectiveRate() == ramped);
+		playhead.releaseScrub(ScrubHolder::Dock, ScrubDirection::Forward);
+		CHECK_FALSE(playhead.scrubbing());
+	}
+
+	SECTION("an input lets go only of its own hold")
+	{
+		playhead.holdScrub(ScrubHolder::Dock, ScrubDirection::Forward);
+		playhead.releaseScrub(ScrubHolder::Hotkeys, ScrubDirection::Forward);
+		playhead.releaseScrub(ScrubHolder::Dock, ScrubDirection::Backward);
+		CHECK(playhead.effectiveRate() == 500);
+		playhead.holdScrub(ScrubHolder::Hotkeys, ScrubDirection::Backward);
+		playhead.releaseScrub(ScrubHolder::Dock, ScrubDirection::Forward);
+		CHECK(playhead.effectiveRate() == -500);
+		playhead.releaseScrub(ScrubHolder::Hotkeys, ScrubDirection::Backward);
+		CHECK_FALSE(playhead.scrubbing());
+	}
+
+	SECTION("holding again makes it the latest")
+	{
+		playhead.holdScrub(ScrubHolder::Dock, ScrubDirection::Forward);
+		playhead.holdScrub(ScrubHolder::Hotkeys, ScrubDirection::Backward);
+		playhead.holdScrub(ScrubHolder::Dock, ScrubDirection::Forward);
+		CHECK(playhead.effectiveRate() == 500);
+		playhead.releaseScrub(ScrubHolder::Dock, ScrubDirection::Forward);
+		CHECK(playhead.effectiveRate() == -500);
+		playhead.releaseScrub(ScrubHolder::Hotkeys, ScrubDirection::Backward);
+		CHECK_FALSE(playhead.scrubbing());
+	}
+
+	SECTION("every input holds it each way at once, and nothing else holds it")
+	{
+		const auto noHolder = static_cast<ScrubHolder>(2);
+		const auto noDirection = static_cast<ScrubDirection>(2);
+		playhead.holdScrub(noHolder, ScrubDirection::Forward);
+		playhead.holdScrub(ScrubHolder::Dock, noDirection);
+		CHECK_FALSE(playhead.scrubbing());
+
+		playhead.holdScrub(ScrubHolder::Hotkeys, ScrubDirection::Forward);
+		playhead.holdScrub(ScrubHolder::Dock, ScrubDirection::Backward);
+		playhead.holdScrub(ScrubHolder::Hotkeys, ScrubDirection::Backward);
+		playhead.holdScrub(ScrubHolder::Dock, ScrubDirection::Forward);
+		playhead.holdScrub(ScrubHolder::Hotkeys, ScrubDirection::Forward);
+		playhead.holdScrub(ScrubHolder::Dock, ScrubDirection::Backward);
+		CHECK(playhead.effectiveRate() == -500);
+		playhead.advance(1s);
+		const int32_t ramped = playhead.effectiveRate();
+		playhead.holdScrub(noHolder, ScrubDirection::Forward);
+		playhead.holdScrub(static_cast<ScrubHolder>(-1), ScrubDirection::Forward);
+		playhead.holdScrub(ScrubHolder::Hotkeys, noDirection);
+		CHECK(playhead.effectiveRate() == ramped);
+
+		// Oldest first: Hotkeys backward, Dock forward, Hotkeys forward, Dock backward.
+		playhead.releaseScrub(ScrubHolder::Dock, ScrubDirection::Backward);
+		CHECK(playhead.effectiveRate() == 500);
+		playhead.releaseScrub(ScrubHolder::Hotkeys, ScrubDirection::Forward);
+		CHECK(playhead.effectiveRate() == 500);
+		playhead.releaseScrub(ScrubHolder::Dock, ScrubDirection::Forward);
+		CHECK(playhead.effectiveRate() == -500);
+		playhead.releaseScrub(noHolder, ScrubDirection::Forward);
+		playhead.releaseScrub(ScrubHolder::Hotkeys, ScrubDirection::Backward);
+		CHECK_FALSE(playhead.scrubbing());
+	}
+
+	SECTION("a new clip, or a scrub begun or ended without a holder, forgets every hold")
+	{
+		playhead.holdScrub(ScrubHolder::Hotkeys, ScrubDirection::Forward);
+		playhead.holdScrub(ScrubHolder::Dock, ScrubDirection::Backward);
+		playhead.load({frameTime(0), frameTime(1), frameTime(2)});
+		CHECK_FALSE(playhead.scrubbing());
+		playhead.releaseScrub(ScrubHolder::Dock, ScrubDirection::Backward);
+		CHECK_FALSE(playhead.scrubbing());
+
+		playhead.holdScrub(ScrubHolder::Hotkeys, ScrubDirection::Forward);
+		playhead.holdScrub(ScrubHolder::Dock, ScrubDirection::Backward);
+		playhead.endScrub();
+		playhead.releaseScrub(ScrubHolder::Dock, ScrubDirection::Backward);
+		CHECK_FALSE(playhead.scrubbing());
+
+		playhead.holdScrub(ScrubHolder::Hotkeys, ScrubDirection::Forward);
+		playhead.beginScrub(ScrubDirection::Backward);
+		playhead.holdScrub(ScrubHolder::Dock, ScrubDirection::Backward);
+		playhead.releaseScrub(ScrubHolder::Dock, ScrubDirection::Backward);
+		CHECK_FALSE(playhead.scrubbing());
 	}
 }
 

@@ -49,7 +49,7 @@ private:
 	QPushButton *addButton(const char *name, const char *label, const char *accessible, PlayerControl control);
 	QPushButton *addScrubButton(const char *name, const char *label, const char *accessible, PlayerControl control);
 	void control(PlayerControl control, bool pressed) noexcept;
-	// Ends a scrub still held, as when its button lets go.
+	// Lets go of the dock's scrub still held, as when its button lets go.
 	void releaseScrub() noexcept;
 
 	DockBackend &backend_;
