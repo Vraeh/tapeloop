@@ -6,6 +6,7 @@
 #include "core/FileIo.hpp"
 #include "core/ReplayWriter.hpp"
 
+#include "FifoWatchdog.hpp"
 #include "StoredReplays.hpp"
 #include "TempDirectory.hpp"
 
@@ -228,6 +229,22 @@ TEST_CASE("a GOP whose segment is damaged or gone is not read")
 		CHECK(reader.stats().failed == 2);
 	}
 }
+
+#ifndef _WIN32
+TEST_CASE("a named pipe in place of a segment is refused without waiting for a writer")
+{
+	TempDirectory dir;
+	const Stored stored = store(dir.path(), makeGops(2));
+	const fs::path segment = segmentOf(stored, 0);
+	fs::remove(segment);
+	// The watchdog lets a read that waits for a writer go, so that it fails the test
+	// instead of hanging it.
+	const tapeloop::test::FifoWatchdog watchdog(segment);
+	GopReader reader;
+	CHECK_FALSE(reader.read(stored.manifest(), stored.source(), 0));
+	CHECK_FALSE(watchdog.released());
+}
+#endif
 
 TEST_CASE("a self-contained replay is read from its own file, its index without its GOPs")
 {

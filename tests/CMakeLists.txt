@@ -39,6 +39,9 @@ add_subdirectory(../src/core core)
 # Counts the segment files a scan looks up, for a test that bounds a scan's lookups
 # without timing it.
 target_compile_definitions(tapeloop-core PUBLIC TAPELOOP_COUNT_LOOKUPS)
+# Counts what a parameter set lookup compares, for a test that must fail rather than hang
+# when a lookup reads the whole configuration again.
+target_compile_definitions(tapeloop-core PUBLIC TAPELOOP_COUNT_COMPARISONS)
 
 add_executable(tapeloop-core-tests)
 target_sources(
@@ -57,9 +60,11 @@ target_sources(
     core/EncoderPolicyTests.cpp
     core/FailurePacerTests.cpp
     core/FakeDecoder.hpp
+    core/FifoWatchdog.hpp
     core/FileIoTests.cpp
     core/GopReaderTests.cpp
     core/GopTests.cpp
+    core/LeaseHolder.hpp
     core/MediaTimeTests.cpp
     core/MomentCutterTests.cpp
     core/NalUnitWriter.hpp

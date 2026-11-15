@@ -15,17 +15,7 @@ namespace {
 constexpr size_t kWholeGop = std::numeric_limits<size_t>::max();
 // The index of no GOP, for a kept slot between two GOPs.
 constexpr size_t kNoGop = std::numeric_limits<size_t>::max();
-
-std::optional<size_t> packetOfPts(const Gop &gop, int64_t pts) noexcept
-{
-	const auto packets = gop.packets();
-	for (size_t i = 0; i < packets.size(); ++i) {
-		if (packets[i].pts == pts) {
-			return i;
-		}
-	}
-	return std::nullopt;
-}
+constexpr size_t kNoPacket = std::numeric_limits<size_t>::max();
 
 size_t distance(size_t a, size_t b) noexcept
 {
@@ -86,6 +76,9 @@ void DecodePlanner::load(std::unique_ptr<GopSource> gops)
 		decoder_.close();
 		started_.reset();
 	}
+	// Sized for the longest GOP a pass went over, the index goes with the clip. Assigning {}
+	// would keep its memory, as that picks the initializer list overload.
+	packetsByPts_ = decltype(packetsByPts_)();
 	fresh_ = true;
 	gops_ = std::move(gops);
 	streamGop_.reset();
@@ -164,6 +157,11 @@ size_t DecodePlanner::heldFrames() const noexcept
 	return held;
 }
 
+size_t DecodePlanner::indexBytes() const noexcept
+{
+	return packetsByPts_.capacity() * sizeof(decltype(packetsByPts_)::value_type);
+}
+
 DecodePlanner::KeptGop &DecodePlanner::keep(size_t gop)
 {
 	if (KeptGop *kept = find(gop)) {
@@ -192,6 +190,9 @@ DecodePlanner::KeptGop &DecodePlanner::keep(size_t gop)
 	const size_t count = gops_->packetCount(gop);
 	slot->frames.assign(count, std::nullopt);
 	slot->dropped.assign(count, char{0});
+	slot->low = count;
+	slot->high = 0;
+	slot->spared = kNoPacket;
 	slot->gop = gop;
 	return *slot;
 }
@@ -231,31 +232,74 @@ void DecodePlanner::drop(KeptGop &kept, size_t packet) noexcept
 
 bool DecodePlanner::makeRoom(KeptGop &kept, size_t bytes, size_t wanted) noexcept
 {
-	const auto fits = [&] {
-		return heldBytes_ <= config_.maxBytes && bytes <= config_.maxBytes - heldBytes_;
-	};
 	for (KeptGop &other : kept_) {
 		if (&other == &kept || other.gop == lastGop_) {
 			continue;
 		}
-		const size_t count = other.frames.size();
-		for (size_t i = 0; i < count && !fits(); ++i) {
-			drop(other, other.gop < kept.gop ? i : count - 1 - i);
+		const size_t end = std::min(other.high, other.frames.size());
+		if (other.gop < kept.gop) {
+			dropSpared(other, bytes, kNoPacket);
+			other.low = dropUp(other, other.low, end, bytes, kNoPacket);
+		} else {
+			other.high = dropDown(other, end, other.low, bytes);
+			dropSpared(other, bytes, kNoPacket);
 		}
 	}
 	// Reverse play keeps what it needs next: the frames just before the one asked for.
 	const size_t count = kept.frames.size();
-	// Only frames this pass has not come to yet: one it just brought out may be the next
-	// one shown.
-	for (size_t packet = count; wanted < count && packet > std::max(wanted + 1, passNext_) && !fits(); --packet) {
-		drop(kept, packet - 1);
+	if (wanted < count) {
+		// Only frames this pass has not come to yet: one it just brought out may be the next
+		// one shown.
+		const size_t stop = std::max(wanted + 1, passNext_);
+		kept.high = dropDown(kept, std::min(kept.high, count), std::max(stop, kept.low), bytes);
 	}
-	for (size_t packet = 0; packet < count && !fits(); ++packet) {
+	dropSpared(kept, bytes, wanted);
+	// Then the earliest, in two parts: the pass brings frames out right behind passNext_,
+	// and none past it.
+	const size_t behind = dropUp(kept, kept.low, passNext_, bytes, wanted);
+	if (kept.low <= wanted && wanted < behind && kept.frames[wanted]) {
+		kept.spared = wanted;
+	}
+	kept.low = behind;
+	const size_t from = std::max(passNext_, aheadFrom_);
+	const size_t ahead = dropUp(kept, from, std::min(kept.high, count), bytes, wanted);
+	// The walk skips the frame asked for, yet leaves nothing held: a pass is asked only for
+	// a frame not held, and once it holds it, passNext_ is past it.
+	aheadFrom_ = ahead;
+	return fits(bytes);
+}
+
+bool DecodePlanner::fits(size_t bytes) const noexcept
+{
+	return heldBytes_ <= config_.maxBytes && bytes <= config_.maxBytes - heldBytes_;
+}
+
+size_t DecodePlanner::dropUp(KeptGop &kept, size_t from, size_t to, size_t bytes, size_t wanted) noexcept
+{
+	size_t packet = from;
+	for (; packet < to && !fits(bytes); ++packet) {
 		if (packet != wanted) {
 			drop(kept, packet);
 		}
 	}
-	return fits();
+	return packet;
+}
+
+size_t DecodePlanner::dropDown(KeptGop &kept, size_t from, size_t to, size_t bytes) noexcept
+{
+	size_t packet = from;
+	for (; packet > to && !fits(bytes); --packet) {
+		drop(kept, packet - 1);
+	}
+	return packet;
+}
+
+void DecodePlanner::dropSpared(KeptGop &kept, size_t bytes, size_t wanted) noexcept
+{
+	if (kept.spared < kept.low && kept.spared != wanted && !fits(bytes)) {
+		drop(kept, kept.spared);
+		kept.spared = kNoPacket;
+	}
 }
 
 void DecodePlanner::releaseAll() noexcept
@@ -342,6 +386,7 @@ DecodeStatus DecodePlanner::fail(DecodeStatus status) noexcept
 		releaseAll();
 		decoder_.close();
 		started_.reset();
+		packetsByPts_ = decltype(packetsByPts_)();
 		fresh_ = true;
 	}
 	return status;
@@ -349,6 +394,9 @@ DecodeStatus DecodePlanner::fail(DecodeStatus status) noexcept
 
 DecodeStatus DecodePlanner::startAt(size_t gop, std::shared_ptr<const Gop> read)
 {
+	// Sized first, so that nothing after the decoder opens can throw.
+	const std::span<const PacketRecord> packets = read->packets();
+	packetsByPts_.reserve(packets.size());
 	if (!started_ || !opensAlike(*started_, *read)) {
 		++work_.opens;
 		const DecodeStatus status = decoder_.open(read->codec(), configOf(*read));
@@ -365,8 +413,28 @@ DecodeStatus DecodePlanner::startAt(size_t gop, std::shared_ptr<const Gop> read)
 	started_ = std::move(read);
 	nextPacket_ = 0;
 	passNext_ = 0;
+	aheadFrom_ = 0;
 	flushed_ = false;
+	packetsByPts_.clear();
+	for (size_t i = 0; i < packets.size(); ++i) {
+		packetsByPts_.emplace_back(packets[i].pts, i);
+	}
+	// Packets in decode order are in presentation order too unless frames are reordered.
+	if (!std::is_sorted(packetsByPts_.begin(), packetsByPts_.end())) {
+		std::sort(packetsByPts_.begin(), packetsByPts_.end());
+	}
 	return DecodeStatus::Ok;
+}
+
+std::optional<size_t> DecodePlanner::packetOf(int64_t pts) const noexcept
+{
+	// The first packet of that time, should two share it.
+	const auto found =
+		std::lower_bound(packetsByPts_.begin(), packetsByPts_.end(), std::pair<int64_t, size_t>(pts, 0));
+	if (found == packetsByPts_.end() || found->first != pts) {
+		return std::nullopt;
+	}
+	return found->second;
 }
 
 DecodeStatus DecodePlanner::receiveAll(KeptGop &kept, size_t wanted)
@@ -384,7 +452,7 @@ DecodeStatus DecodePlanner::receiveAll(KeptGop &kept, size_t wanted)
 		}
 		++work_.framesReceived;
 		// A frame of no packet, or from before where the pass is, is not one to keep.
-		const std::optional<size_t> index = packetOfPts(source, frame.pts);
+		const std::optional<size_t> index = packetOf(frame.pts);
 		if (!index || *index < passNext_) {
 			decoder_.release(frame);
 			continue;
@@ -412,6 +480,13 @@ DecodeStatus DecodePlanner::receiveAll(KeptGop &kept, size_t wanted)
 		kept.dropped[*index] = char{0};
 		++kept.received;
 		heldBytes_ += frame.bytes;
+		kept.high = std::max(kept.high, *index + 1);
+		if (*index < kept.low) {
+			kept.low = *index;
+			if (kept.spared > *index) {
+				kept.spared = kNoPacket;
+			}
+		}
 	}
 }
 
