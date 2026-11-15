@@ -40,9 +40,10 @@ Tapeloop/
 - Every name is made safe for Windows, macOS and Linux before it is used: characters
   one of them refuses, control characters and bytes that are not UTF-8 become `_`, as
   does a leading dot; trailing spaces and dots are dropped; and the name is cut to 120
-  bytes at a character boundary (for a segment, the key part; the sequence and
-  extension come after). A segment's path is built from the safe form of the key, so a
-  key cannot name a file outside `data`.
+  bytes at a character boundary before the extension is added, for every kind of name
+  (for a segment, the key part, with the sequence and extension after it; for an
+  export, before ` (2)` and so on). A segment's path is built from the safe form of the
+  key, so a key cannot name a file outside `data`.
 
 ### Temporary names and the scan
 
@@ -53,12 +54,12 @@ complete. A file with its final name is therefore always whole.
 When OBS has finished loading, and when the recording folder changes, Tapeloop scans
 the `Tapeloop` folder. For each folder directly inside it, in name order, the scan:
 
-- deletes every `*.tplp.part`, which a crash left half written;
+- deletes the `*.tplp.part` files a crash left half written;
 - reads every `*.tplp` that is a regular file, and lists it as a
   replay. A file that does not decode, or that refers to a segment that is not a
   regular file, is listed as damaged;
-- deletes every `*.tapeloop-part` in `Export` that no export of this OBS session is
-  writing.
+- deletes the `*.tapeloop-part` files in `Export` that no export of this OBS session
+  is writing.
 
 The scan lists no replay from files directly in `Tapeloop`, inside `data` or inside
 `Export`. A self-contained replay is listed when it is placed in a folder directly
@@ -450,8 +451,8 @@ every replay file as untrusted input, and so should any other program that reads
 
 Files:
 
-- Only regular files are opened. A named pipe or another device at a replay's path is
-  refused at once instead of waiting for a writer. The type comes from the opened
+- A named pipe or a similar device at a replay's path is refused at once instead of
+  waiting for a writer. The type comes from the opened
   file, not from the path when it was listed.
 
 The footer, before anything else is read:
@@ -499,8 +500,8 @@ Each GOP, when it is read:
   CRCs say.
 
 The bitstreams go to FFmpeg's decoder with the picture size limit above. Before an MP4
-export, each sequence parameter set is checked to be complete, since FFmpeg's muxer
-reads it as it writes the file.
+export, each sequence parameter set is checked to hold the fields FFmpeg's muxer
+reads as it writes the file.
 
 ### What another reader must check
 
@@ -517,4 +518,4 @@ particular:
   overflow.
 - Refuse anything that is not a regular file, and do not block on a pipe.
 - Treat the configuration and the packets as untrusted bitstreams, with the decoder's
-  limits on picture size and memory set.
+  limits set.
