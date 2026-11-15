@@ -17,7 +17,7 @@ constexpr size_t kSequenceDigits = 6;
 // Characters Windows refuses in a name; '/' is the only one POSIX systems refuse too.
 constexpr std::string_view kRefused = "<>:\"/\\|?*";
 
-constexpr std::array<std::string_view, 4> kDeviceNames = {"CON", "PRN", "AUX", "NUL"};
+constexpr std::array<std::string_view, 6> kDeviceNames = {"CON", "PRN", "AUX", "NUL", "CONIN$", "CONOUT$"};
 constexpr std::array<std::string_view, 2> kNumberedDeviceNames = {"COM", "LPT"};
 
 bool isContinuation(unsigned char byte)
@@ -85,19 +85,32 @@ bool equalsIgnoringCase(std::string_view a, std::string_view b)
 	return true;
 }
 
-// Windows treats the name as a device even with an extension, as in "nul.txt".
+// Windows treats the name as a device even with an extension, as in "nul.txt", and ignores
+// spaces before the dot. COM and LPT take a digit, and the superscript one, two and three.
 bool isDeviceName(std::string_view name)
 {
-	const std::string_view base = name.substr(0, name.find('.'));
+	std::string_view base = name.substr(0, name.find('.'));
+	while (!base.empty() && base.back() == ' ') {
+		base.remove_suffix(1);
+	}
 	for (const std::string_view device : kDeviceNames) {
 		if (equalsIgnoringCase(base, device)) {
 			return true;
 		}
 	}
 	for (const std::string_view device : kNumberedDeviceNames) {
-		if (base.size() == 4 && equalsIgnoringCase(base.substr(0, 3), device) && base[3] >= '1' &&
-		    base[3] <= '9') {
+		if (base.size() < 4 || !equalsIgnoringCase(base.substr(0, 3), device)) {
+			continue;
+		}
+		const std::string_view suffix = base.substr(3);
+		if (suffix.size() == 1 && suffix[0] >= '0' && suffix[0] <= '9') {
 			return true;
+		}
+		if (suffix.size() == 2 && static_cast<unsigned char>(suffix[0]) == 0xC2) {
+			const auto second = static_cast<unsigned char>(suffix[1]);
+			if (second == 0xB9 || second == 0xB2 || second == 0xB3) {
+				return true;
+			}
 		}
 	}
 	return false;

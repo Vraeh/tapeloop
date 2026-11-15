@@ -60,7 +60,18 @@ TEST_CASE("a safe file name never names a Windows device")
 	CHECK(safeFileName("nul.txt") == "_nul.txt");
 	CHECK(safeFileName("Com7") == "_Com7");
 	CHECK(safeFileName("lpt9.tplp") == "_lpt9.tplp");
-	CHECK(safeFileName("COM0") == "COM0");
+	CHECK(safeFileName("COM0") == "_COM0");
+	CHECK(safeFileName("COM\xC2\xB9") == "_COM\xC2\xB9");
+	CHECK(safeFileName("LPT\xC2\xB2") == "_LPT\xC2\xB2");
+	CHECK(safeFileName("com\xC2\xB3.mp4") == "_com\xC2\xB3.mp4");
+	CHECK(safeFileName("CONIN$") == "_CONIN$");
+	CHECK(safeFileName("conout$.log") == "_conout$.log");
+	CHECK(safeFileName("NUL .txt") == "_NUL .txt");
+	CHECK(safeFileName("AUX.tar.gz") == "_AUX.tar.gz");
+	CHECK(safeFileName("CON ") == "_CON");
+	CHECK(safeFileName("COM\xC2\xBA") == "COM\xC2\xBA");
+	CHECK(safeFileName("COM10") == "COM10");
+	CHECK(safeFileName("CONIN") == "CONIN");
 	CHECK(safeFileName("CONSOLE") == "CONSOLE");
 	CHECK(safeFileName("LPT") == "LPT");
 }
@@ -83,6 +94,17 @@ TEST_CASE("a broadcast folder is named after the collection and the minute")
 	CHECK(tapeloop::broadcastFolderName("Liga", time) == "Liga 2026-10-09 21-05");
 	CHECK(tapeloop::broadcastFolderName("Final: A/B", time) == "Final_ A_B 2026-10-09 21-05");
 	CHECK(tapeloop::broadcastFolderName("", LocalTime{2027, 1, 2, 3, 4, 5}) == "_ 2027-01-02 03-04");
+}
+
+TEST_CASE("a collection name with a dot cannot make the folder a device name")
+{
+	// Windows takes the device from what comes before the first dot, so the date after the
+	// name does not help.
+	const LocalTime time{2026, 11, 14, 21, 5, 42};
+	CHECK(tapeloop::broadcastFolderName("COM\xC2\xB9.Final", time) == "_COM\xC2\xB9.Final 2026-11-14 21-05");
+	CHECK(tapeloop::broadcastFolderName("NUL .Final", time) == "_NUL .Final 2026-11-14 21-05");
+	CHECK(tapeloop::broadcastFolderName("LPT0.x", time) == "_LPT0.x 2026-11-14 21-05");
+	CHECK(tapeloop::broadcastFolderName("Liga.Final", time) == "Liga.Final 2026-11-14 21-05");
 }
 
 TEST_CASE("a long collection name is shortened so that the date stays")
