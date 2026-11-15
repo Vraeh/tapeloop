@@ -6,9 +6,11 @@
 #include "core/BufferBudget.hpp"
 
 #include "ui/AirSettingsDialog.hpp"
+#include "ui/MiniPlayer.hpp"
 #include "ui/SourceSettingsDialog.hpp"
 
 #include <QAbstractItemView>
+#include <QByteArray>
 #include <QCheckBox>
 #include <QComboBox>
 #include <QDateTime>
@@ -34,10 +36,12 @@
 #include <QVBoxLayout>
 
 #include <algorithm>
+#include <array>
 #include <chrono>
 #include <cstdint>
 #include <functional>
 #include <limits>
+#include <string>
 #include <utility>
 
 namespace tapeloop::ui {
@@ -78,6 +82,21 @@ template<typename Function> void guarded(Function &&function) noexcept
 		function();
 	} catch (...) {
 	}
+}
+
+// In the order of the player view list.
+constexpr std::array kPlayerShows{PlayerShows::Both, PlayerShows::Controls, PlayerShows::Picture};
+
+PlayerShows showsAt(int index)
+{
+	return index > 0 && index < static_cast<int>(kPlayerShows.size()) ? kPlayerShows[static_cast<size_t>(index)]
+									  : PlayerShows::Both;
+}
+
+int indexOfShows(PlayerShows shows)
+{
+	const auto found = std::find(kPlayerShows.begin(), kPlayerShows.end(), shows);
+	return found == kPlayerShows.end() ? 0 : static_cast<int>(found - kPlayerShows.begin());
 }
 
 // Qt goes past the rows that cannot be current on the arrow keys only, and ignores Home,
@@ -151,7 +170,7 @@ private:
 
 } // namespace
 
-TapeloopDock::TapeloopDock(DockBackend &backend, TextLookup text, QWidget *parent)
+TapeloopDock::TapeloopDock(DockBackend &backend, TextLookup text, QWidget *mainWindow, QWidget *parent)
 	: QWidget(parent),
 	  backend_(backend),
 	  text_(std::move(text)),
@@ -161,6 +180,8 @@ TapeloopDock::TapeloopDock(DockBackend &backend, TextLookup text, QWidget *paren
 	  resolution_(new QComboBox(this)),
 	  startWithOutputs_(new QCheckBox(text_("Dock.StartWithOutputs"), this)),
 	  activateOffAir_(new QCheckBox(text_("Dock.ActivateOffAir"), this)),
+	  playerPlace_(new QComboBox(this)),
+	  playerShows_(new QComboBox(this)),
 	  forceH264_(new QCheckBox(text_("Dock.ForceH264"), this)),
 	  advanced_(new QCheckBox(text_("Dock.Advanced"), this)),
 	  advancedSettings_(new QWidget(this)),
@@ -182,8 +203,12 @@ TapeloopDock::TapeloopDock(DockBackend &backend, TextLookup text, QWidget *paren
 	  removeTag_(new QPushButton(text_("Dock.RemoveTag"), this)),
 	  exportMp4_(new QPushButton(text_("Dock.ExportMp4"), this)),
 	  exportReplay_(new QPushButton(text_("Dock.ExportReplay"), this)),
+	  showPlayer_(new QPushButton(text_("Dock.Player.ShowWindow"), this)),
+	  playerSlot_(new QWidget(this)),
 	  exportStatus_(new QLabel(this)),
-	  airStatus_(new QLabel(this))
+	  airStatus_(new QLabel(this)),
+	  mainWindow_(mainWindow),
+	  playerMoved_(new QTimer(this))
 {
 	sources_->setObjectName("sources");
 	sources_->setHorizontalHeaderLabels({text_("Dock.Source"), text_("Dock.Shown"), text_("Dock.Status")});
@@ -271,6 +296,24 @@ TapeloopDock::TapeloopDock(DockBackend &backend, TextLookup text, QWidget *paren
 	// It may name a file.
 	airStatus_->setTextFormat(Qt::PlainText);
 	airStatus_->hide();
+	playerPlace_->setObjectName("playerPlace");
+	playerPlace_->addItem(text_("Dock.Player.InDock"));
+	playerPlace_->addItem(text_("Dock.Player.InWindow"));
+	playerShows_->setObjectName("playerShows");
+	playerShows_->addItem(text_("Dock.Player.ControlsAndPicture"));
+	playerShows_->addItem(text_("Dock.Player.ControlsOnly"));
+	playerShows_->addItem(text_("Dock.Player.PictureOnly"));
+	showPlayer_->setObjectName("showPlayer");
+	showPlayer_->hide();
+	playerSlot_->setObjectName("playerSlot");
+	auto *slotLayout = new QVBoxLayout(playerSlot_);
+	slotLayout->setContentsMargins(0, 0, 0, 0);
+	playerMoved_->setSingleShot(true);
+	playerMoved_->setInterval(1000);
+	connect(playerMoved_, &QTimer::timeout, this, [this] { savePlayerGeometry(); });
+	if (mainWindow_) {
+		mainWindow_->installEventFilter(this);
+	}
 	followsOutputs_->setObjectName("followsOutputs");
 	followsOutputs_->setWordWrap(true);
 	followsOutputs_->hide();
@@ -280,6 +323,8 @@ TapeloopDock::TapeloopDock(DockBackend &backend, TextLookup text, QWidget *paren
 	form->addRow(text_("Dock.Resolution"), resolution_);
 	form->addRow(startWithOutputs_);
 	form->addRow(activateOffAir_);
+	form->addRow(text_("Dock.Player.Place"), playerPlace_);
+	form->addRow(text_("Dock.Player.Show"), playerShows_);
 	form->addRow(advanced_);
 
 	// The settings few need, shown by the switch above.
@@ -316,6 +361,8 @@ TapeloopDock::TapeloopDock(DockBackend &backend, TextLookup text, QWidget *paren
 	exporting->addWidget(exportMp4_);
 	exporting->addWidget(exportReplay_);
 	layout->addLayout(exporting);
+	layout->addWidget(showPlayer_);
+	layout->addWidget(playerSlot_);
 	layout->addWidget(airStatus_);
 	layout->addWidget(exportStatus_);
 
@@ -362,6 +409,18 @@ TapeloopDock::TapeloopDock(DockBackend &backend, TextLookup text, QWidget *paren
 		changeSettings([](BufferSettings &settings, int on) { settings.activateOffAir = on != 0; },
 			       checked ? 1 : 0);
 	});
+	connect(playerPlace_, &QComboBox::currentIndexChanged, this, [this](int index) {
+		changeSettings(
+			[](BufferSettings &settings, int chosen) {
+				settings.playerPlace = chosen == 1 ? PlayerPlace::Window : PlayerPlace::Dock;
+			},
+			index);
+	});
+	connect(playerShows_, &QComboBox::currentIndexChanged, this, [this](int index) {
+		changeSettings([](BufferSettings &settings, int chosen) { settings.playerShows = showsAt(chosen); },
+			       index);
+	});
+	connect(showPlayer_, &QPushButton::clicked, this, [this] { showPlayerWindow(); });
 	connect(advanced_, &QCheckBox::toggled, this, [this](bool checked) {
 		changeSettings([](BufferSettings &settings, int on) { settings.showAdvanced = on != 0; },
 			       checked ? 1 : 0);
@@ -495,11 +554,13 @@ TapeloopDock::TapeloopDock(DockBackend &backend, TextLookup text, QWidget *paren
 		refresh();
 	});
 
-	// OBS adds docks hidden; a hidden dock has nothing to show.
+	// OBS adds docks hidden; a hidden dock has nothing to show but the player's window.
 	auto *timer = new QTimer(this);
 	connect(timer, &QTimer::timeout, this, [this] {
 		if (isVisible()) {
 			refresh();
+		} else if (playerWindow_ && playerWindow_->isVisible()) {
+			guarded([this] { updatePlayer(backend_.settings()); });
 		}
 	});
 	timer->start(1000);
@@ -534,6 +595,8 @@ void TapeloopDock::refresh()
 		const QSignalBlocker blockOtherAdapters(otherAdapters_);
 		const QSignalBlocker blockAdvanced(advanced_);
 		const QSignalBlocker blockMemory(bufferMemory_);
+		const QSignalBlocker blockPlace(playerPlace_);
+		const QSignalBlocker blockShows(playerShows_);
 		// A value being typed is not overwritten.
 		if (!length_->hasFocus()) {
 			length_->setValue(seconds(settings.length));
@@ -546,6 +609,9 @@ void TapeloopDock::refresh()
 		forceH264_->setEnabled(settings.replayEncoder.empty());
 		otherAdapters_->setChecked(settings.allowOtherAdapters);
 		advanced_->setChecked(settings.showAdvanced);
+		playerPlace_->setCurrentIndex(settings.playerPlace == PlayerPlace::Window ? 1 : 0);
+		playerShows_->setCurrentIndex(indexOfShows(settings.playerShows));
+		updatePlayer(settings);
 		advancedSettings_->setVisible(settings.showAdvanced);
 		updateMemory(settings.bufferMemoryMiB);
 		// The encoders are looked up only while the advanced settings show them.
@@ -565,6 +631,105 @@ void TapeloopDock::refresh()
 	});
 }
 
+TapeloopDock::~TapeloopDock()
+{
+	// The main window owns the player's window and may outlive the dock.
+	if (playerWindow_) {
+		playerWindow_->removeEventFilter(this);
+		delete playerWindow_.data();
+	}
+}
+
+void TapeloopDock::updatePlayer(const BufferSettings &settings)
+{
+	const bool inWindow = settings.playerPlace == PlayerPlace::Window;
+	showPlayer_->setVisible(inWindow);
+	if (!inWindow && playerWindow_) {
+		playerWindow_->hide();
+	}
+	// OBS adds docks hidden, before its main window shows. The player waits for what
+	// holds it: the dock, or for its own window the main window, which then opens it with
+	// the dock closed.
+	const QWidget *holder = inWindow && mainWindow_ ? mainWindow_ : this;
+	if (!holder->isVisible()) {
+		return;
+	}
+	if (inWindow && playerWindow_ && settings.playerGeometry != playerGeometry_) {
+		restorePlayerGeometry(settings.playerGeometry);
+	}
+	if (player_ && player_->shows() == settings.playerShows && playerPlaced_ == settings.playerPlace) {
+		player_->refresh();
+		return;
+	}
+	// Only a player moving into the window opens it; one the user closed stays closed.
+	const bool opens = !player_ || playerPlaced_ != PlayerPlace::Window;
+	delete player_.data();
+	playerPlaced_ = settings.playerPlace;
+	if (!inWindow) {
+		player_ = new MiniPlayer(backend_, text_, settings.playerShows, playerSlot_);
+		playerSlot_->layout()->addWidget(player_);
+		// A layout shows a widget added to a visible parent only on the next pass of the
+		// event loop, and the controls are reached as soon as they are built.
+		player_->show();
+		playerSlot_->show();
+		return;
+	}
+	playerSlot_->hide();
+	if (!playerWindow_) {
+		playerWindow_ = new QWidget(mainWindow_ ? mainWindow_ : this, Qt::Tool);
+		playerWindow_->setObjectName("playerWindow");
+		playerWindow_->setWindowTitle(text_("Dock.Player.Window"));
+		new QVBoxLayout(playerWindow_);
+		if (!restorePlayerGeometry(settings.playerGeometry)) {
+			playerWindow_->resize(playerWindow_->sizeHint());
+		}
+		playerWindow_->installEventFilter(this);
+	}
+	player_ = new MiniPlayer(backend_, text_, settings.playerShows, playerWindow_);
+	playerWindow_->layout()->addWidget(player_);
+	player_->show();
+	if (opens) {
+		playerWindow_->show();
+	}
+}
+
+void TapeloopDock::showPlayerWindow()
+{
+	if (!playerWindow_) {
+		return;
+	}
+	playerWindow_->show();
+	playerWindow_->raise();
+	playerWindow_->activateWindow();
+}
+
+bool TapeloopDock::restorePlayerGeometry(const std::string &geometry)
+{
+	playerGeometry_ = geometry;
+	return playerWindow_->restoreGeometry(QByteArray::fromBase64(QByteArray::fromStdString(geometry)));
+}
+
+void TapeloopDock::savePlayerGeometry()
+{
+	if (!playerWindow_) {
+		return;
+	}
+	guarded([this] {
+		BufferSettings settings = backend_.settings();
+		// The collection changed since the dock last looked: its place is not this one's.
+		if (settings.playerGeometry != playerGeometry_) {
+			restorePlayerGeometry(settings.playerGeometry);
+			return;
+		}
+		std::string geometry = playerWindow_->saveGeometry().toBase64().toStdString();
+		if (geometry != settings.playerGeometry) {
+			settings.playerGeometry = geometry;
+			backend_.setSettings(settings);
+			playerGeometry_ = std::move(geometry);
+		}
+	});
+}
+
 void TapeloopDock::showEvent(QShowEvent *event)
 {
 	QWidget::showEvent(event);
@@ -573,6 +738,31 @@ void TapeloopDock::showEvent(QShowEvent *event)
 
 bool TapeloopDock::eventFilter(QObject *watched, QEvent *event)
 {
+	if (watched == mainWindow_) {
+		if (event->type() == QEvent::Show) {
+			// Once the main window is on screen, for the player's window to open over it.
+			QTimer::singleShot(0, this, [this] { guarded([this] { updatePlayer(backend_.settings()); }); });
+		}
+		return QWidget::eventFilter(watched, event);
+	}
+	if (watched == playerWindow_) {
+		switch (event->type()) {
+		case QEvent::Move:
+		case QEvent::Resize:
+			// Kept once it stops moving, so that a drag saves the collection once.
+			if (playerWindow_->isVisible()) {
+				playerMoved_->start();
+			}
+			break;
+		case QEvent::Close:
+			playerMoved_->stop();
+			savePlayerGeometry();
+			break;
+		default:
+			break;
+		}
+		return QWidget::eventFilter(watched, event);
+	}
 	if (watched == bufferMemory_ && event->type() == QEvent::Wheel && !bufferMemory_->hasFocus()) {
 		return true;
 	}

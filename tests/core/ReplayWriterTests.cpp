@@ -4,8 +4,11 @@
 #include "core/ReplayWriter.hpp"
 
 #include "core/FileIo.hpp"
+#include "core/ReplayNames.hpp"
 
-#include "FileHookScope.hpp"
+#include "ClaimHookScope.hpp"
+#include "FifoWatchdog.hpp"
+#include "LeaseHolder.hpp"
 #include "StoredReplays.hpp"
 #include "SyntheticEncoder.hpp"
 #include "TempDirectory.hpp"
@@ -14,8 +17,11 @@
 
 #include <algorithm>
 #include <cerrno>
+#include <chrono>
+#include <cstddef>
 #include <cstdint>
 #include <filesystem>
+#include <limits>
 #include <memory>
 #include <optional>
 #include <set>
@@ -28,17 +34,19 @@
 using tapeloop::CaptureSource;
 using tapeloop::Clip;
 using tapeloop::File;
+using tapeloop::FileStep;
 using tapeloop::GopBuilder;
 using tapeloop::ReplayCapture;
 using tapeloop::ReplayIndex;
 using tapeloop::ReplayWriter;
 using tapeloop::ReplayWriterConfig;
+using tapeloop::SegmentFile;
 using tapeloop::StoredSource;
 using tapeloop::VideoCodec;
 using tapeloop::WrittenReplay;
 using tapeloop::test::captureOf;
 using tapeloop::test::fileBytes;
-using tapeloop::test::FileHookScope;
+using tapeloop::test::ClaimHookScope;
 using tapeloop::test::Gops;
 using tapeloop::test::h264Config;
 using tapeloop::test::kGopLength;
@@ -310,7 +318,7 @@ TEST_CASE("a replay never replaces a file that takes its name while it is writte
 	TempDirectory dir;
 	requireLinks(dir.path());
 	plan = HookPlan{.raced = dir.path() / "same.tplp"};
-	const FileHookScope hook(planHook);
+	const ClaimHookScope hook(planHook);
 	const WrittenReplay written = ReplayWriter().write(captureOf(dir.path(), {sourceOf("a", makeGops(2))}, "same"));
 	CHECK(plan.raced.empty());
 	CHECK(written.manifest == dir.path() / "same (2).tplp");
@@ -324,7 +332,7 @@ TEST_CASE("a replay never deletes what has the name of its half-written file")
 	TempDirectory dir;
 	requireLinks(dir.path());
 	plan = HookPlan{.raced = dir.path() / "same.tplp.part", .atCreate = true};
-	const FileHookScope hook(planHook);
+	const ClaimHookScope hook(planHook);
 	const WrittenReplay written = ReplayWriter().write(captureOf(dir.path(), {sourceOf("a", makeGops(2))}, "same"));
 	CHECK(plan.raced.empty());
 	CHECK(written.manifest == dir.path() / "same (2).tplp");
@@ -360,7 +368,7 @@ TEST_CASE("a replay is published where the file system can neither rename exclus
 	TempDirectory dir;
 	const Gops gops = makeGops(2);
 	plan = HookPlan{.renameError = EINVAL, .linkError = ENOSYS};
-	const FileHookScope hook(planHook);
+	const ClaimHookScope hook(planHook);
 	ReplayWriter writer;
 	const WrittenReplay first = writer.write(captureOf(dir.path(), {sourceOf("a", gops)}, "same"));
 	CHECK(first.manifest == dir.path() / "same.tplp");
@@ -504,6 +512,104 @@ TEST_CASE("tags go to the older slot of a manifest")
 	CHECK(tapeloop::decodeTags(fileBytes(manifest)) == std::vector<std::string>{"Goal", "Foul"});
 }
 
+TEST_CASE("tags reach a manifest whose slot holds the last generation")
+{
+	TempDirectory dir;
+	ReplayWriter writer;
+	ReplayCapture capture = captureOf(dir.path(), {sourceOf("a", makeGops(2))});
+	capture.tags = {"Goal"};
+	const fs::path manifest = writer.write(capture).manifest;
+	const std::vector<std::string> last = {"Corner"};
+	File(manifest, File::Mode::ReadWrite)
+		.writeAt(tapeloop::kTagSlotA, tapeloop::encodeTagSlot(last, std::numeric_limits<uint64_t>::max()));
+	REQUIRE(tapeloop::decodeTags(fileBytes(manifest)) == last);
+
+	writer.writeTags(manifest, std::vector<std::string>{"Foul"});
+	CHECK(tapeloop::decodeTags(fileBytes(manifest)) == std::vector<std::string>{"Foul"});
+	writer.writeTags(manifest, std::vector<std::string>{"Save"});
+	const std::vector<uint8_t> bytes = fileBytes(manifest);
+	CHECK(tapeloop::decodeTags(bytes) == std::vector<std::string>{"Save"});
+	CHECK(tapeloop::nextTagWrite(bytes).generation == 3);
+	CHECK(tapeloop::decodeManifest(bytes));
+}
+
+namespace {
+
+struct StepAt {
+	FileStep step = FileStep::Write;
+	uint64_t offset = 0;
+	size_t size = 0;
+	bool operator==(const StepAt &) const = default;
+};
+
+struct Cut {};
+
+std::vector<StepAt> fileSteps;
+size_t cutAt = 0;
+
+void recordStep(FileStep step, uint64_t offset, size_t size)
+{
+	if (fileSteps.size() == cutAt) {
+		throw Cut{};
+	}
+	fileSteps.push_back({step, offset, size});
+}
+
+// Records into fileSteps every write and flush of a File while it lives, and throws Cut
+// in place of the step numbered cut, from 0, as a crash right before it would.
+class RecordedSteps {
+public:
+	explicit RecordedSteps(size_t cut = std::numeric_limits<size_t>::max())
+	{
+		fileSteps.clear();
+		cutAt = cut;
+		tapeloop::setFileHook(recordStep);
+	}
+	~RecordedSteps() { tapeloop::setFileHook(nullptr); }
+	RecordedSteps(const RecordedSteps &) = delete;
+	RecordedSteps &operator=(const RecordedSteps &) = delete;
+};
+
+} // namespace
+
+TEST_CASE("tags starting the slots over reach the disk in the older slot first")
+{
+	TempDirectory dir;
+	ReplayWriter writer;
+	ReplayCapture capture = captureOf(dir.path(), {sourceOf("a", makeGops(2))});
+	capture.tags = {"Goal"};
+	const fs::path manifest = writer.write(capture).manifest;
+	// The older slot holds tags from before those of the newer one, at the last generation.
+	const std::vector<std::string> earlier = {"Corner"};
+	const std::vector<std::string> last = {"Foul"};
+	{
+		File file(manifest, File::Mode::ReadWrite);
+		file.writeAt(tapeloop::kTagSlotA, tapeloop::encodeTagSlot(earlier, 5));
+		file.writeAt(tapeloop::kTagSlotB, tapeloop::encodeTagSlot(last, std::numeric_limits<uint64_t>::max()));
+	}
+	REQUIRE(tapeloop::decodeTags(fileBytes(manifest)) == last);
+
+	// A crash right before the second write leaves the last tags, not the earlier ones.
+	{
+		const RecordedSteps steps(2);
+		CHECK_THROWS_AS(writer.writeTags(manifest, std::vector<std::string>{"Save"}), Cut);
+	}
+	CHECK(tapeloop::decodeTags(fileBytes(manifest)) == last);
+
+	{
+		const RecordedSteps steps;
+		writer.writeTags(manifest, std::vector<std::string>{"Save"});
+	}
+	const std::vector<StepAt> expected = {
+		{FileStep::Write, tapeloop::kTagSlotA, tapeloop::kTagSlotSize},
+		{FileStep::Flush, 0, 0},
+		{FileStep::Write, tapeloop::kTagSlotB, tapeloop::kTagSlotSize},
+		{FileStep::Flush, 0, 0},
+	};
+	CHECK(fileSteps == expected);
+	CHECK(tapeloop::decodeTags(fileBytes(manifest)) == std::vector<std::string>{"Save"});
+}
+
 TEST_CASE("tags are written only into an intact manifest and when they fit")
 {
 	TempDirectory dir;
@@ -519,6 +625,51 @@ TEST_CASE("tags are written only into an intact manifest and when they fit")
 	CHECK_THROWS_AS(writer.writeTags(dir.path() / "missing.tplp", std::vector<std::string>{"Goal"}),
 			std::system_error);
 }
+
+#ifndef _WIN32
+TEST_CASE("a named pipe in place of a manifest is refused without waiting for a writer")
+{
+	TempDirectory dir;
+	ReplayWriter writer;
+	const fs::path manifest = writer.write(captureOf(dir.path(), {sourceOf("a", makeGops(2))})).manifest;
+	fs::remove(manifest);
+	// The watchdog lets a read that waits for a writer go, so that it fails the test
+	// instead of hanging it.
+	const tapeloop::test::FifoWatchdog watchdog(manifest);
+	CHECK_FALSE(tapeloop::readReplayIndex(manifest));
+	CHECK_THROWS_AS(writer.writeTags(manifest, std::vector<std::string>{"Goal"}), std::system_error);
+	CHECK_FALSE(watchdog.released());
+}
+#endif
+
+#ifdef __linux__
+TEST_CASE("a lease on a manifest delays a scan and a tag write without failing them")
+{
+	using tapeloop::test::LeaseHolder;
+	TempDirectory dir;
+	ReplayWriter writer;
+	const fs::path manifest =
+		writer.write(captureOf(dir.path() / "Liga 2026-10-09 21-00", {sourceOf("a", makeGops(2))})).manifest;
+	{
+		LeaseHolder holder(manifest, LeaseHolder::Kind::Write, std::chrono::milliseconds(200));
+		if (!holder.held()) {
+			SKIP("no lease can be taken here");
+		}
+		const tapeloop::ReplayScan scan = tapeloop::scanReplays(dir.path());
+		CHECK(scan.errors.empty());
+		REQUIRE(scan.replays.size() == 1);
+		CHECK(scan.replays[0].intact);
+		CHECK(holder.letGo());
+	}
+	{
+		LeaseHolder holder(manifest, LeaseHolder::Kind::Read, std::chrono::milliseconds(200));
+		REQUIRE(holder.held());
+		writer.writeTags(manifest, std::vector<std::string>{"Goal"});
+		CHECK(holder.letGo());
+	}
+	CHECK(tapeloop::decodeTags(fileBytes(manifest)) == std::vector<std::string>{"Goal"});
+}
+#endif
 
 TEST_CASE("a scan finds every replay of every broadcast")
 {
@@ -660,6 +811,103 @@ TEST_CASE("a scan checks the first segment a manifest names")
 	const tapeloop::ReplayScan scan = tapeloop::scanReplays(dir.path());
 	REQUIRE(scan.replays.size() == 1);
 	CHECK_FALSE(scan.replays[0].intact);
+}
+
+TEST_CASE("a scan checks a segment a manifest goes back to")
+{
+	TempDirectory dir;
+	const fs::path folder = dir.path() / "Liga 2026-10-09 21-00";
+	const WrittenReplay written = ReplayWriter().write(captureOf(folder, {sourceOf("a", makeGops(4))}));
+	std::optional<ReplayIndex> index = readManifest(written.manifest);
+	REQUIRE(index);
+	std::vector<tapeloop::StoredGop> &gops = index->sources.at(0).gops;
+	for (size_t g = 1; g < gops.size(); g += 2) {
+		gops[g].segment = 2;
+	}
+	fs::remove(written.manifest);
+	File(written.manifest, File::Mode::CreateNew).writeAt(0, tapeloop::encodeManifest(*index, {}));
+
+	CHECK_FALSE(tapeloop::scanReplays(dir.path()).replays.at(0).intact);
+	fs::copy_file(folder / "data" / "a-000001.tpls", folder / "data" / "a-000002.tpls");
+	CHECK(tapeloop::scanReplays(dir.path()).replays.at(0).intact);
+}
+
+TEST_CASE("a scan checks the segments of every source")
+{
+	TempDirectory dir;
+	const fs::path folder = dir.path() / "Liga 2026-10-09 21-00";
+	ReplayWriter().write(captureOf(folder, {sourceOf("a", makeGops(2)), sourceOf("b", makeGops(2))}));
+	CHECK(tapeloop::scanReplays(dir.path()).replays.at(0).intact);
+
+	fs::remove(folder / "data" / "b-000001.tpls");
+	CHECK_FALSE(tapeloop::scanReplays(dir.path()).replays.at(0).intact);
+}
+
+TEST_CASE("a scan looks up each segment file once")
+{
+	// Looked up once per change of segment in each source, a manifest whose GOPs go back
+	// and forth between two segments kept the store thread busy for seconds.
+	TempDirectory dir;
+	const fs::path folder = dir.path() / "Liga 2026-10-09 21-00";
+	const WrittenReplay written =
+		ReplayWriter().write(captureOf(folder, {sourceOf("a", makeGops(500)), sourceOf("b", makeGops(500))}));
+	REQUIRE(segmentsOf(folder) == std::vector<std::string>{"a-000001.tpls", "b-000001.tpls"});
+	std::optional<ReplayIndex> index = readManifest(written.manifest);
+	REQUIRE(index);
+	for (StoredSource &source : index->sources) {
+		for (size_t g = 1; g < source.gops.size(); g += 2) {
+			source.gops[g].segment = 2;
+		}
+	}
+	fs::remove(written.manifest);
+	File(written.manifest, File::Mode::CreateNew).writeAt(0, tapeloop::encodeManifest(*index, {}));
+	fs::copy_file(folder / "data" / "a-000001.tpls", folder / "data" / "a-000002.tpls");
+	fs::copy_file(folder / "data" / "b-000001.tpls", folder / "data" / "b-000002.tpls");
+
+	const size_t before = tapeloop::segmentLookups();
+	CHECK(tapeloop::scanReplays(dir.path()).replays.at(0).intact);
+	CHECK(tapeloop::segmentLookups() - before == 4);
+
+	fs::remove(folder / "data" / "b-000002.tpls");
+	CHECK_FALSE(tapeloop::scanReplays(dir.path()).replays.at(0).intact);
+}
+
+TEST_CASE("each file that holds a replay's GOPs is listed once")
+{
+	// A scan looks for every file listed, so the list bounds its lookups. Listed once per
+	// change of segment in each source, a manifest whose GOPs go back and forth between
+	// two segments, or whose sources have keys that give one file name, kept the store
+	// thread busy for seconds.
+	ReplayIndex index;
+	const auto addSource = [&index](std::string key, const std::vector<uint32_t> &segments) {
+		StoredSource source;
+		source.key = std::move(key);
+		for (const uint32_t segment : segments) {
+			source.gops.push_back({segment, 1, 0, 0, 0, 0});
+		}
+		index.sources.push_back(std::move(source));
+	};
+	std::vector<uint32_t> alternating;
+	for (uint32_t g = 0; g < 1000; ++g) {
+		alternating.push_back(1 + g % 2);
+	}
+	addSource("a", alternating);
+	// Keys are cut to the longest file name, so these give one.
+	const std::string longKey(tapeloop::kMaxFileNameBytes, 'b');
+	for (int s = 0; s < 1000; ++s) {
+		addSource(longKey + std::to_string(s), {2, 1});
+	}
+	addSource("c", {1});
+	CHECK(tapeloop::segmentFilesOf(index) == std::vector<SegmentFile>{{0, 1}, {0, 2}, {1, 1}, {1, 2}, {1001, 1}});
+
+	ReplayIndex own;
+	for (const char *key : {"a", "b"}) {
+		StoredSource source;
+		source.key = key;
+		source.gops.assign(3, {tapeloop::kOwnFile, 1, 0, 0, 0, 0});
+		own.sources.push_back(std::move(source));
+	}
+	CHECK(tapeloop::segmentFilesOf(own) == std::vector<SegmentFile>{{0, tapeloop::kOwnFile}});
 }
 
 TEST_CASE("a scan of a base that does not exist finds nothing")

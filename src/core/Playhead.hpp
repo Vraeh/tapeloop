@@ -44,6 +44,9 @@ public:
 	// from the previous clip, but a new clip always plays forward.
 	void load(std::vector<Nanoseconds> frameTimes);
 	bool empty() const noexcept { return frames_.empty(); }
+	// The times of the first and last frames, zero without a clip.
+	Nanoseconds firstTime() const noexcept { return frames_.empty() ? Nanoseconds{0} : frames_.front(); }
+	Nanoseconds lastTime() const noexcept { return frames_.empty() ? Nanoseconds{0} : frames_.back(); }
 
 	void advance(Nanoseconds elapsed);
 

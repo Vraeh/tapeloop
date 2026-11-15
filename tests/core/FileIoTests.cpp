@@ -3,15 +3,19 @@
 
 #include "core/FileIo.hpp"
 
-#include "FileHookScope.hpp"
+#include "ClaimHookScope.hpp"
+#include "FifoWatchdog.hpp"
+#include "LeaseHolder.hpp"
 #include "TempDirectory.hpp"
 
 #include <catch2/catch_test_macros.hpp>
 
 #include <algorithm>
 #include <cerrno>
+#include <chrono>
 #include <cstdint>
 #include <filesystem>
+#include <initializer_list>
 #include <string>
 #include <string_view>
 #include <system_error>
@@ -19,8 +23,14 @@
 #include <utility>
 #include <vector>
 
+#ifndef _WIN32
+#include <fcntl.h>
+#include <sys/resource.h>
+#include <sys/stat.h>
+#endif
+
 using tapeloop::File;
-using tapeloop::test::FileHookScope;
+using tapeloop::test::ClaimHookScope;
 using tapeloop::test::TempDirectory;
 
 namespace {
@@ -53,6 +63,28 @@ int refusingHook(std::string_view call, const std::filesystem::path &) noexcept
 		return renameError;
 	}
 	return call == "link" ? linkError : 0;
+}
+
+// The status flags of the one descriptor this process has open on the file at path.
+int statusFlagsOf(const std::filesystem::path &path)
+{
+	struct stat wanted{};
+	REQUIRE(::stat(path.c_str(), &wanted) == 0);
+	rlimit limit{};
+	REQUIRE(::getrlimit(RLIMIT_NOFILE, &limit) == 0);
+	const int end = static_cast<int>(std::min<rlim_t>(limit.rlim_cur, 65536));
+	int found = -1;
+	for (int fd = 0; fd < end; ++fd) {
+		struct stat info{};
+		if (::fstat(fd, &info) == 0 && info.st_dev == wanted.st_dev && info.st_ino == wanted.st_ino) {
+			REQUIRE(found < 0);
+			found = fd;
+		}
+	}
+	REQUIRE(found >= 0);
+	const int flags = ::fcntl(found, F_GETFL);
+	REQUIRE(flags >= 0);
+	return flags;
 }
 
 #endif
@@ -173,6 +205,99 @@ TEST_CASE("a directory cannot be read as a file")
 	};
 	CHECK_THROWS_AS(readDirectory(), std::system_error);
 }
+
+TEST_CASE("a device is not opened as a file")
+{
+#ifdef _WIN32
+	const std::filesystem::path device = L"\\\\.\\NUL";
+#else
+	const std::filesystem::path device = "/dev/null";
+#endif
+	for (const File::Mode mode : {File::Mode::ReadOnly, File::Mode::ReadWrite}) {
+		try {
+			File file(device, mode);
+			FAIL("opened a device as a file");
+		} catch (const std::system_error &e) {
+			CHECK(e.code() == std::errc::invalid_argument);
+		}
+	}
+}
+
+#ifndef _WIN32
+TEST_CASE("a named pipe is refused without waiting for a writer")
+{
+	TempDirectory dir;
+	const auto path = dir.path() / "replay.tplp";
+	// The watchdog lets an open that waits for a writer go, so that it fails the test
+	// instead of hanging it.
+	const tapeloop::test::FifoWatchdog watchdog(path);
+	CHECK_THROWS_AS(File(path, File::Mode::ReadOnly), std::system_error);
+	CHECK_THROWS_AS(File(path, File::Mode::ReadWrite), std::system_error);
+	CHECK_FALSE(watchdog.released());
+}
+
+TEST_CASE("only the open of a file is kept from waiting")
+{
+	TempDirectory dir;
+	const auto path = dir.path() / "segment";
+	{
+		const File created(path, File::Mode::CreateNew);
+		CHECK((statusFlagsOf(path) & O_NONBLOCK) == 0);
+	}
+	for (const File::Mode mode : {File::Mode::ReadOnly, File::Mode::ReadWrite}) {
+		const File file(path, mode);
+		CHECK((statusFlagsOf(path) & O_NONBLOCK) == 0);
+	}
+}
+#endif
+
+#ifdef __linux__
+TEST_CASE("an open waits for a lease on the file to be let go")
+{
+	using tapeloop::test::LeaseHolder;
+	TempDirectory dir;
+	const auto path = dir.path() / "replay.tplp";
+	File(path, File::Mode::CreateNew).writeAt(0, pattern(40, 8));
+	{
+		LeaseHolder holder(path, LeaseHolder::Kind::Write, std::chrono::milliseconds(200));
+		if (!holder.held()) {
+			SKIP("no lease can be taken here");
+		}
+		File file(path, File::Mode::ReadOnly);
+		CHECK(readAll(file) == pattern(40, 8));
+		CHECK(holder.letGo());
+	}
+	{
+		LeaseHolder holder(path, LeaseHolder::Kind::Read, std::chrono::milliseconds(200));
+		REQUIRE(holder.held());
+		File(path, File::Mode::ReadWrite).writeAt(0, pattern(40, 9));
+		CHECK(holder.letGo());
+	}
+	File file(path, File::Mode::ReadOnly);
+	CHECK(readAll(file) == pattern(40, 9));
+}
+
+TEST_CASE("an open gives up on a lease that is not let go")
+{
+	using tapeloop::test::LeaseHolder;
+	TempDirectory dir;
+	const auto path = dir.path() / "replay.tplp";
+	File(path, File::Mode::CreateNew).writeAt(0, pattern(40, 8));
+	// Longer than the open waits and shorter than the kernel gives a holder by default,
+	// so an open that waited for the holder would succeed.
+	LeaseHolder holder(path, LeaseHolder::Kind::Write, std::chrono::seconds(10));
+	if (!holder.held()) {
+		SKIP("no lease can be taken here");
+	}
+	try {
+		File file(path, File::Mode::ReadOnly);
+		FAIL("opened a file whose lease was not let go");
+	} catch (const std::system_error &e) {
+		CHECK(e.code() == std::errc::operation_would_block);
+	}
+	CHECK(holder.letGo());
+}
+#endif
 
 TEST_CASE("a failed call reports the error it got and the path")
 {
@@ -297,7 +422,7 @@ TEST_CASE("an exclusive rename claims the name with a link where it cannot renam
 	File(published, File::Mode::CreateNew).writeAt(0, pattern(60, 13));
 	renameError = EINVAL;
 	linkError = 0;
-	const FileHookScope hook(refusingHook);
+	const ClaimHookScope hook(refusingHook);
 	CHECK_FALSE(tapeloop::renameIfFree(part, published));
 	{
 		File kept(published, File::Mode::ReadOnly);
@@ -322,7 +447,7 @@ TEST_CASE("an exclusive rename looks at the name where it can neither rename so 
 		File(part, File::Mode::CreateNew).writeAt(0, pattern(30, 12));
 		renameError = EINVAL;
 		linkError = refused;
-		const FileHookScope hook(refusingHook);
+		const ClaimHookScope hook(refusingHook);
 		std::filesystem::create_symlink(dir.path() / "nothing", published);
 		CHECK_FALSE(tapeloop::renameIfFree(part, published));
 		CHECK(std::filesystem::is_symlink(published));

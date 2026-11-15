@@ -59,6 +59,10 @@ TEST_CASE("Playhead starts paused on the first frame")
 	CHECK_FALSE(playhead.atEnd());
 	CHECK(playhead.rate() == 1000);
 	CHECK(playhead.effectiveRate() == 0);
+	CHECK(playhead.firstTime() == frameTime(0));
+	CHECK(playhead.lastTime() == frameTime(119));
+	CHECK(Playhead().firstTime() == Nanoseconds{0});
+	CHECK(Playhead().lastTime() == Nanoseconds{0});
 }
 
 TEST_CASE("Playhead plays forward and stops paused on the last frame")

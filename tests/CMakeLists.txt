@@ -36,8 +36,15 @@ FetchContent_MakeAvailable(Catch2)
 set_target_properties(Catch2 Catch2WithMain PROPERTIES COMPILE_WARNING_AS_ERROR OFF)
 
 add_subdirectory(../src/core core)
-# Lets the tests make a file system call fail, or race it, as file systems and other
-# writers can. The plugin's own build has no such hook.
+# Counts the segment files a scan looks up, for a test that bounds a scan's lookups
+# without timing it.
+target_compile_definitions(tapeloop-core PUBLIC TAPELOOP_COUNT_LOOKUPS)
+# Counts what a parameter set lookup compares, for a test that must fail rather than hang
+# when a lookup reads the whole configuration again.
+target_compile_definitions(tapeloop-core PUBLIC TAPELOOP_COUNT_COMPARISONS)
+# The tests follow the writes and flushes of the core's files, and make a file system
+# call fail or race it as file systems and other writers can, through hooks that the
+# plugin is built without.
 target_compile_definitions(tapeloop-core PUBLIC TAPELOOP_FILE_HOOK)
 
 add_executable(tapeloop-core-tests)
@@ -50,6 +57,7 @@ target_sources(
     core/BufferBudgetTests.cpp
     core/BufferLifecycleTests.cpp
     core/BufferSettingsTests.cpp
+    core/ClaimHookScope.hpp
     core/ClipTests.cpp
     core/CopiedGops.hpp
     core/Crc32cTests.cpp
@@ -57,10 +65,11 @@ target_sources(
     core/EncoderPolicyTests.cpp
     core/FailurePacerTests.cpp
     core/FakeDecoder.hpp
-    core/FileHookScope.hpp
+    core/FifoWatchdog.hpp
     core/FileIoTests.cpp
     core/GopReaderTests.cpp
     core/GopTests.cpp
+    core/LeaseHolder.hpp
     core/MediaTimeTests.cpp
     core/MomentCutterTests.cpp
     core/NalUnitWriter.hpp

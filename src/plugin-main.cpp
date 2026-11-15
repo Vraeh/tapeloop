@@ -33,9 +33,9 @@ std::unique_ptr<tapeloop::obs::ManagerDockBackend> dockBackend;
 void addDock()
 {
 	dockBackend = std::make_unique<tapeloop::obs::ManagerDockBackend>(bridge->manager(), &bridge->sequence());
-	auto *dock = new tapeloop::ui::TapeloopDock(*dockBackend, [](const char *key) {
-		return QString::fromUtf8(obs_module_text(key));
-	});
+	auto *dock = new tapeloop::ui::TapeloopDock(
+		*dockBackend, [](const char *key) { return QString::fromUtf8(obs_module_text(key)); },
+		static_cast<QWidget *>(obs_frontend_get_main_window()));
 	// OBS owns the dock once it is added, and deletes it with the main window.
 	if (!obs_frontend_add_dock_by_id(kDockId, obs_module_text("Dock.Title"), dock)) {
 		delete dock;

@@ -20,6 +20,10 @@ std::string utf8FromPath(const std::filesystem::path &path);
 
 // A file for positioned reads and writes, which never move a shared file position, so
 // one thread can write a file while another reads it. Failures throw std::system_error.
+// Only a regular file opens, and on Windows a volume or a whole disk as well: a named
+// pipe or another device at the path is refused at once. On POSIX systems an open waits
+// up to two seconds for a lease another process holds on the file to be let go, and
+// then fails.
 class File {
 public:
 	enum class Mode {
@@ -56,6 +60,18 @@ private:
 #endif
 };
 
+#ifdef TAPELOOP_FILE_HOOK
+// Built only into the core tests: every File calls the hook before each write and each
+// flush, so that a test can follow their order, or cut one short by throwing. Null
+// removes it.
+enum class FileStep {
+	Write,
+	Flush,
+};
+using FileHook = void (*)(FileStep step, uint64_t offset, size_t size);
+void setFileHook(FileHook hook) noexcept;
+#endif
+
 // Makes a new or renamed entry of the directory durable. Windows has nothing to do here:
 // its renames are written through and its file creation is durable with the file.
 void syncDirectory(const std::filesystem::path &directory);
@@ -85,8 +101,8 @@ bool lowerThreadIoPriority() noexcept;
 // makes the call fail by returning an error code (errno, or a Windows error code)
 // instead of 0. Exclusive renames are tried on Linux and Windows, links on Linux and
 // macOS.
-using FileHook = int (*)(std::string_view call, const std::filesystem::path &path);
-void setFileHook(FileHook hook) noexcept;
+using ClaimHook = int (*)(std::string_view call, const std::filesystem::path &path);
+void setClaimHook(ClaimHook hook) noexcept;
 #endif
 
 } // namespace tapeloop

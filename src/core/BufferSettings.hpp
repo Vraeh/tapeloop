@@ -77,6 +77,10 @@ struct SourceSettings {
 	bool operator==(const SourceSettings &) const = default;
 };
 
+// Where the dock's player stands, and what of it shows.
+enum class PlayerPlace { Dock, Window };
+enum class PlayerShows { Both, Controls, Picture };
+
 // What the dock edits, saved with the scene collection. Sources are known by UUID.
 struct BufferSettings {
 	Nanoseconds length = kDefaultBufferLength;
@@ -93,6 +97,11 @@ struct BufferSettings {
 	bool allowOtherAdapters = true;
 	// Whether the dock shows the advanced settings.
 	bool showAdvanced = false;
+	PlayerPlace playerPlace = PlayerPlace::Dock;
+	PlayerShows playerShows = PlayerShows::Both;
+	// Where the player's own window was last, as Qt saves a window's geometry, in
+	// Base64; empty before it was first shown.
+	std::string playerGeometry;
 	// The memory every buffer may hold together, in MiB; zero for the automatic budget.
 	int64_t bufferMemoryMiB = 0;
 	std::map<std::string, SourceSettings> sources;
@@ -149,6 +158,9 @@ struct SavedSettings {
 	std::string replayEncoder;
 	bool allowOtherAdapters = true;
 	bool showAdvanced = false;
+	std::string playerPlace = "dock";
+	std::string playerShows = "both";
+	std::string playerGeometry;
 	int64_t bufferMemoryMiB = 0;
 	std::vector<SavedSource> sources;
 	SavedMedia intro;
@@ -161,7 +173,8 @@ SavedSettings saveSettings(const BufferSettings &settings);
 
 // Empty when the version is not kSettingsVersion. Values out of range are brought
 // back into it, a resolution this build does not know becomes the canvas, and an intro
-// or outro of a kind it does not know becomes none.
+// or outro of a kind it does not know becomes none, and a player place or view it does
+// not know becomes the default.
 std::optional<BufferSettings> loadSettings(const SavedSettings &saved);
 
 struct SourceIdentity {

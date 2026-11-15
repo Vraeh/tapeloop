@@ -802,6 +802,89 @@ TEST_CASE("a tag edit goes to the older slot, and a torn edit leaves the previou
 	CHECK_THROWS_AS(tapeloop::encodeTagSlot(tooMany, 1), std::length_error);
 }
 
+TEST_CASE("a tag edit goes to a slot that does not decode before one at generation 0")
+{
+	std::vector<uint8_t> file = tapeloop::encodeManifest(twoSources(), std::vector<std::string>{"goal"});
+	const auto head = [&] {
+		return std::span<const uint8_t>(file).first(tapeloop::kManifestIndexOffset);
+	};
+	const auto put = [&](uint64_t offset, const std::vector<uint8_t> &bytes, size_t count) {
+		std::copy(bytes.begin(), bytes.begin() + static_cast<std::ptrdiff_t>(count),
+			  file.begin() + static_cast<std::ptrdiff_t>(offset));
+	};
+	const std::vector<uint8_t> damaged(64, 0xEE);
+
+	// Only a crafted file has a slot at generation 0, here B, the only intact one.
+	const std::vector<std::string> before = {"foul"};
+	const std::vector<uint8_t> zero = tapeloop::encodeTagSlot(before, 0);
+	put(tapeloop::kTagSlotA, damaged, damaged.size());
+	put(tapeloop::kTagSlotB, zero, zero.size());
+	REQUIRE(tapeloop::decodeTags(head()) == before);
+	const tapeloop::TagWrite write = tapeloop::nextTagWrite(head());
+	CHECK(write.offset == tapeloop::kTagSlotA);
+	CHECK(write.generation == 1);
+	CHECK_FALSE(write.then);
+
+	const std::vector<std::string> after = {"save"};
+	const std::vector<uint8_t> slot = tapeloop::encodeTagSlot(after, write.generation);
+	put(write.offset, slot, 20);
+	CHECK(tapeloop::decodeTags(head()) == before);
+	put(write.offset, slot, slot.size());
+	CHECK(tapeloop::decodeTags(head()) == after);
+
+	put(tapeloop::kTagSlotA, zero, zero.size());
+	put(tapeloop::kTagSlotB, damaged, damaged.size());
+	CHECK(tapeloop::nextTagWrite(head()).offset == tapeloop::kTagSlotB);
+}
+
+TEST_CASE("a tag edit past the last generation starts both slots over, the older first")
+{
+	constexpr uint64_t kLast = std::numeric_limits<uint64_t>::max();
+	std::vector<uint8_t> file = tapeloop::encodeManifest(twoSources(), std::vector<std::string>{"goal"});
+	const auto head = [&] {
+		return std::span<const uint8_t>(file).first(tapeloop::kManifestIndexOffset);
+	};
+	const auto put = [&](uint64_t offset, const std::vector<uint8_t> &slot, size_t count) {
+		std::copy(slot.begin(), slot.begin() + static_cast<std::ptrdiff_t>(count),
+			  file.begin() + static_cast<std::ptrdiff_t>(offset));
+	};
+
+	const std::vector<std::string> before = {"foul"};
+	put(tapeloop::kTagSlotB, tapeloop::encodeTagSlot(before, kLast), tapeloop::kTagSlotSize);
+	REQUIRE(tapeloop::decodeTags(head()) == before);
+	const tapeloop::TagWrite write = tapeloop::nextTagWrite(head());
+	CHECK(write.offset == tapeloop::kTagSlotA);
+	CHECK(write.generation == 1);
+	REQUIRE(write.then);
+	CHECK(*write.then == tapeloop::kTagSlotB);
+
+	// Only the first write reaches the disk, and the newer slot keeps the previous tags.
+	// Then half of the second does, and the first slot has the new tags.
+	const std::vector<std::string> after = {"save"};
+	const std::vector<uint8_t> slot = tapeloop::encodeTagSlot(after, write.generation);
+	put(write.offset, slot, slot.size());
+	CHECK(tapeloop::decodeTags(head()) == before);
+	put(*write.then, slot, 20);
+	CHECK(tapeloop::decodeTags(head()) == after);
+	put(*write.then, slot, slot.size());
+	CHECK(tapeloop::decodeTags(head()) == after);
+	CHECK(tapeloop::decodeManifest(file));
+	const tapeloop::TagWrite next = tapeloop::nextTagWrite(head());
+	CHECK(next.offset == tapeloop::kTagSlotB);
+	CHECK(next.generation == 2);
+	CHECK_FALSE(next.then);
+
+	// With both slots at the last generation, B is the older one, as on any tie.
+	const std::vector<uint8_t> last = tapeloop::encodeTagSlot(before, kLast);
+	put(tapeloop::kTagSlotA, last, last.size());
+	put(tapeloop::kTagSlotB, last, last.size());
+	const tapeloop::TagWrite tie = tapeloop::nextTagWrite(head());
+	CHECK(tie.offset == tapeloop::kTagSlotB);
+	CHECK(tie.generation == 1);
+	REQUIRE(tie.then);
+	CHECK(*tie.then == tapeloop::kTagSlotA);
+}
+
 TEST_CASE("tags fit a slot exactly when they can be encoded")
 {
 	// A slot has 4096 bytes: a 32-byte head, then 8 bytes and the name per tag.

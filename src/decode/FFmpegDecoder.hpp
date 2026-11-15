@@ -4,6 +4,7 @@
 #pragma once
 
 #include "core/FrameDecoder.hpp"
+#include "core/ParameterSets.hpp"
 #include "decode/Picture.hpp"
 #include "decode/PictureDecoder.hpp"
 
@@ -114,8 +115,7 @@ private:
 	std::unique_ptr<AVFrame, FrameDeleter> received_;
 	std::unique_ptr<AVBufferPool, PoolDeleter> packetPool_;
 	size_t packetBufferSize_ = 0;
-	VideoCodec codec_ = VideoCodec::H264;
-	std::vector<uint8_t> runConfig_;
+	KnownParameterSets knownSets_;
 	uint64_t skippedBytes_ = 0;
 	// Set by chooseFormat, through the context's opaque pointer.
 	bool sizeRefused_ = false;

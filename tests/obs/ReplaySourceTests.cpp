@@ -4,18 +4,22 @@
 #include "AllocationCounter.hpp"
 #include "ObsFixture.hpp"
 #include "PlayerClips.hpp"
+#include "StoredReplays.hpp"
 #include "TestPattern.hpp"
+#include "UiTasks.hpp"
 
 #include "core/Clip.hpp"
 #include "core/FrameDecoder.hpp"
 #include "core/GopSource.hpp"
 #include "core/MediaTime.hpp"
 #include "core/Playhead.hpp"
+#include "core/ReplayLibrary.hpp"
 #include "decode/FFmpegDecoder.hpp"
 #include "decode/Picture.hpp"
 #include "decode/PictureDecoder.hpp"
 #include "obs/ReplayPlayer.hpp"
 #include "obs/ReplaySource.hpp"
+#include "obs/SequencePlayer.hpp"
 
 #include <catch2/catch_test_macros.hpp>
 #include <obs.hpp>
@@ -717,4 +721,82 @@ TEST_CASE_METHOD(ObsFixture, "a replay source without a decoder moves its playhe
 	CHECK(state.frame > 0);
 	CHECK_FALSE(state.drawn);
 	CHECK(obs_source_get_width(run.source()) == 0);
+}
+
+TEST_CASE_METHOD(ObsFixture, "a sequence shows the replay it cued off air, and allocates nothing per frame paused",
+		 "[obs][player][source][sequence]")
+{
+	const Clip clip = captureClip(2);
+	const std::vector<ExpectedFrame> expected = expectedFrames(clip);
+	REQUIRE(expected.size() >= 2);
+	registerReplaySource(makeDecoder);
+	const tapeloop::test::UiTasks ui;
+	tapeloop::ReplayLibrary library;
+	const uint64_t id = library.addCaptured(
+		tapeloop::test::captureOf("unused", {tapeloop::CaptureSource{"a", "Camera a", clip}}), "Broadcast");
+	REQUIRE(id != 0);
+	// Made before the gate, which holds the graphics thread where tick callbacks are added.
+	std::optional<tapeloop::obs::SequencePlayer> sequence(std::in_place, library);
+	REQUIRE(sequence->source());
+	ReplayPlayer &player = *sequence->player();
+	sequence->cueCurrent();
+	REQUIRE(sequence->cuedReplay() == id);
+	{
+		TickGate gate;
+		SourceScreen screen(sequence->source());
+		gate.hold();
+		size_t renders = 0;
+		auto show = [&] {
+			gate.frame();
+			PlayerState state;
+			const auto deadline = std::chrono::steady_clock::now() + 10s;
+			while (true) {
+				screen.draw(false, &renders);
+				state = player.state();
+				if ((state.loaded && state.drawn == state.frame) ||
+				    std::chrono::steady_clock::now() > deadline) {
+					break;
+				}
+				std::this_thread::sleep_for(1ms);
+			}
+			REQUIRE(state.loaded);
+			REQUIRE(state.drawn == state.frame);
+			REQUIRE(state.frame < expected.size());
+			CHECK(screen.draw(true, &renders) == expected[state.frame].number);
+			return state;
+		};
+
+		PlayerState state = show();
+		CHECK(state.frames == expected.size());
+		CHECK(state.frame == 0);
+		CHECK_FALSE(state.playing);
+		CHECK(state.rate == 1000);
+		{
+			OBSSourceAutoRelease onChannel = obs_get_output_source(tapeloop::obs::kAirChannel);
+			CHECK_FALSE(onChannel);
+		}
+
+		// Once the first frames sized what they need, a paused clip costs the graphics
+		// thread nothing.
+		for (int frame = 0; frame < 3; ++frame) {
+			show();
+		}
+		renders = 0;
+		gate.countAllocations();
+		for (int frame = 0; frame < 10; ++frame) {
+			state = show();
+			CHECK(state.frame == 0);
+		}
+		if (tapeloop::test::kAllocationHooks) {
+			CHECK(gate.allocations() == 0);
+			CHECK(renders == 0);
+		}
+
+		player.step(1);
+		state = show();
+		CHECK(state.frame == 1);
+		CHECK(sequence->state().phase() == tapeloop::AirPhase::Live);
+	}
+	sequence.reset();
+	obs_wait_for_destroy_queue();
 }

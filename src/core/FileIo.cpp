@@ -9,6 +9,10 @@
 #include <system_error>
 #include <utility>
 
+#ifdef TAPELOOP_FILE_HOOK
+#include <atomic>
+#endif
+
 #ifdef _WIN32
 #ifndef WIN32_LEAN_AND_MEAN
 #define WIN32_LEAN_AND_MEAN
@@ -19,8 +23,10 @@
 #include <windows.h>
 #else
 #include <cerrno>
+#include <chrono>
 #include <fcntl.h>
 #include <sys/stat.h>
+#include <thread>
 #include <unistd.h>
 #if defined(__linux__)
 #include <cstdio>
@@ -28,10 +34,6 @@
 #elif defined(__APPLE__)
 #include <sys/resource.h>
 #endif
-#endif
-
-#ifdef TAPELOOP_FILE_HOOK
-#include <atomic>
 #endif
 
 namespace tapeloop {
@@ -57,11 +59,24 @@ std::atomic<FileHook> &fileHook() noexcept
 	return hook;
 }
 
+void beforeStep(FileStep step, uint64_t offset, size_t size)
+{
+	if (const FileHook hook = fileHook().load()) {
+		hook(step, offset, size);
+	}
+}
+
+std::atomic<ClaimHook> &claimHook() noexcept
+{
+	static std::atomic<ClaimHook> hook{nullptr};
+	return hook;
+}
+
 // Whether the test's hook makes the call fail, with the error set where the call itself
 // would set it.
 bool failedByHook(std::string_view call, const std::filesystem::path &path)
 {
-	const FileHook hook = fileHook().load();
+	const ClaimHook hook = claimHook().load();
 	const int error = hook != nullptr ? hook(call, path) : 0;
 	if (error == 0) {
 		return false;
@@ -111,9 +126,65 @@ int openFile(const std::filesystem::path &path, int flags)
 	return fd;
 }
 
+[[noreturn]] void closeAndThrow(int fd, int code, std::string_view what, const std::filesystem::path &path)
+{
+	::close(fd);
+	throw std::system_error(code, std::generic_category(), describe(what, path));
+}
+
+// A non-blocking open of a file under a lease fails at once while the kernel asks the
+// holder to let go, and NFS and Samba servers take leases for the clients that have a
+// file open. A blocking open would wait for as long as the kernel gives the holder, 45 s
+// by default, and Put on air can open a manifest on the UI thread, so the open is tried
+// again for this long at most.
+constexpr auto kLeaseBreakWait = std::chrono::seconds(2);
+constexpr auto kLeaseRetryEvery = std::chrono::milliseconds(10);
+
+// A named pipe put where a replay file was would hold the open until a writer came, and
+// what a path was when it was listed says nothing of what is there now. So the open
+// neither waits for a writer nor takes a terminal as the controlling one, and the type
+// comes from the descriptor.
+int openRegularFile(const std::filesystem::path &path, int flags)
+{
+	flags |= O_NONBLOCK | O_NOCTTY;
+	const auto deadline = std::chrono::steady_clock::now() + kLeaseBreakWait;
+	int fd = openFile(path, flags);
+	int error = fd < 0 ? errno : 0;
+	while (error == EWOULDBLOCK && std::chrono::steady_clock::now() < deadline) {
+		std::this_thread::sleep_for(kLeaseRetryEvery);
+		fd = openFile(path, flags);
+		error = fd < 0 ? errno : 0;
+	}
+	if (fd < 0) {
+		throw std::system_error(error, std::generic_category(), describe("cannot open", path));
+	}
+	struct stat info{};
+	if (::fstat(fd, &info) != 0) {
+		closeAndThrow(fd, errno, "cannot open", path);
+	}
+	if (!S_ISREG(info.st_mode)) {
+		closeAndThrow(fd, EINVAL, "not a regular file:", path);
+	}
+	// Only the open is kept from waiting: reads and writes wait as they did.
+	// NOLINTNEXTLINE(cppcoreguidelines-pro-type-vararg): fcntl takes its argument as a variadic one.
+	const int status = ::fcntl(fd, F_GETFL);
+	// NOLINTNEXTLINE(cppcoreguidelines-pro-type-vararg): fcntl takes its argument as a variadic one.
+	if (status < 0 || ::fcntl(fd, F_SETFL, status & ~O_NONBLOCK) != 0) {
+		closeAndThrow(fd, errno, "cannot open", path);
+	}
+	return fd;
+}
+
 #endif
 
 } // namespace
+
+#ifdef TAPELOOP_FILE_HOOK
+void setFileHook(FileHook hook) noexcept
+{
+	fileHook().store(hook);
+}
+#endif
 
 #ifdef _WIN32
 
@@ -174,9 +245,9 @@ bool nameTaken(const std::filesystem::path &path) noexcept
 
 #ifdef TAPELOOP_FILE_HOOK
 
-void setFileHook(FileHook hook) noexcept
+void setClaimHook(ClaimHook hook) noexcept
 {
-	fileHook().store(hook);
+	claimHook().store(hook);
 }
 
 #endif
@@ -228,6 +299,16 @@ File::File(const std::filesystem::path &path, Mode mode)
 	if (handle == INVALID_HANDLE_VALUE) {
 		throwLastError("cannot open", &path);
 	}
+	// A path can lead to a named pipe or a device, whose reads can wait for a writer
+	// with no end, and what the path was when it was listed says nothing of what is
+	// there now. So the handle's type is checked instead. The disk type also covers a
+	// volume or a whole disk, which POSIX systems refuse as block devices; their reads
+	// return, and only an elevated process can open them.
+	if (GetFileType(handle) != FILE_TYPE_DISK) {
+		CloseHandle(handle);
+		throw std::system_error(std::make_error_code(std::errc::invalid_argument),
+					describe("not a regular file:", path));
+	}
 	handle_ = handle;
 }
 
@@ -238,6 +319,9 @@ bool File::isOpen() const noexcept
 
 void File::writeAt(uint64_t offset, std::span<const uint8_t> bytes)
 {
+#ifdef TAPELOOP_FILE_HOOK
+	beforeStep(FileStep::Write, offset, bytes.size());
+#endif
 	while (!bytes.empty()) {
 		const auto chunk = static_cast<DWORD>(std::min(bytes.size(), kMaxTransfer));
 		OVERLAPPED at{};
@@ -287,6 +371,9 @@ uint64_t File::size() const
 
 void File::flush()
 {
+#ifdef TAPELOOP_FILE_HOOK
+	beforeStep(FileStep::Flush, 0, 0);
+#endif
 	if (!FlushFileBuffers(handle_)) {
 		throwLastError("cannot flush a file");
 	}
@@ -337,10 +424,10 @@ File::File(const std::filesystem::path &path, Mode mode)
 	} else if (mode == Mode::ReadWrite) {
 		flags = O_RDWR;
 	}
-	fd_ = mode == Mode::CreateNew && failedByHook("create", path) ? -1 : openFile(path, flags);
-	if (fd_ < 0) {
+	if (mode == Mode::CreateNew && failedByHook("create", path)) {
 		throwErrno("cannot open", &path);
 	}
+	fd_ = openRegularFile(path, flags);
 }
 
 bool File::isOpen() const noexcept
@@ -350,6 +437,9 @@ bool File::isOpen() const noexcept
 
 void File::writeAt(uint64_t offset, std::span<const uint8_t> bytes)
 {
+#ifdef TAPELOOP_FILE_HOOK
+	beforeStep(FileStep::Write, offset, bytes.size());
+#endif
 	while (!bytes.empty()) {
 		const ssize_t written =
 			::pwrite(fd_, bytes.data(), std::min(bytes.size(), kMaxTransfer), static_cast<off_t>(offset));
@@ -396,6 +486,9 @@ uint64_t File::size() const
 
 void File::flush()
 {
+#ifdef TAPELOOP_FILE_HOOK
+	beforeStep(FileStep::Flush, 0, 0);
+#endif
 #ifdef __APPLE__
 	// fsync on macOS leaves the data in the drive's own cache; F_FULLFSYNC flushes that
 	// too, and is refused by some file systems, which fsync then covers.
