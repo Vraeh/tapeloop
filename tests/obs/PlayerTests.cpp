@@ -25,6 +25,7 @@
 #include <array>
 #include <atomic>
 #include <chrono>
+#include <condition_variable>
 #include <cstddef>
 #include <cstdint>
 #include <cstdio>
@@ -34,6 +35,7 @@
 #include <optional>
 #include <span>
 #include <stdexcept>
+#include <thread>
 #include <utility>
 #include <vector>
 
@@ -118,17 +120,8 @@ public:
 	{
 		Shown shown;
 		obs_enter_graphics();
-		gs_texrender_reset(target_);
-		const bool began = gs_texrender_begin(target_, kClipWidth, kClipHeight);
+		const bool began = begin();
 		if (began) {
-			vec4 clear;
-			vec4_zero(&clear);
-			gs_clear(GS_CLEAR_COLOR, &clear, 0.0f, 0);
-			gs_ortho(0.0f, static_cast<float>(kClipWidth), 0.0f, static_cast<float>(kClipHeight), -100.0f,
-				 100.0f);
-			// The device culls back faces until OBS's video thread first renders.
-			gs_set_cull_mode(GS_NEITHER);
-			gs_enable_depth_test(false);
 			if (allocations) {
 				const AllocationCounter counter;
 				shown.drawn = player.render(*renderer_, kClipWidth, kClipHeight);
@@ -161,6 +154,20 @@ public:
 		return shown;
 	}
 
+	// What render() returns, without a read back or a check, so that a thread other
+	// than the test's can call it.
+	bool drawUnchecked(ReplayPlayer &player) noexcept
+	{
+		bool drawn = false;
+		obs_enter_graphics();
+		if (begin()) {
+			drawn = player.render(*renderer_, kClipWidth, kClipHeight);
+			gs_texrender_end(target_);
+		}
+		obs_leave_graphics();
+		return drawn;
+	}
+
 	// A tick of the source: the playhead moves, whatever it asked for is decoded, and
 	// the frame is drawn.
 	Shown frame(ReplayPlayer &player, Nanoseconds elapsed = kTick)
@@ -180,6 +187,23 @@ public:
 	}
 
 private:
+	// Inside the graphics context.
+	bool begin() noexcept
+	{
+		gs_texrender_reset(target_);
+		if (!gs_texrender_begin(target_, kClipWidth, kClipHeight)) {
+			return false;
+		}
+		vec4 clear;
+		vec4_zero(&clear);
+		gs_clear(GS_CLEAR_COLOR, &clear, 0.0f, 0);
+		gs_ortho(0.0f, static_cast<float>(kClipWidth), 0.0f, static_cast<float>(kClipHeight), -100.0f, 100.0f);
+		// The device culls back faces until OBS's video thread first renders.
+		gs_set_cull_mode(GS_NEITHER);
+		gs_enable_depth_test(false);
+		return true;
+	}
+
 	std::optional<PictureRenderer> renderer_;
 	gs_texrender_t *target_ = nullptr;
 	gs_stagesurf_t *stage_ = nullptr;
@@ -395,6 +419,65 @@ private:
 	int ready_ = -1;
 	int drawing_ = -1;
 	uint64_t generation_ = 0;
+};
+
+// Passes every call to the GpuPictures it wraps, and once asked holds the next draw()
+// on its way in until released: a render() caught halfway, as one on a thread other
+// than the source's is while the source ticks. Waits are bounded, so that a test gone
+// wrong fails instead of hanging.
+class HeldDraw final : public GpuPictures {
+public:
+	explicit HeldDraw(GpuPictures &pictures) : pictures_(pictures) {}
+
+	bool prepare(uint32_t width, uint32_t height) noexcept override { return pictures_.prepare(width, height); }
+	bool publish(const Picture &picture, Tag tag) noexcept override { return pictures_.publish(picture, tag); }
+	std::optional<Tag> latch() noexcept override { return pictures_.latch(); }
+	uint64_t generation() const noexcept override { return pictures_.generation(); }
+
+	bool draw(PictureRenderer &renderer, uint32_t width, uint32_t height) noexcept override
+	{
+		{
+			std::unique_lock lock(mutex_);
+			if (holding_) {
+				held_ = true;
+				changed_.notify_all();
+				changed_.wait_for(lock, kLimit, [this] { return !holding_; });
+			}
+		}
+		return pictures_.draw(renderer, width, height);
+	}
+
+	void hold() noexcept
+	{
+		const std::lock_guard lock(mutex_);
+		holding_ = true;
+		held_ = false;
+	}
+
+	// Whether a draw() came in and is held.
+	bool waitForDraw() noexcept
+	{
+		std::unique_lock lock(mutex_);
+		return changed_.wait_for(lock, kLimit, [this] { return held_; });
+	}
+
+	void release() noexcept
+	{
+		{
+			const std::lock_guard lock(mutex_);
+			holding_ = false;
+		}
+		changed_.notify_all();
+	}
+
+private:
+	static constexpr std::chrono::seconds kLimit{10};
+
+	GpuPictures &pictures_;
+	std::mutex mutex_;
+	std::condition_variable changed_;
+	bool holding_ = false;
+	bool held_ = false;
 };
 
 // What a picture said to be on the GPU points at, for a decoder that has none.
@@ -1311,6 +1394,59 @@ TEST_CASE_METHOD(ObsFixture, "a replay player shows no picture on the GPU of the
 	CHECK_FALSE(player.state().drawn);
 
 	// The textures are of the right size already, so the new clip shows at once.
+	Screen::decodeAll(player);
+	const Shown shown = screen.draw(player);
+	CHECK(shown.drawn);
+	CHECK(shown.number == laterExpected.front().number);
+	CHECK(player.state().drawn == size_t{0});
+	player.step(2);
+	CHECK(checkTick(screen, player, laterExpected).frame == 2);
+}
+
+TEST_CASE_METHOD(ObsFixture, "a replay player drawn from another thread reports no frame of the clip before",
+		 "[obs][player]")
+{
+	const Clip clip = captureClip(4);
+	REQUIRE(clip.gops().size() >= 4);
+	const std::vector<ExpectedFrame> expected = expectedFrames(clip);
+	const Clip later({clip.gops().begin() + 2, clip.gops().end()}, Nanoseconds::min(), Nanoseconds::max());
+	const std::vector<ExpectedFrame> laterExpected = expectedFrames(later);
+	REQUIRE(laterExpected.front().number != expected.front().number);
+
+	Screen screen;
+	FakeGpuPictures pictures;
+	HeldDraw gpu(pictures);
+	GpuMeter meter;
+	ReplayPlayer player(GpuDecoder::factory(meter), {}, &gpu);
+	REQUIRE(player.load(gopsOf(clip)));
+	showFirst(screen, player, expected, true);
+	player.step(3);
+	checkTick(screen, player, expected);
+
+	// Something other than the source draws it, inside the graphics context on a thread
+	// of its own, while a tick takes the next clip in. Nothing between the thread's start
+	// and its join throws, since a thread left joinable ends the run.
+	std::unique_ptr<ClipGops> next = gopsOf(later);
+	gpu.hold();
+	bool drawnElsewhere = false;
+	std::thread drawer([&] { drawnElsewhere = screen.drawUnchecked(player); });
+	const bool held = gpu.waitForDraw();
+	const uint64_t number = player.load(std::move(next));
+	player.tick(kTick);
+	gpu.release();
+	drawer.join();
+	REQUIRE(held);
+	REQUIRE(number != 0);
+
+	// That render() drew the frame of the clip before, which is not a frame of this one.
+	CHECK(drawnElsewhere);
+	const PlayerState state = player.state();
+	CHECK(state.clip == number);
+	CHECK_FALSE(state.drawn);
+
+	// Nothing is drawn of either clip until the new one's first frame is decoded.
+	CHECK_FALSE(screen.draw(player).drawn);
+	CHECK_FALSE(player.state().drawn);
 	Screen::decodeAll(player);
 	const Shown shown = screen.draw(player);
 	CHECK(shown.drawn);

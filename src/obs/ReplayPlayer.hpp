@@ -59,12 +59,17 @@ struct PlayerState {
 // Plays one clip at a time. tick() moves the playhead by the elapsed time it is given,
 // the decoder decodes the frame the playhead is on, and render() draws the last frame
 // decoded for the current clip. Decoding runs on a thread of the player's own once
-// start() is called, and never on the thread of tick() and render(), which in OBS is
-// the graphics thread: a frame takes as long to decode as it takes, and the picture on
+// start() is called, and never on the thread of tick() or render(), which in OBS is the
+// graphics thread: a frame takes as long to decode as it takes, and the picture on
 // screen follows when it is ready. Before start() the caller runs decodeNext() itself.
 //
 // Controls and load() may come from any thread and take effect at the next tick, in the
-// order they were given. tick() and render() run on one thread. Once warm, playing,
+// order they were given. Calls to tick() do not overlap, nor do calls to render(), which
+// run inside the graphics context. OBS makes both on its graphics thread, but whatever
+// draws the source on a thread of its own, as a plugin taking a screenshot of it may,
+// calls render() while the source ticks. They share nothing outside the lock: a render()
+// that starts after the tick that takes a clip in draws nothing of the clip before, and
+// one that was drawing then reports no frame drawn in state(). Once warm, playing,
 // stepping and scrubbing allocate nothing on any of these threads, except what the
 // planner needs for a GOP longer than any before it.
 //
@@ -173,6 +178,7 @@ private:
 		PlayDirection direction = PlayDirection::Forward;
 	};
 	struct Shown {
+		uint64_t clip = 0;
 		size_t frame = 0;
 		uint32_t width = 0;
 		uint32_t height = 0;
@@ -243,7 +249,7 @@ private:
 	// the playhead will have once a tick applies them.
 	Playhead ahead_;
 
-	// The thread of tick() and render() only.
+	// tick() only. The clip goes to render() through state_.
 	Playhead playhead_;
 	std::array<Command, kMaxCommands> applying_{};
 	std::vector<Nanoseconds> loadingTimes_;
@@ -251,7 +257,8 @@ private:
 	size_t frames_ = 0;
 	bool ended_ = false;
 	std::optional<Wanted> posted_;
-	// The frame the renderer or the GpuPictures holds, while it is of the current clip.
+
+	// render() only. The frame the renderer or the GpuPictures holds, and its clip.
 	std::optional<Shown> onScreen_;
 	// The size the GpuPictures was last prepared for, whether it ever refused one, after
 	// which it is not prepared again, and the generation it had at the last render().
