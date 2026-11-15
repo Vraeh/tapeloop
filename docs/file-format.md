@@ -39,10 +39,10 @@ Tapeloop/
   came from, with ` (2)` and so on when the name is taken.
 - Every name is made safe for Windows, macOS and Linux before it is used: characters
   one of them refuses, control characters and bytes that are not UTF-8 become `_`, as
-  does a leading dot; trailing spaces and dots are dropped; a Windows device name such
-  as `CON` gets a `_` in front; and the name is cut to 120 bytes at a character
-  boundary. A segment's path is built from the safe form of the key, so a key cannot
-  name a file outside `data`.
+  does a leading dot; trailing spaces and dots are dropped; and the name is cut to 120
+  bytes at a character boundary (for a segment, the key part; the sequence and
+  extension come after). A segment's path is built from the safe form of the key, so a
+  key cannot name a file outside `data`.
 
 ### Temporary names and the scan
 
@@ -60,11 +60,9 @@ the `Tapeloop` folder. For each folder directly inside it, in name order, the sc
 - deletes every `*.tapeloop-part` in `Export` that no export of this OBS session is
   writing.
 
-The replays in a folder that is a link or a junction are listed, but the scan deletes
-nothing in it, and deletes nothing in an `Export` that is a link. The scan does not
-look at files directly in `Tapeloop`, inside `data` or inside `Export`. A
-self-contained replay is listed when it is placed in a folder directly inside
-`Tapeloop`.
+The scan lists no replay from files directly in `Tapeloop`, inside `data` or inside
+`Export`. A self-contained replay is listed when it is placed in a folder directly
+inside `Tapeloop`.
 
 ### How a capture is written
 
@@ -124,9 +122,8 @@ A segment is a 4096-byte header followed by chunks.
 The rest of the 4096 bytes is zero. The key and the name together must fit in the 4032
 bytes after offset 64; the writer cuts the name to 1024 bytes.
 
-The plugin itself never reads a segment header: it reaches each GOP through the offset
-a manifest gives. The header, like the RUN chunks, lets a tool make sense of a segment
-without a manifest.
+Tapeloop reaches each GOP through the offset a manifest gives. The header, like the
+RUN chunks, lets a tool make sense of a segment without a manifest.
 
 ### Chunk header
 
@@ -250,9 +247,8 @@ Each tag record is an 8-byte head and its bytes:
 | 4 | 4 | Length in bytes |
 | 8 | | The tag |
 
-The tags are the bytes of type 1 records in order; the reader does not check their
-encoding. Records of any other type are skipped. A record that runs past the end of
-the payload makes the whole slot invalid.
+The tags are the bytes of type 1 records in order. Records of any other type are
+skipped. A record that runs past the end of the payload makes the whole slot invalid.
 
 A new manifest has the same tags in both slots, at generation 1. A reader takes the
 tags of the slot that decodes with the higher generation, slot A on a tie, the only
@@ -379,14 +375,15 @@ entry may be `0xFFFFFFFF`, and in a self-contained replay every one must be.
 The major and minor versions are at bytes 8 and 10 of the segment header, the manifest
 header and the footer. This version writes 1.0.
 
-- A segment header, manifest header or footer of another major version is refused, and
-  the replay is listed as damaged.
+- A manifest header or footer of another major version is refused, and the replay is
+  listed as damaged.
 - The minor version is not checked. Tag records of an unknown type, which a newer
   minor version could add, are skipped.
 - A manifest with a flag bit other than bit 0 set is refused, since an unknown flag
   could change where the GOPs are.
-- The header size, the alignment, the tag slot size, the chunk header size and the
-  configuration format must have exactly the values above, or the file is refused.
+- The header size, the alignment and the tag slot size of a manifest, the chunk header
+  size and the configuration format must have exactly the values above, or the file
+  is refused.
 
 ## Checksums
 
@@ -421,29 +418,27 @@ What the readers enforce:
 | Index chunk read from a manifest | At most 256 MiB; a larger one is not read |
 | Counts and blob size | 32-bit fields; the payload size must equal the size the counts give, exactly |
 | Key and name sizes in the index | 16-bit fields, 65535 bytes each |
-| Segment header strings | Key and name together at most 4032 bytes |
 | Tag slot payload | At most 4064 bytes |
 | Frame duration | More than 0, at most 2147483647 seconds |
 | `dts` and `pts` of a packet | `dts` not above `pts`, and `pts - dts` at most 16 |
 | Packet size | 32-bit field; the sizes must add up to the data size exactly |
 | Packets, runs and GOPs per source | At least one each; at least one packet per GOP |
 | Span of a source's frame times | Must fit a signed 64-bit count of nanoseconds |
-| Decoded picture | At most 8192 x 4320 pixels, by the decoder, not the format |
+| Decoded picture | At most 35389440 pixels (as many as 8192 x 4320), counted on the coded size, by the decoder, not the format |
 
 What they do not enforce:
 
 - The format does not store a picture size; it is in the bitstream and the
   configuration, which go to the decoder as they are. The decoder refuses pictures
   above the limit above.
-- The start and end of the index, the capture times and the replay id are not checked
-  against anything but each other (the footer's id must equal the header's).
+- The start and end of the index and the capture times are not checked. The replay id
+  is checked only in that the footer's must equal the header's.
 - An index with no sources decodes. The writer never makes one: a capture needs a
   source with frames.
 
-More limits on sizes and counts may be added before the first stable release.
-
 The writer's own limits: a segment rolls over at 1 GiB, a source name is cut to 1024
-bytes, tags must fit one slot, and every count and the blob must fit 32 bits.
+bytes, the key and the name of a segment header fit its 4032 bytes, tags must fit one
+slot, and every count and the blob must fit 32 bits.
 
 ## Reading untrusted files
 
@@ -455,11 +450,9 @@ every replay file as untrusted input, and so should any other program that reads
 
 Files:
 
-- Only regular files are opened (on Windows, also a volume or a whole disk). A named
-  pipe or another device at a replay's path is refused at once instead of waiting for
-  a writer. The type comes from the opened file, not from the path when it was listed.
-- The scan deletes nothing in a folder that is a link, nor in an `Export` that is a
-  link.
+- Only regular files are opened. A named pipe or another device at a replay's path is
+  refused at once instead of waiting for a writer. The type comes from the opened
+  file, not from the path when it was listed.
 
 The footer, before anything else is read:
 
@@ -487,8 +480,7 @@ The header and the index:
   flag; in a self-contained replay, its chunk lies between the tag slots and the
   index;
 - the packet counts of a source's GOPs add up to its frame count; its frame times
-  strictly increase; `in` is not after `out`, and both lie within the frame times;
-- no byte of a file belongs to two GOP entries.
+  strictly increase; `in` is not after `out`, and both lie within the frame times.
 
 A replay is listed as intact only when every segment it refers to exists as a regular
 file.
@@ -496,8 +488,8 @@ file.
 Each GOP, when it is read:
 
 - the chunk header at the offset the index gives must have type `GOP `, header size
-  32, a valid CRC equal to the one the index names, and the size the index gives;
-- the chunk lies inside the file before its bytes are read;
+  32, a valid CRC equal to the one the index names, and the size the index gives,
+  checked against the file before its bytes are read;
 - the payload CRC matches; the run key is the run's; the packet entries fit; the data
   size is exactly what is left; the first packet is a keyframe; packet times strictly
   increase; `dts` is not above `pts`, and `pts - dts` is at most 16; the packet sizes
@@ -506,9 +498,9 @@ Each GOP, when it is read:
   time for it. A GOP whose times differ is not the one the index lists, whatever its
   CRCs say.
 
-The bitstreams themselves go to FFmpeg, with the picture size limit above. Before an
-MP4 export, each sequence parameter set must hold every field FFmpeg's MP4 muxer
-counts through; a set cut short before them would keep the muxer busy for minutes.
+The bitstreams go to FFmpeg's decoder with the picture size limit above. Before an MP4
+export, each sequence parameter set is checked to be complete, since FFmpeg's muxer
+reads it as it writes the file.
 
 ### What another reader must check
 
