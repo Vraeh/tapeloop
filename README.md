@@ -75,6 +75,9 @@ replays, the sequence and its hotkeys, putting a replay on air and exporting.
 The [troubleshooting page](docs/troubleshooting.md) says where the logs are and what
 the warnings in the dock and in the log mean.
 
+The [file format page](docs/file-format.md) describes the replay files byte by byte
+and what a program that reads them must check.
+
 ## Building
 
 Tapeloop uses the build system of the
