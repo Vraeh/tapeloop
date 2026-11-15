@@ -13,11 +13,10 @@ that is the default of this version.
 Tapeloop needs OBS Studio 32.0 or newer on Windows 10 or 11, x64.
 
 The Windows package is a zip with one folder, `tapeloop`. It holds `bin\64bit` (the
-plugin) and `data` (texts and license notices). To install it,
-close OBS and copy the `tapeloop` folder into `C:\ProgramData\obs-studio\plugins`,
-creating the `plugins` folder if it is not there. Start OBS, open the Docks menu and
-tick Tapeloop. OBS adds a new dock hidden and as a floating window, so tick it once
-and drag it into place.
+plugin) and `data` (texts and license notices). To install it, close OBS and copy the
+`tapeloop` folder into `C:\ProgramData\obs-studio\plugins`, creating the `plugins`
+folder if it is not there. Start OBS, open the Docks menu and tick Tapeloop. OBS adds
+a new dock hidden and as a floating window, so tick it once and drag it into place.
 
 A hardware encoder is recommended. NVIDIA NVENC is the only one tried so far. Intel
 Quick Sync and AMD AMF can be used, but have not been tried. Without a usable
@@ -80,8 +79,8 @@ try them before the match.
 
 With it off, only the button or the hotkey moves them, at any time.
 
-Each start names a new broadcast, a folder for the replays captured until the buffers
-stop.
+Each start names a new broadcast, a folder for the replays captured until the next
+start.
 
 ## Capturing a replay
 
@@ -96,16 +95,17 @@ of the broadcast, inside a `Tapeloop` folder in the recording folder of OBS. Wit
 a recording folder in OBS the replay is not saved, it is listed as "not saved", and it
 plays only while the buffers still hold it. Replays stay on disk across restarts.
 
-The buffers keep what they hold for one buffer length after they stop, so a replay
-captured just after the stream or recording ends still holds the last moments. Once a
-buffer starts again, it starts empty.
+After they stop, the buffers go on dropping their oldest part as if they were
+running, so a replay captured just after the stream or recording ends still holds the
+last moments, less the time since the stop. A buffer length after the stop they hold
+nothing. Once a buffer starts again, it starts empty.
 
 ## The replay list
 
 The list shows the replays of every broadcast, newest first, under a heading row for
-each broadcast. The one selected is the
-one that goes on air next. A replay that cannot play is listed as damaged and cannot
-be selected. While one is being written the list says "saving".
+each broadcast. The one selected is the one that goes on air next. A replay that
+cannot play is listed as damaged and cannot be selected. While one is being written
+the list says "saving".
 
 The hotkeys "Tapeloop: Newer replay" and "Tapeloop: Older replay" move through
 every replay, newest to oldest, whatever the filter shows, and skip damaged replays.
@@ -167,8 +167,9 @@ to live. Changing the order or the Shown boxes while a replay plays affects what
 not played yet.
 
 The order and the Shown boxes are not kept when OBS closes or the scene collection
-changes. They start again from the dock list, in alphabetical order of source name,
-with every source shown.
+changes. They start again from the dock list, in order of source name, without regard
+to case for the letters A to Z (accented letters sort after Z), with every source
+shown.
 
 ## Hotkeys
 
@@ -179,7 +180,7 @@ key by default, so none works until you give it one.
 |---|---|
 | Tapeloop: Start or stop buffers | Starts or stops the buffers, as the button does. |
 | Tapeloop: Capture replay | Captures a replay. |
-| Tapeloop: Put replay on air | Puts the selected replay on air. |
+| Tapeloop: Put replay on air | Puts the current replay on air. |
 | Tapeloop: Take replay off air | Takes the replay off air. |
 | Tapeloop: Play or pause | Plays or pauses. |
 | Tapeloop: Reverse direction | Reverses the direction. |
@@ -199,14 +200,16 @@ player buttons work on the replay cued or on air, as the hotkeys do.
 
 ## Putting a replay on air
 
-Press the hotkey "Tapeloop: Put replay on air". The selected replay goes over the
-program: your scenes are not touched. It goes out on output channel 32, which draws
-above the program and above output channels 1 to 31, where the frontend and the
-Downstream Keyer plugin put their sources. What you stream and record shows it. The
-replay is scaled to the canvas and keeps its shape: a source whose shape is not the
-canvas's, such as a 4:3 webcam on a 16:9 canvas, leaves the program visible at its
-sides or above and below. The same goes for an intro or outro. Replays play without
-audio for now, and the program audio goes on as it was.
+Press the hotkey "Tapeloop: Put replay on air". The current replay (see "The replay
+list") goes over the program: your scenes are not touched. It goes out on output
+channel 32, which draws above the program and above output channels 1 to 31, where the
+frontend keeps its audio devices and the Downstream Keyer plugin puts its sources by
+default. A source on a higher channel, such as a keyer moved above 32, draws over the
+replay. What you stream and record shows it. The replay is scaled to the canvas and
+keeps its shape: a source whose shape is not the canvas's, such as a 4:3 webcam on a
+16:9 canvas, leaves the program visible at its sides or above and below. The same goes
+for an intro or outro. Replays play without audio for now, and the program audio goes
+on as it was.
 
 Only one replay can be on air at a time. A replay does not go on air if another
 source is already on the channel, if the replay cannot be read or is damaged, or if
@@ -246,10 +249,10 @@ by name, with a length of 50 to 20000 ms, 300 by default. Steps in between are c
 A picked transition that is no longer in OBS shows as "(not found)" in the list.
 
 When an intro or outro file is missing, replays go on air without it and the dock says
-so. A file that is there but cannot be played is not detected: a video holds the way
-on air for up to 5 seconds, and an image shows nothing for its time. Check a new file
-by putting a replay on air before the match. These settings are saved with the scene
-collection.
+so. A file that is there but cannot be played is not detected: a video leaves the
+program showing for up to 5 seconds, before the replay or before going back to live,
+and an image does the same for its time. Check a new file by putting a replay on air
+before the match. These settings are saved with the scene collection.
 
 ## Export
 
