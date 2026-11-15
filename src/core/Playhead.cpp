@@ -143,6 +143,9 @@ void Playhead::endScrub() noexcept
 
 void Playhead::holdScrub(ScrubHolder holder, ScrubDirection direction) noexcept
 {
+	if (static_cast<size_t>(holder) >= kScrubHolders || static_cast<size_t>(direction) >= kScrubDirections) {
+		return;
+	}
 	const auto end = holds_.begin() + static_cast<std::ptrdiff_t>(holdCount_);
 	const auto held = std::find_if(holds_.begin(), end, [&](const ScrubHold &hold) {
 		return hold.holder == holder && hold.direction == direction;

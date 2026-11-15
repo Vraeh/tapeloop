@@ -305,11 +305,22 @@ extern "C" int LLVMFuzzerTestOneInput(const uint8_t *data, size_t size)
 		}
 		case 12:
 		case 13: {
-			const std::pair hold{input.flag() ? ScrubHolder::Dock : ScrubHolder::Hotkeys, input.flag()};
+			// Two bits, so that a holder outside the enum comes too.
+			const std::pair hold{static_cast<ScrubHolder>(input.byte() % 4U), input.flag()};
 			const ScrubDirection direction = hold.second ? ScrubDirection::Forward
 								     : ScrubDirection::Backward;
 			const int32_t startRate = hold.second ? limits.scrubStartRate : -limits.scrubStartRate;
 			const int32_t rateBefore = playhead.effectiveRate();
+			if (static_cast<size_t>(hold.first) >= tapeloop::kScrubHolders) {
+				if (op == 12) {
+					playhead.holdScrub(hold.first, direction);
+				} else {
+					playhead.releaseScrub(hold.first, direction);
+				}
+				require(playhead.scrubbing() == before.scrubbing &&
+					playhead.effectiveRate() == rateBefore && playhead.playing() == before.playing);
+				break;
+			}
 			const auto held = std::find(holds.begin(), holds.end(), hold);
 			const bool latest = held != holds.end() && held + 1 == holds.end();
 			if (held != holds.end()) {

@@ -374,6 +374,40 @@ TEST_CASE("Playhead scrubs while any input holds it, the way of the latest")
 		CHECK_FALSE(playhead.scrubbing());
 	}
 
+	SECTION("every input holds it each way at once, and nothing else holds it")
+	{
+		const auto noHolder = static_cast<ScrubHolder>(2);
+		const auto noDirection = static_cast<ScrubDirection>(2);
+		playhead.holdScrub(noHolder, ScrubDirection::Forward);
+		playhead.holdScrub(ScrubHolder::Dock, noDirection);
+		CHECK_FALSE(playhead.scrubbing());
+
+		playhead.holdScrub(ScrubHolder::Hotkeys, ScrubDirection::Forward);
+		playhead.holdScrub(ScrubHolder::Dock, ScrubDirection::Backward);
+		playhead.holdScrub(ScrubHolder::Hotkeys, ScrubDirection::Backward);
+		playhead.holdScrub(ScrubHolder::Dock, ScrubDirection::Forward);
+		playhead.holdScrub(ScrubHolder::Hotkeys, ScrubDirection::Forward);
+		playhead.holdScrub(ScrubHolder::Dock, ScrubDirection::Backward);
+		CHECK(playhead.effectiveRate() == -500);
+		playhead.advance(1s);
+		const int32_t ramped = playhead.effectiveRate();
+		playhead.holdScrub(noHolder, ScrubDirection::Forward);
+		playhead.holdScrub(static_cast<ScrubHolder>(-1), ScrubDirection::Forward);
+		playhead.holdScrub(ScrubHolder::Hotkeys, noDirection);
+		CHECK(playhead.effectiveRate() == ramped);
+
+		// Oldest first: Hotkeys backward, Dock forward, Hotkeys forward, Dock backward.
+		playhead.releaseScrub(ScrubHolder::Dock, ScrubDirection::Backward);
+		CHECK(playhead.effectiveRate() == 500);
+		playhead.releaseScrub(ScrubHolder::Hotkeys, ScrubDirection::Forward);
+		CHECK(playhead.effectiveRate() == 500);
+		playhead.releaseScrub(ScrubHolder::Dock, ScrubDirection::Forward);
+		CHECK(playhead.effectiveRate() == -500);
+		playhead.releaseScrub(noHolder, ScrubDirection::Forward);
+		playhead.releaseScrub(ScrubHolder::Hotkeys, ScrubDirection::Backward);
+		CHECK_FALSE(playhead.scrubbing());
+	}
+
 	SECTION("a new clip, or a scrub begun or ended without a holder, forgets every hold")
 	{
 		playhead.holdScrub(ScrubHolder::Hotkeys, ScrubDirection::Forward);

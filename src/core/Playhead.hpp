@@ -30,10 +30,14 @@ struct PlayheadConfig {
 };
 
 enum class ScrubDirection { Forward, Backward };
+inline constexpr size_t kScrubDirections = 2;
+static_assert(static_cast<size_t>(ScrubDirection::Backward) + 1 == kScrubDirections);
 
 // The inputs that can hold a scrub at the same time, each one way or the other: the scrub
 // hotkeys, and the scrub buttons of the dock.
 enum class ScrubHolder { Hotkeys, Dock };
+inline constexpr size_t kScrubHolders = 2;
+static_assert(static_cast<size_t>(ScrubHolder::Dock) + 1 == kScrubHolders);
 
 // Moves through the frames of one clip. It never reads a clock: the caller passes the
 // wall time elapsed since the previous call, so the same calls always give the same
@@ -81,7 +85,7 @@ public:
 	// the latest goes on the way of the one held before it, restarting the curve if that
 	// way is the other, and letting go of the last ends the scrub. Letting go of a hold
 	// that is not there does nothing, so an input never ends a scrub it did not begin.
-	// load() forgets every hold.
+	// A holder or direction outside its enum holds nothing. load() forgets every hold.
 	void holdScrub(ScrubHolder holder, ScrubDirection direction) noexcept;
 	void releaseScrub(ScrubHolder holder, ScrubDirection direction) noexcept;
 
@@ -103,8 +107,8 @@ private:
 		ScrubHolder holder = ScrubHolder::Hotkeys;
 		ScrubDirection direction = ScrubDirection::Forward;
 	};
-	// Every holder each way.
-	static constexpr size_t kScrubHolds = 4;
+	// Every holder each way, each held once at most.
+	static constexpr size_t kScrubHolds = kScrubHolders * kScrubDirections;
 
 	void startScrub(ScrubDirection direction) noexcept;
 	int32_t scrubRate(Nanoseconds held) const noexcept;

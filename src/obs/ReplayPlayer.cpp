@@ -49,6 +49,7 @@ int32_t nextPreset(int32_t rate, bool up) noexcept
 
 // A scrub hold as the value of a command: the holder in the second bit, the direction in
 // the first.
+static_assert(kScrubHolders == 2 && kScrubDirections == 2);
 int64_t scrubHoldValue(ScrubHolder holder, ScrubDirection direction) noexcept
 {
 	return (holder == ScrubHolder::Dock ? 2 : 0) + (direction == ScrubDirection::Forward ? 1 : 0);
