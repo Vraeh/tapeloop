@@ -478,21 +478,38 @@ std::filesystem::path ReplayWriter::publishManifest(const std::string &stem, std
 		const std::string name = safeFileName(stem, kMaxFileNameBytes - suffix.size()) + suffix;
 		const std::filesystem::path manifest = folder_ / pathFromUtf8(name + std::string(kManifestExtension));
 		const std::filesystem::path part = folder_ / pathFromUtf8(name + std::string(kPartExtension));
-		if (std::filesystem::exists(manifest) || std::filesystem::exists(part)) {
+		if (nameTaken(manifest) || nameTaken(part)) {
 			continue;
 		}
+		// Another writer in the folder can take either name right after the check. The
+		// part is created only if its name is still free, and deleted only once this call
+		// has created it. The manifest gets its name from renameIfFree, which replaces
+		// nothing there, except where the file system can neither rename exclusively nor
+		// make hard links: then a file another writer creates between renameIfFree's look
+		// at the name and its rename is replaced.
+		File file;
 		try {
-			File file(part, File::Mode::CreateNew);
+			file = File(part, File::Mode::CreateNew);
+		} catch (const std::system_error &e) {
+			if (e.code() == std::errc::file_exists) {
+				continue;
+			}
+			throw;
+		}
+		try {
 			file.writeAt(0, bytes);
 			file.flush();
 			file.close();
-			renameFile(part, manifest);
+			if (renameIfFree(part, manifest)) {
+				return manifest;
+			}
 		} catch (...) {
 			std::error_code ignored;
 			std::filesystem::remove(part, ignored);
 			throw;
 		}
-		return manifest;
+		std::error_code ignored;
+		std::filesystem::remove(part, ignored);
 	}
 	throw std::runtime_error("no free name for a replay in " + utf8FromPath(folder_));
 }

@@ -42,7 +42,8 @@ target_compile_definitions(tapeloop-core PUBLIC TAPELOOP_COUNT_LOOKUPS)
 # Counts what a parameter set lookup compares, for a test that must fail rather than hang
 # when a lookup reads the whole configuration again.
 target_compile_definitions(tapeloop-core PUBLIC TAPELOOP_COUNT_COMPARISONS)
-# The tests follow the writes and flushes of the core's files through a hook that the
+# The tests follow the writes and flushes of the core's files, and make a file system
+# call fail or race it as file systems and other writers can, through hooks that the
 # plugin is built without.
 target_compile_definitions(tapeloop-core PUBLIC TAPELOOP_FILE_HOOK)
 
@@ -56,6 +57,7 @@ target_sources(
     core/BufferBudgetTests.cpp
     core/BufferLifecycleTests.cpp
     core/BufferSettingsTests.cpp
+    core/ClaimHookScope.hpp
     core/ClipTests.cpp
     core/CopiedGops.hpp
     core/Crc32cTests.cpp

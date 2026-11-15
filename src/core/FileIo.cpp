@@ -66,6 +66,36 @@ void beforeStep(FileStep step, uint64_t offset, size_t size)
 	}
 }
 
+std::atomic<ClaimHook> &claimHook() noexcept
+{
+	static std::atomic<ClaimHook> hook{nullptr};
+	return hook;
+}
+
+// Whether the test's hook makes the call fail, with the error set where the call itself
+// would set it.
+bool failedByHook(std::string_view call, const std::filesystem::path &path)
+{
+	const ClaimHook hook = claimHook().load();
+	const int error = hook != nullptr ? hook(call, path) : 0;
+	if (error == 0) {
+		return false;
+	}
+#ifdef _WIN32
+	SetLastError(static_cast<DWORD>(error));
+#else
+	errno = error;
+#endif
+	return true;
+}
+
+#else
+
+bool failedByHook(std::string_view, const std::filesystem::path &) noexcept
+{
+	return false;
+}
+
 #endif
 
 #ifdef _WIN32
@@ -204,6 +234,24 @@ std::string utf8FromPath(const std::filesystem::path &path)
 
 #endif
 
+bool nameTaken(const std::filesystem::path &path) noexcept
+{
+	std::error_code error;
+	const std::filesystem::file_status status = std::filesystem::symlink_status(path, error);
+	// A free name gives not_found, with the error set all the same; a name that cannot be
+	// read gives an unknown status.
+	return !std::filesystem::status_known(status) || std::filesystem::exists(status);
+}
+
+#ifdef TAPELOOP_FILE_HOOK
+
+void setClaimHook(ClaimHook hook) noexcept
+{
+	claimHook().store(hook);
+}
+
+#endif
+
 File::File(File &&other) noexcept
 #ifdef _WIN32
 	: handle_(std::exchange(other.handle_, nullptr))
@@ -239,7 +287,15 @@ File::File(const std::filesystem::path &path, Mode mode)
 	const DWORD disposition = mode == Mode::CreateNew ? CREATE_NEW : OPEN_EXISTING;
 	// Readers share with the writer that appends to the same segment.
 	const DWORD share = FILE_SHARE_READ | FILE_SHARE_WRITE | FILE_SHARE_DELETE;
-	HANDLE handle = CreateFileW(path.c_str(), access, share, nullptr, disposition, FILE_ATTRIBUTE_NORMAL, nullptr);
+	// Without this, CREATE_NEW follows a link at the name and creates the file it leads
+	// to, wherever that is. With it, the link counts as a file that exists, as with O_EXCL
+	// on POSIX. It concerns only the last part of the path and only new files: the files
+	// read, or written in place, are opened as before.
+	const DWORD flags = mode == Mode::CreateNew ? FILE_ATTRIBUTE_NORMAL | FILE_FLAG_OPEN_REPARSE_POINT
+						    : FILE_ATTRIBUTE_NORMAL;
+	HANDLE handle = mode == Mode::CreateNew && failedByHook("create", path)
+				? INVALID_HANDLE_VALUE
+				: CreateFileW(path.c_str(), access, share, nullptr, disposition, flags, nullptr);
 	if (handle == INVALID_HANDLE_VALUE) {
 		throwLastError("cannot open", &path);
 	}
@@ -342,7 +398,7 @@ void renameFile(const std::filesystem::path &from, const std::filesystem::path &
 
 bool renameIfFree(const std::filesystem::path &from, const std::filesystem::path &to)
 {
-	if (MoveFileExW(from.c_str(), to.c_str(), MOVEFILE_WRITE_THROUGH)) {
+	if (!failedByHook("exclusive rename", to) && MoveFileExW(from.c_str(), to.c_str(), MOVEFILE_WRITE_THROUGH)) {
 		return true;
 	}
 	const DWORD code = GetLastError();
@@ -367,6 +423,9 @@ File::File(const std::filesystem::path &path, Mode mode)
 		flags = O_RDWR | O_CREAT | O_EXCL;
 	} else if (mode == Mode::ReadWrite) {
 		flags = O_RDWR;
+	}
+	if (mode == Mode::CreateNew && failedByHook("create", path)) {
+		throwErrno("cannot open", &path);
 	}
 	fd_ = openRegularFile(path, flags);
 }
@@ -483,24 +542,25 @@ void renameFile(const std::filesystem::path &from, const std::filesystem::path &
 	syncDirectory(to.parent_path());
 }
 
+// Each way below claims the name, finds it taken, or fails otherwise, and then the next
+// way decides. File systems that lack a way refuse it with different errors (ENOSYS,
+// EINVAL, EPERM on FAT, EOPNOTSUPP, or whatever a FUSE daemon returns), so any error but
+// EEXIST goes on, down to the plain rename at the end, whose error is the one reported.
 bool renameIfFree(const std::filesystem::path &from, const std::filesystem::path &to)
 {
 #if defined(__linux__)
-	if (::renameat2(AT_FDCWD, from.c_str(), AT_FDCWD, to.c_str(), RENAME_NOREPLACE) == 0) {
+	if (!failedByHook("exclusive rename", to) &&
+	    ::renameat2(AT_FDCWD, from.c_str(), AT_FDCWD, to.c_str(), RENAME_NOREPLACE) == 0) {
 		syncDirectory(to.parent_path());
 		return true;
 	}
 	if (errno == EEXIST) {
 		return false;
 	}
-	// Older kernels and some file systems cannot rename exclusively.
-	if (errno != EINVAL && errno != ENOSYS && errno != EOPNOTSUPP) {
-		throwErrno("cannot rename", &from);
-	}
 #endif
 	// A hard link cannot land on a name that is taken, so it claims the name; the old one
 	// goes after.
-	if (::link(from.c_str(), to.c_str()) == 0) {
+	if (!failedByHook("link", to) && ::link(from.c_str(), to.c_str()) == 0) {
 		if (::unlink(from.c_str()) != 0) {
 			throwErrno("cannot remove", &from);
 		}
@@ -510,12 +570,10 @@ bool renameIfFree(const std::filesystem::path &from, const std::filesystem::path
 	if (errno == EEXIST) {
 		return false;
 	}
-	if (errno != EPERM && errno != ENOTSUP && errno != EOPNOTSUPP) {
-		throwErrno("cannot link", &from);
-	}
-	// Without hard links, as on FAT, all that is left is to look first.
-	std::error_code error;
-	if (std::filesystem::exists(to, error) || error) {
+	// Without either, all that is left is to look at the name itself, a link there taking
+	// it, and rename after. Whatever another writer puts at the name between the look and
+	// the rename is replaced: nothing on such a file system closes that gap.
+	if (nameTaken(to)) {
 		return false;
 	}
 	renameFile(from, to);

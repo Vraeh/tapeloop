@@ -27,7 +27,8 @@ std::string utf8FromPath(const std::filesystem::path &path);
 class File {
 public:
 	enum class Mode {
-		// Creates the file for reading and writing; fails when it exists.
+		// Creates the file for reading and writing; fails with std::errc::file_exists
+		// when anything has its name, a link included, wherever it leads.
 		CreateNew,
 		ReadWrite,
 		ReadOnly,
@@ -78,14 +79,30 @@ void syncDirectory(const std::filesystem::path &directory);
 // Renames from to to, replacing to if it exists, and returns once the rename is durable.
 void renameFile(const std::filesystem::path &from, const std::filesystem::path &to);
 
-// Renames from to to unless to exists, and returns whether it did once the rename is
-// durable. On a file system that can neither rename exclusively nor make hard links, a
-// file that appears at to between the check and the rename is replaced.
+// Renames from to to unless anything has the name to, a link to nothing included, and
+// returns whether it did once the rename is durable. On a file system that can neither
+// rename exclusively nor make hard links, it looks at to first and renames after, and
+// whatever another writer puts at to in between is replaced.
 bool renameIfFree(const std::filesystem::path &from, const std::filesystem::path &to);
+
+// Whether anything has the name path, a link counting whatever it leads to, or the name
+// cannot be checked. Never follows a link, so a loop is taken like any other.
+bool nameTaken(const std::filesystem::path &path) noexcept;
 
 // Lowers the I/O priority of the calling thread, so that its writes yield to OBS's own
 // recording on a shared disk. Best effort: false where the platform refuses or has no
 // such setting.
 bool lowerThreadIoPriority() noexcept;
+
+#ifdef TAPELOOP_FILE_HOOK
+// Test builds only. Called right before a file is created by CreateNew ("create"),
+// renamed without replacing ("exclusive rename") or hard linked ("link"), with the path
+// the call makes. It can put something at that path first, as another writer would, and
+// makes the call fail by returning an error code (errno, or a Windows error code)
+// instead of 0. Exclusive renames are tried on Linux and Windows, links on Linux and
+// macOS.
+using ClaimHook = int (*)(std::string_view call, const std::filesystem::path &path);
+void setClaimHook(ClaimHook hook) noexcept;
+#endif
 
 } // namespace tapeloop
